@@ -128,6 +128,213 @@ func handleMissionEvents(h *hub.Hub) http.HandlerFunc {
 	}
 }
 
+func handleGetMission(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		instanceID := r.PathValue("id")
+		missionID := r.PathValue("mid")
+
+		instance := h.GetRegistry().GetInstance(instanceID)
+		if instance == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "instance not found"})
+			return
+		}
+		if !instance.Connected {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "instance disconnected"})
+			return
+		}
+
+		req, err := protocol.NewRequest(protocol.TypeGetMission, &protocol.GetMissionPayload{
+			MissionID: missionID,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		resp, err := h.SendRequest(instanceID, req, proxyTimeout)
+		if err != nil {
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": fmt.Sprintf("request failed: %v", err)})
+			return
+		}
+
+		var result protocol.GetMissionResultPayload
+		if err := protocol.DecodePayload(resp, &result); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "invalid response from instance"})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, result)
+	}
+}
+
+func handleGetMissionEvents(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		instanceID := r.PathValue("id")
+		missionID := r.PathValue("mid")
+
+		instance := h.GetRegistry().GetInstance(instanceID)
+		if instance == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "instance not found"})
+			return
+		}
+		if !instance.Connected {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "instance disconnected"})
+			return
+		}
+
+		req, err := protocol.NewRequest(protocol.TypeGetEvents, &protocol.GetEventsPayload{
+			MissionID: missionID,
+			Limit:     500,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		resp, err := h.SendRequest(instanceID, req, proxyTimeout)
+		if err != nil {
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": fmt.Sprintf("request failed: %v", err)})
+			return
+		}
+
+		var result protocol.GetEventsResultPayload
+		if err := protocol.DecodePayload(resp, &result); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "invalid response from instance"})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, result)
+	}
+}
+
+func handleGetTaskDetail(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		instanceID := r.PathValue("id")
+		taskID := r.PathValue("tid")
+
+		instance := h.GetRegistry().GetInstance(instanceID)
+		if instance == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "instance not found"})
+			return
+		}
+		if !instance.Connected {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "instance disconnected"})
+			return
+		}
+
+		req, err := protocol.NewRequest(protocol.TypeGetTaskDetail, &protocol.GetTaskDetailPayload{
+			TaskID: taskID,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		resp, err := h.SendRequest(instanceID, req, proxyTimeout)
+		if err != nil {
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": fmt.Sprintf("request failed: %v", err)})
+			return
+		}
+
+		var result protocol.GetTaskDetailResultPayload
+		if err := protocol.DecodePayload(resp, &result); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "invalid response from instance"})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, result)
+	}
+}
+
+func handleGetDatasets(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		instanceID := r.PathValue("id")
+		missionID := r.PathValue("mid")
+
+		instance := h.GetRegistry().GetInstance(instanceID)
+		if instance == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "instance not found"})
+			return
+		}
+		if !instance.Connected {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "instance disconnected"})
+			return
+		}
+
+		req, err := protocol.NewRequest(protocol.TypeGetDatasets, &protocol.GetDatasetsPayload{
+			MissionID: missionID,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		resp, err := h.SendRequest(instanceID, req, proxyTimeout)
+		if err != nil {
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": fmt.Sprintf("request failed: %v", err)})
+			return
+		}
+
+		var result protocol.GetDatasetsResultPayload
+		if err := protocol.DecodePayload(resp, &result); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "invalid response from instance"})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, result)
+	}
+}
+
+func handleGetDatasetItems(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		instanceID := r.PathValue("id")
+		datasetID := r.PathValue("did")
+
+		instance := h.GetRegistry().GetInstance(instanceID)
+		if instance == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "instance not found"})
+			return
+		}
+		if !instance.Connected {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "instance disconnected"})
+			return
+		}
+
+		offset := 0
+		limit := 50
+		if v := r.URL.Query().Get("offset"); v != "" {
+			fmt.Sscanf(v, "%d", &offset)
+		}
+		if v := r.URL.Query().Get("limit"); v != "" {
+			fmt.Sscanf(v, "%d", &limit)
+		}
+
+		req, err := protocol.NewRequest(protocol.TypeGetDatasetItems, &protocol.GetDatasetItemsPayload{
+			DatasetID: datasetID,
+			Offset:    offset,
+			Limit:     limit,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		resp, err := h.SendRequest(instanceID, req, proxyTimeout)
+		if err != nil {
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": fmt.Sprintf("request failed: %v", err)})
+			return
+		}
+
+		var result protocol.GetDatasetItemsResultPayload
+		if err := protocol.DecodePayload(resp, &result); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "invalid response from instance"})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, result)
+	}
+}
+
 func handleMissionHistory(h *hub.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		instanceID := r.PathValue("id")

@@ -20,10 +20,9 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
-import { StatusBadge, formatTime, formatDuration } from '@/lib/mission-utils';
 import { useResizablePanel } from '@/hooks/use-resizable-panel';
 import { ZoomControls } from '@/components/zoom-controls';
-import type { TaskInfo, AgentInfo, MissionInputInfo, MissionRecordInfo, DatasetInfo, MissionInfo } from '@/api/types';
+import type { TaskInfo, AgentInfo, MissionInputInfo, DatasetInfo, MissionInfo } from '@/api/types';
 
 const NODE_WIDTH = 260;
 const NODE_HEIGHT = 100;
@@ -82,13 +81,13 @@ const nodeTypes: NodeTypes = {
   task: TaskNode,
 };
 
-function layoutGraph(tasks: TaskInfo[]): { nodes: Node[]; edges: Edge[] } {
+function layoutGraph(tasks: TaskInfo[], nodeWidth = NODE_WIDTH, nodeHeight = NODE_HEIGHT): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80 });
 
   for (const task of tasks) {
-    g.setNode(task.name, { width: NODE_WIDTH, height: NODE_HEIGHT });
+    g.setNode(task.name, { width: nodeWidth, height: nodeHeight });
   }
 
   const edges: Edge[] = [];
@@ -114,7 +113,7 @@ function layoutGraph(tasks: TaskInfo[]): { nodes: Node[]; edges: Edge[] } {
     return {
       id: task.name,
       type: 'task',
-      position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 },
+      position: { x: pos.x - nodeWidth / 2, y: pos.y - nodeHeight / 2 },
       data: task as unknown as Record<string, unknown>,
     };
   });
@@ -476,66 +475,6 @@ function AgentsTabContent({
   );
 }
 
-function HistoryTabContent({
-  history,
-  connected,
-  selectedRun,
-  onSelectRun,
-}: {
-  history: MissionRecordInfo[];
-  connected: boolean;
-  selectedRun: MissionRecordInfo | null;
-  onSelectRun: (run: MissionRecordInfo) => void;
-}) {
-  if (!connected) {
-    return <p className="text-sm text-muted-foreground p-4">Instance disconnected. History unavailable.</p>;
-  }
-  if (history.length === 0) {
-    return <p className="text-sm text-muted-foreground p-4">No runs recorded for this mission.</p>;
-  }
-  return (
-    <div className="flex h-full">
-      <div className="w-56 shrink-0 border-r overflow-y-auto">
-        <div className="py-1">
-          {history.map((run) => (
-            <button
-              key={run.id}
-              onClick={() => onSelectRun(run)}
-              className={cn(
-                'w-full text-left px-3 py-2 text-sm hover:bg-muted/50 transition-colors',
-                selectedRun?.id === run.id && 'bg-muted font-medium',
-              )}
-            >
-              <div className="flex items-center gap-1.5">
-                <StatusBadge status={run.status} />
-                <span className="text-xs text-muted-foreground truncate">
-                  {formatTime(run.startedAt)}
-                </span>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto p-4">
-        {selectedRun ? (
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <StatusBadge status={selectedRun.status} />
-              <span className="text-xs text-muted-foreground">{selectedRun.id}</span>
-            </div>
-            <div className="space-y-1 text-xs text-muted-foreground">
-              <p>Started: {formatTime(selectedRun.startedAt)}</p>
-              {selectedRun.finishedAt && (
-                <p>Duration: {formatDuration(selectedRun.startedAt, selectedRun.finishedAt)}</p>
-              )}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
 /* ── Main page component ── */
 
 export function MissionDetail() {
@@ -543,7 +482,6 @@ export function MissionDetail() {
   const [selectedTask, setSelectedTask] = useState<TaskInfo | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<AgentInfo | null>(null);
   const [selectedDataset, setSelectedDataset] = useState<DatasetInfo | null>(null);
-  const [selectedRun, setSelectedRun] = useState<MissionRecordInfo | null>(null);
   const [activeTab, setActiveTab] = useState('general');
 
   const {
@@ -572,13 +510,9 @@ export function MissionDetail() {
   });
 
   const mission = instance?.config.missions?.find((m) => m.name === name);
+  const runCount = history?.missions?.filter((m) => m.name === name).length ?? 0;
   const missionAgentNames = new Set(mission?.agents ?? []);
   const agents = instance?.config.agents?.filter((a) => missionAgentNames.has(a.name));
-
-  const missionHistory = useMemo(() => {
-    if (!history?.missions) return [];
-    return history.missions.filter((m) => m.name === name);
-  }, [history?.missions, name]);
 
   const { nodes, edges } = useMemo(() => {
     if (!mission?.tasks || mission.tasks.length === 0) return { nodes: [], edges: [] };
@@ -605,10 +539,6 @@ export function MissionDetail() {
     if (!selectedDataset && mission?.datasets?.length) setSelectedDataset(mission.datasets[0]);
   }, [mission?.datasets, selectedDataset]);
 
-  useEffect(() => {
-    if (!selectedRun && missionHistory.length) setSelectedRun(missionHistory[0]);
-  }, [missionHistory, selectedRun]);
-
   const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
     const task = mission?.tasks?.find((t) => t.name === node.id);
     if (task) {
@@ -631,18 +561,27 @@ export function MissionDetail() {
               <p className="text-sm text-muted-foreground mt-0.5">{mission.description}</p>
             )}
           </div>
-          <Button
-            asChild
-            variant={instance.connected ? 'default' : 'secondary'}
-            disabled={!instance.connected}
-          >
-            <Link
-              to={`/instances/${id}/missions/${name}/run`}
-              className={!instance.connected ? 'pointer-events-none' : ''}
+          <div className="flex items-center gap-2">
+            {runCount > 0 && (
+              <Button asChild variant="outline" size="sm">
+                <Link to={`/instances/${id}/history`}>
+                  {runCount} {runCount === 1 ? 'run' : 'runs'}
+                </Link>
+              </Button>
+            )}
+            <Button
+              asChild
+              variant={instance.connected ? 'default' : 'secondary'}
+              disabled={!instance.connected}
             >
-              Run Mission
-            </Link>
-          </Button>
+              <Link
+                to={`/instances/${id}/missions/${name}/run`}
+                className={!instance.connected ? 'pointer-events-none' : ''}
+              >
+                Run Mission
+              </Link>
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -705,7 +644,6 @@ export function MissionDetail() {
                   {agents?.length ?? 0}
                 </Badge>
               </TabsTrigger>
-              <TabsTrigger value="history">History</TabsTrigger>
             </TabsList>
             <div className="ml-auto">
               <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={togglePanel}>
@@ -742,14 +680,6 @@ export function MissionDetail() {
                 agents={agents ?? []}
                 selectedAgent={selectedAgent}
                 onSelectAgent={setSelectedAgent}
-              />
-            </TabsContent>
-            <TabsContent value="history" className="h-full m-0">
-              <HistoryTabContent
-                history={missionHistory}
-                connected={instance.connected}
-                selectedRun={selectedRun}
-                onSelectRun={setSelectedRun}
               />
             </TabsContent>
           </div>

@@ -1,0 +1,773 @@
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { listConfigFiles, getConfigFile, writeConfigFile, reloadConfig, validateConfig } from '@/api/client';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+import { FileCode, Save, RefreshCw, Undo2, CheckCircle, X, ChevronRight, ChevronDown } from 'lucide-react';
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, gutter, GutterMarker } from '@codemirror/view';
+import { EditorState, RangeSet, StateField, StateEffect } from '@codemirror/state';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { bracketMatching, foldGutter, indentOnInput, syntaxHighlighting, HighlightStyle } from '@codemirror/language';
+import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
+import { tags as t } from '@lezer/highlight';
+import { hcl } from 'codemirror-lang-hcl';
+import { json } from '@codemirror/lang-json';
+import { markdown } from '@codemirror/lang-markdown';
+import { python } from '@codemirror/lang-python';
+import { go } from '@codemirror/lang-go';
+import { useTheme } from '@/components/ThemeProvider';
+
+// --- Diff computation (Myers-like LCS diff) ---
+
+type DiffLineType = 'same' | 'added' | 'removed';
+interface DiffLine {
+  type: DiffLineType;
+  oldLine?: number;
+  newLine?: number;
+  content: string;
+}
+
+function computeDiff(oldText: string, newText: string): DiffLine[] {
+  const oldLines = oldText.split('\n');
+  const newLines = newText.split('\n');
+
+  // Simple LCS-based diff
+  const m = oldLines.length;
+  const n = newLines.length;
+
+  // Build LCS table
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (oldLines[i - 1] === newLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  // Backtrack to produce diff
+  const result: DiffLine[] = [];
+  let i = m, j = n;
+  const stack: DiffLine[] = [];
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      stack.push({ type: 'same', oldLine: i, newLine: j, content: oldLines[i - 1] });
+      i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      stack.push({ type: 'added', newLine: j, content: newLines[j - 1] });
+      j--;
+    } else {
+      stack.push({ type: 'removed', oldLine: i, content: oldLines[i - 1] });
+      i--;
+    }
+  }
+  for (let k = stack.length - 1; k >= 0; k--) {
+    result.push(stack[k]);
+  }
+  return result;
+}
+
+/** For a given new text vs original, return a map of newLineNumber → 'added' | 'modified' */
+function computeLineChanges(original: string, current: string): Map<number, 'added' | 'modified'> {
+  const changes = new Map<number, 'added' | 'modified'>();
+  if (original === current) return changes;
+
+  const diff = computeDiff(original, current);
+
+  // Walk the diff and classify new lines
+  let lastRemovedBeforeAdd = false;
+  for (let idx = 0; idx < diff.length; idx++) {
+    const d = diff[idx];
+    if (d.type === 'removed') {
+      lastRemovedBeforeAdd = true;
+    } else if (d.type === 'added') {
+      // If there was a removed line right before, it's a modification
+      changes.set(d.newLine!, lastRemovedBeforeAdd ? 'modified' : 'added');
+      lastRemovedBeforeAdd = false;
+    } else {
+      lastRemovedBeforeAdd = false;
+    }
+  }
+
+  return changes;
+}
+
+// --- CodeMirror gutter extension for change markers ---
+
+const setChangeMarkers = StateEffect.define<Map<number, 'added' | 'modified'>>();
+
+class ChangeGutterMarker extends GutterMarker {
+  changeType: 'added' | 'modified';
+  constructor(changeType: 'added' | 'modified') { super(); this.changeType = changeType; }
+  toDOM() {
+    const el = document.createElement('div');
+    el.style.width = '3px';
+    el.style.height = '100%';
+    el.style.backgroundColor = this.changeType === 'added' ? '#22c55e' : '#3b82f6';
+    el.style.borderRadius = '1px';
+    el.style.cursor = 'pointer';
+    return el;
+  }
+}
+
+const addedMarker = new ChangeGutterMarker('added');
+const modifiedMarker = new ChangeGutterMarker('modified');
+
+const changeMarkersField = StateField.define<Map<number, 'added' | 'modified'>>({
+  create() { return new Map(); },
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (e.is(setChangeMarkers)) return e.value;
+    }
+    return value;
+  },
+});
+
+function createChangeGutter(onGutterClick: () => void) {
+  return gutter({
+    class: 'cm-change-gutter',
+    markers(view) {
+      const changes = view.state.field(changeMarkersField);
+      const builder: { from: number; to: number; value: GutterMarker }[] = [];
+      const doc = view.state.doc;
+      for (const [lineNum, type] of changes) {
+        if (lineNum >= 1 && lineNum <= doc.lines) {
+          const line = doc.line(lineNum);
+          builder.push({ from: line.from, to: line.from, value: type === 'added' ? addedMarker : modifiedMarker });
+        }
+      }
+      builder.sort((a, b) => a.from - b.from);
+      return RangeSet.of(builder.map(b => b.value.range(b.from)));
+    },
+    domEventHandlers: {
+      click(view, line, _event) {
+        const changes = view.state.field(changeMarkersField);
+        const lineInfo = view.state.doc.lineAt(line.from);
+        if (changes.has(lineInfo.number)) {
+          onGutterClick();
+          return true;
+        }
+        return false;
+      },
+    },
+  });
+}
+
+// --- Editor themes ---
+
+const editorStructuralTheme = EditorView.theme({
+  '&': {
+    height: '100%',
+    fontSize: '13px',
+  },
+  '.cm-scroller': {
+    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+    overflow: 'auto',
+  },
+  '.cm-content': {
+    padding: '8px 0',
+  },
+  '.cm-change-gutter': {
+    width: '4px',
+    minWidth: '4px',
+  },
+  '.cm-change-gutter .cm-gutterElement': {
+    padding: '0',
+    cursor: 'pointer',
+  },
+});
+
+// Material Dark theme for CodeMirror 6 (from cm6-theme-material-dark)
+const materialDarkTheme = EditorView.theme({
+  '&': { backgroundColor: '#2e3235', color: '#bdbdbd' },
+  '.cm-content': { caretColor: '#a0a4ae' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#a0a4ae' },
+  '.cm-selectionBackground': { backgroundColor: '#505d64 !important' },
+  '.cm-gutters': {
+    backgroundColor: '#2e3235',
+    borderRight: '1px solid #4f5b66',
+    color: '#606f7a',
+  },
+  '.cm-activeLineGutter': { backgroundColor: '#545b61', color: '#fdf6e3' },
+  '.cm-activeLine': { backgroundColor: '#545b61' },
+  '.cm-matchingBracket': { color: '#e0e0e0', outline: '1px solid #4ebaaa' },
+  '.cm-searchMatch': { outline: '1px solid #facf4e', backgroundColor: 'transparent' },
+  '.cm-foldPlaceholder': { backgroundColor: 'transparent', border: 'none', color: '#ddd' },
+}, { dark: true });
+
+const materialDarkHighlightStyle = HighlightStyle.define([
+  { tag: t.keyword, color: '#cf6edf' },
+  { tag: [t.name, t.deleted, t.character, t.macroName], color: '#56c8d8' },
+  { tag: [t.propertyName], color: '#facf4e' },
+  { tag: [t.variableName], color: '#bdbdbd' },
+  { tag: [t.function(t.variableName)], color: '#56c8d8' },
+  { tag: [t.labelName], color: '#cf6edf' },
+  { tag: [t.color, t.constant(t.name), t.standard(t.name)], color: '#facf4e' },
+  { tag: [t.definition(t.name), t.separator], color: '#fa5788' },
+  { tag: [t.brace], color: '#cf6edf' },
+  { tag: [t.number, t.changed, t.annotation, t.modifier, t.self, t.namespace], color: '#ffad42' },
+  { tag: [t.typeName, t.className], color: '#ffad42' },
+  { tag: [t.operator, t.operatorKeyword], color: '#7186f0' },
+  { tag: [t.tagName], color: '#ff6e40' },
+  { tag: [t.squareBracket], color: '#ff5f52' },
+  { tag: [t.angleBracket], color: '#606f7a' },
+  { tag: [t.attributeName], color: '#bdbdbd' },
+  { tag: [t.regexp], color: '#ff5f52' },
+  { tag: [t.quote], color: '#6abf69' },
+  { tag: [t.string], color: '#99d066' },
+  { tag: t.link, color: '#56c8d8', textDecoration: 'underline' },
+  { tag: [t.url, t.escape, t.special(t.string)], color: '#facf4e' },
+  { tag: [t.meta], color: '#707d8b' },
+  { tag: [t.comment], color: '#707d8b', fontStyle: 'italic' },
+  { tag: t.strong, fontWeight: 'bold', color: '#ff5f52' },
+  { tag: t.emphasis, fontStyle: 'italic', color: '#99d066' },
+  { tag: t.strikethrough, textDecoration: 'line-through' },
+  { tag: t.heading, fontWeight: 'bold', color: '#facf4e' },
+  { tag: [t.atom, t.bool, t.special(t.variableName)], color: '#56c8d8' },
+  { tag: [t.processingInstruction, t.inserted], color: '#ff5f52' },
+  { tag: t.invalid, color: '#606f7a', borderBottom: '1px dotted #ff5f52' },
+]);
+
+// CM5 "neat" theme ported to CM6
+const neatTheme = EditorView.theme({
+  '&': { backgroundColor: '#ffffff' },
+  '.cm-gutters': {
+    backgroundColor: '#f5f5f5',
+    borderRight: '1px solid #ddd',
+    color: '#999',
+  },
+  '.cm-activeLineGutter': { backgroundColor: '#e8f2ff' },
+  '.cm-activeLine': { backgroundColor: '#e8f2ff' },
+  '.cm-selectionBackground': { backgroundColor: '#d7d4f0 !important' },
+  '.cm-cursor': { borderLeftColor: '#000' },
+}, { dark: false });
+
+const neatHighlightStyle = HighlightStyle.define([
+  { tag: t.keyword, color: '#0000ff', fontWeight: 'bold' },
+  { tag: [t.name, t.deleted, t.character, t.macroName], color: '#000' },
+  { tag: [t.propertyName], color: '#000' },
+  { tag: [t.processingInstruction, t.string, t.inserted, t.special(t.string)], color: '#aa2222' },
+  { tag: [t.function(t.variableName), t.labelName], color: '#007700' },
+  { tag: [t.color, t.constant(t.name), t.standard(t.name)], color: '#007700' },
+  { tag: [t.definition(t.name), t.separator], color: '#000' },
+  { tag: [t.className], color: '#007700' },
+  { tag: [t.number, t.changed, t.annotation, t.modifier, t.self, t.namespace], color: '#33aa33' },
+  { tag: [t.typeName], color: '#077' },
+  { tag: [t.operator, t.operatorKeyword], color: '#000' },
+  { tag: [t.url, t.escape, t.regexp, t.link], color: '#33aa33' },
+  { tag: [t.meta, t.comment], color: '#aa8866' },
+  { tag: t.tagName, color: '#077' },
+  { tag: t.strong, fontWeight: 'bold' },
+  { tag: t.emphasis, fontStyle: 'italic' },
+  { tag: t.link, textDecoration: 'underline' },
+  { tag: t.heading, fontWeight: 'bold', color: '#0000ff' },
+  { tag: [t.atom, t.bool, t.special(t.variableName)], color: '#33aa33' },
+  { tag: t.strikethrough, textDecoration: 'line-through' },
+]);
+
+// --- Language detection ---
+
+function getLanguageExtension(filename: string) {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'hcl': return hcl();
+    case 'json': return json();
+    case 'md': case 'markdown': return markdown();
+    case 'py': return python();
+    case 'go': return go();
+    default: return [];
+  }
+}
+
+// --- Inline Diff Viewer ---
+
+function DiffViewer({ original, modified, onClose }: { original: string; modified: string; onClose: () => void }) {
+  const diff = useMemo(() => computeDiff(original, modified), [original, modified]);
+
+  return (
+    <div className="absolute inset-0 z-10 bg-background flex flex-col">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b bg-muted/30">
+        <span className="text-xs font-medium">Diff View</span>
+        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={onClose}>
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <div className="flex-1 overflow-auto font-mono text-xs leading-5">
+        {diff.map((line, idx) => (
+          <div
+            key={idx}
+            className={cn(
+              'px-3 whitespace-pre',
+              line.type === 'added' && 'bg-green-500/15 text-green-700 dark:text-green-400',
+              line.type === 'removed' && 'bg-red-500/15 text-red-700 dark:text-red-400',
+            )}
+          >
+            <span className="inline-block w-5 text-right mr-3 text-muted-foreground select-none">
+              {line.type === 'removed' ? line.oldLine : ''}
+            </span>
+            <span className="inline-block w-5 text-right mr-3 text-muted-foreground select-none">
+              {line.type === 'added' || line.type === 'same' ? line.newLine : ''}
+            </span>
+            <span className="inline-block w-4 text-center select-none">
+              {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
+            </span>
+            {line.content}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- Main ConfigPage ---
+
+export function ConfigPage() {
+  const { id } = useParams<{ id: string }>();
+  const { resolvedTheme } = useTheme();
+  const queryClient = useQueryClient();
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [openDirs, setOpenDirs] = useState<Set<string>>(new Set());
+  const [fileTreeWidth, setFileTreeWidth] = useState(192);
+  const resizing = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
+
+  // Browser-only pending changes: filename → modified content
+  const [pendingChanges, setPendingChanges] = useState<Map<string, string>>(new Map());
+
+  // Original (server) content cache: filename → content
+  const [originalContents, setOriginalContents] = useState<Map<string, string>>(new Map());
+
+  const editorRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+
+  const { data: fileList, isLoading: filesLoading } = useQuery({
+    queryKey: ['configFiles', id],
+    queryFn: () => listConfigFiles(id!),
+    enabled: !!id,
+  });
+
+  const { data: fileContent, isLoading: contentLoading } = useQuery({
+    queryKey: ['configFile', id, selectedFile],
+    queryFn: () => getConfigFile(id!, selectedFile!),
+    enabled: !!id && !!selectedFile,
+  });
+
+  // Auto-select first file
+  useEffect(() => {
+    if (!selectedFile && fileList?.files?.length) {
+      setSelectedFile(fileList.files[0].name);
+    }
+  }, [fileList, selectedFile]);
+
+  const allowEdit = fileList?.allowConfigEdit ?? false;
+
+  // Cache original content when fetched
+  useEffect(() => {
+    if (fileContent?.name && fileContent?.content != null) {
+      setOriginalContents(prev => {
+        const next = new Map(prev);
+        next.set(fileContent.name, fileContent.content);
+        return next;
+      });
+    }
+  }, [fileContent?.name, fileContent?.content]);
+
+  const hasAnyChanges = pendingChanges.size > 0;
+  const currentFileOriginal = selectedFile ? originalContents.get(selectedFile) ?? '' : '';
+  const currentFilePending = selectedFile ? pendingChanges.get(selectedFile) : undefined;
+  // Update change markers in editor when content or pending changes change
+  const updateGutterMarkers = useCallback((view: EditorView, original: string) => {
+    const current = view.state.doc.toString();
+    const changes = computeLineChanges(original, current);
+    view.dispatch({ effects: setChangeMarkers.of(changes) });
+  }, []);
+
+  // Create/update editor
+  useEffect(() => {
+    if (!editorRef.current || !selectedFile) return;
+    if (fileContent?.content == null) return;
+
+    const original = originalContents.get(selectedFile) ?? fileContent.content;
+    const docContent = pendingChanges.get(selectedFile) ?? fileContent.content;
+
+    // Destroy old editor
+    if (viewRef.current) {
+      viewRef.current.destroy();
+      viewRef.current = null;
+    }
+
+    const extensions = [
+      changeMarkersField,
+      createChangeGutter(() => setShowDiff(true)),
+      lineNumbers(),
+      highlightActiveLine(),
+      highlightActiveLineGutter(),
+      drawSelection(),
+      bracketMatching(),
+      foldGutter(),
+      indentOnInput(),
+      highlightSelectionMatches(),
+      getLanguageExtension(selectedFile),
+      resolvedTheme === 'dark'
+        ? [materialDarkTheme, syntaxHighlighting(materialDarkHighlightStyle)]
+        : [neatTheme, syntaxHighlighting(neatHighlightStyle)],
+      editorStructuralTheme,
+      history(),
+      keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+      EditorView.editable.of(allowEdit),
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          const newContent = update.state.doc.toString();
+          // Update pending changes
+          if (newContent !== original) {
+            setPendingChanges(prev => {
+              const next = new Map(prev);
+              next.set(selectedFile, newContent);
+              return next;
+            });
+          } else {
+            // Content matches original — remove from pending
+            setPendingChanges(prev => {
+              const next = new Map(prev);
+              next.delete(selectedFile);
+              return next;
+            });
+          }
+          // Update gutter markers
+          updateGutterMarkers(update.view, original);
+        }
+      }),
+    ];
+
+    const state = EditorState.create({
+      doc: docContent,
+      extensions,
+    });
+
+    const view = new EditorView({
+      state,
+      parent: editorRef.current,
+    });
+
+    viewRef.current = view;
+
+    // Set initial gutter markers
+    const initialChanges = computeLineChanges(original, docContent);
+    view.dispatch({ effects: setChangeMarkers.of(initialChanges) });
+
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
+  }, [fileContent?.content, fileContent?.name, selectedFile, allowEdit, originalContents, resolvedTheme]);
+
+  const handleValidate = useCallback(async () => {
+    if (!id || validating) return;
+    setValidating(true);
+    try {
+      // Build the files map: start with originals, overlay pending changes
+      const files: Record<string, string> = {};
+      for (const [name, content] of pendingChanges) {
+        files[name] = content;
+      }
+      const result = await validateConfig(id, files);
+      if (result.valid) {
+        toast.success('Validation passed');
+      } else {
+        toast.error('Validation failed', {
+          description: result.errors?.join('\n') ?? 'Unknown error',
+        });
+      }
+      return result.valid;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Validation failed';
+      toast.error('Validation failed', { description: msg });
+      return false;
+    } finally {
+      setValidating(false);
+    }
+  }, [id, validating, pendingChanges]);
+
+  const handleSave = useCallback(async () => {
+    if (!id || saving || !hasAnyChanges) return;
+
+    // Validate first
+    setSaving(true);
+    try {
+      const files: Record<string, string> = {};
+      for (const [name, content] of pendingChanges) {
+        files[name] = content;
+      }
+      const validation = await validateConfig(id, files);
+      if (!validation.valid) {
+        toast.error('Save aborted: validation failed', {
+          description: validation.errors?.join('\n') ?? 'Unknown error',
+        });
+        return;
+      }
+
+      // Save all modified files
+      for (const [name, content] of pendingChanges) {
+        await writeConfigFile(id, name, content);
+      }
+
+      // Reload config after saving
+      await reloadConfig(id);
+
+      toast.success(`Saved ${pendingChanges.size} file${pendingChanges.size > 1 ? 's' : ''}`);
+
+      // Clear pending changes and refresh
+      setPendingChanges(new Map());
+      queryClient.invalidateQueries({ queryKey: ['configFiles', id] });
+      queryClient.invalidateQueries({ queryKey: ['instance', id] });
+      queryClient.invalidateQueries({ queryKey: ['instances'] });
+      for (const name of pendingChanges.keys()) {
+        queryClient.invalidateQueries({ queryKey: ['configFile', id, name] });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Save failed';
+      toast.error('Save failed', { description: msg });
+    } finally {
+      setSaving(false);
+    }
+  }, [id, saving, hasAnyChanges, pendingChanges, queryClient]);
+
+  const handleUndoAll = useCallback(() => {
+    setPendingChanges(new Map());
+    // Force editor to reload original content
+    if (selectedFile) {
+      queryClient.invalidateQueries({ queryKey: ['configFile', id, selectedFile] });
+    }
+  }, [selectedFile, id, queryClient]);
+
+  const handleReload = useCallback(async () => {
+    if (!id || reloading) return;
+    setReloading(true);
+    try {
+      await reloadConfig(id);
+      toast.success('Config reloaded');
+      setPendingChanges(new Map());
+      queryClient.invalidateQueries({ queryKey: ['instance', id] });
+      queryClient.invalidateQueries({ queryKey: ['instances'] });
+      queryClient.invalidateQueries({ queryKey: ['configFiles', id] });
+      if (selectedFile) {
+        queryClient.invalidateQueries({ queryKey: ['configFile', id, selectedFile] });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Reload failed';
+      toast.error('Reload failed', { description: msg });
+    } finally {
+      setReloading(false);
+    }
+  }, [id, reloading, selectedFile, queryClient]);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    resizing.current = true;
+    const startX = e.clientX;
+    const startWidth = fileTreeWidth;
+    const onMouseMove = (e: MouseEvent) => {
+      if (!resizing.current) return;
+      const newWidth = Math.max(120, Math.min(400, startWidth + e.clientX - startX));
+      setFileTreeWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      resizing.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [fileTreeWidth]);
+
+  if (filesLoading) return <div className="p-8 text-muted-foreground">Loading...</div>;
+  if (!fileList) return <div className="p-8 text-muted-foreground">No config files found.</div>;
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-2 border-b shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">Config</span>
+          <span className="text-xs text-muted-foreground font-mono">{fileList.path}</span>
+          {hasAnyChanges && (
+            <span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
+              {pendingChanges.size} unsaved change{pendingChanges.size > 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {hasAnyChanges && (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                onClick={handleUndoAll}
+              >
+                <Undo2 className="h-3.5 w-3.5" />
+                Undo All
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                onClick={handleValidate}
+                disabled={validating}
+              >
+                <CheckCircle className="h-3.5 w-3.5" />
+                {validating ? 'Validating...' : 'Validate'}
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                onClick={handleSave}
+                disabled={saving}
+              >
+                <Save className="h-3.5 w-3.5" />
+                {saving ? 'Saving...' : 'Save'}
+              </Button>
+            </>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs gap-1.5"
+            onClick={handleReload}
+            disabled={reloading}
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', reloading && 'animate-spin')} />
+            Reload
+          </Button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex flex-1 min-h-0">
+        {/* File tree */}
+        <div className="shrink-0 border-r overflow-y-auto" style={{ width: fileTreeWidth }}>
+          <div className="p-2">
+            {(() => {
+              // Sort files: root files first, then grouped by directory
+              const sorted = [...fileList.files].sort((a, b) => {
+                const aDir = a.name.includes('/') ? a.name.substring(0, a.name.lastIndexOf('/')) : '';
+                const bDir = b.name.includes('/') ? b.name.substring(0, b.name.lastIndexOf('/')) : '';
+                if (aDir === bDir) return a.name.localeCompare(b.name);
+                if (aDir === '') return -1;
+                if (bDir === '') return 1;
+                return aDir.localeCompare(bDir);
+              });
+
+              // Group files by directory
+              const rootFiles: typeof sorted = [];
+              const dirGroups = new Map<string, typeof sorted>();
+              for (const file of sorted) {
+                const dir = file.name.includes('/') ? file.name.substring(0, file.name.lastIndexOf('/')) : '';
+                if (!dir) {
+                  rootFiles.push(file);
+                } else {
+                  if (!dirGroups.has(dir)) dirGroups.set(dir, []);
+                  dirGroups.get(dir)!.push(file);
+                }
+              }
+
+              const toggleDir = (dir: string) => {
+                setOpenDirs(prev => {
+                  const next = new Set(prev);
+                  if (next.has(dir)) next.delete(dir);
+                  else next.add(dir);
+                  return next;
+                });
+              };
+
+              const renderFile = (file: typeof sorted[0], _indented?: boolean) => {
+                const isModified = pendingChanges.has(file.name);
+                const basename = file.name.includes('/') ? file.name.substring(file.name.lastIndexOf('/') + 1) : file.name;
+                return (
+                  <button
+                    key={file.name}
+                    onClick={() => { setSelectedFile(file.name); setShowDiff(false); }}
+                    className={cn(
+                      'flex items-center gap-2 w-full px-2 py-1 rounded text-xs text-left',
+                      selectedFile === file.name
+                        ? 'bg-muted font-medium'
+                        : 'hover:bg-muted/50 text-muted-foreground',
+                    )}
+                  >
+                    <FileCode className={cn('h-3.5 w-3.5 shrink-0', isModified && 'text-yellow-500')} />
+                    <span className={cn('truncate', isModified && 'text-yellow-600 dark:text-yellow-400 font-medium')}>
+                      {basename}
+                    </span>
+                  </button>
+                );
+              };
+
+              return (
+                <>
+                  {rootFiles.map(f => renderFile(f))}
+                  {[...dirGroups.entries()].map(([dir, files]) => {
+                    const isOpen = openDirs.has(dir);
+                    return (
+                      <div key={dir}>
+                        <button
+                          onClick={() => toggleDir(dir)}
+                          className="flex items-center gap-2 w-full px-2 py-1 rounded text-xs text-left hover:bg-muted/50 text-muted-foreground"
+                        >
+                          {isOpen
+                            ? <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                            : <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                          }
+                          <span className="truncate">{dir}</span>
+                        </button>
+                        {isOpen && (
+                          <div className="ml-[15px] pl-px border-l border-border">
+                            {files.map(f => renderFile(f, true))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* Resize handle */}
+        <div
+          onMouseDown={handleResizeStart}
+          className="w-1 shrink-0 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors"
+        />
+
+        {/* Editor */}
+        <div className="flex-1 min-h-0 relative">
+          {contentLoading ? (
+            <div className="p-4 text-sm text-muted-foreground">Loading...</div>
+          ) : !selectedFile ? (
+            <div className="p-4 text-sm text-muted-foreground">Select a file to view.</div>
+          ) : showDiff ? (
+            <DiffViewer
+              original={currentFileOriginal}
+              modified={currentFilePending ?? currentFileOriginal}
+              onClose={() => setShowDiff(false)}
+            />
+          ) : (
+            <div ref={editorRef} className="absolute inset-0 overflow-hidden" />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

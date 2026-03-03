@@ -1,6 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
-import { listInstances } from '@/api/client';
+import { toast } from 'sonner';
+import { listInstances, reloadConfig } from '@/api/client';
 import {
   Sidebar,
   SidebarContent,
@@ -21,19 +23,40 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Rocket, Bot, Puzzle, History } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Rocket, Bot, Puzzle, RefreshCw, History, FileCode } from 'lucide-react';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 const navItems = [
   { label: 'Missions', path: 'missions', icon: Rocket },
+  { label: 'History', path: 'history', icon: History },
   { label: 'Agents', path: 'agents', icon: Bot },
   { label: 'Plugins', path: 'plugins', icon: Puzzle },
-  { label: 'History', path: 'history', icon: History },
+  { label: 'Config', path: 'config', icon: FileCode },
 ];
 
 export function AppSidebar() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
+  const [reloading, setReloading] = useState(false);
+
+  const handleReload = async () => {
+    if (!id || reloading) return;
+    setReloading(true);
+    try {
+      await reloadConfig(id);
+      toast.success('Config reloaded');
+      queryClient.invalidateQueries({ queryKey: ['instances'] });
+      queryClient.invalidateQueries({ queryKey: ['instance', id] });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Reload failed';
+      toast.error('Config reload failed', { description: msg });
+    } finally {
+      setReloading(false);
+    }
+  };
 
   const { data: instances } = useQuery({
     queryKey: ['instances'],
@@ -50,9 +73,11 @@ export function AppSidebar() {
 
   // Determine active nav item from URL
   const activePath = location.pathname.split('/').at(-1) ?? '';
-  // Handle nested paths like /missions/:name/run
+  // Handle nested paths like /missions/:name/run and /runs/:mid
   const activeSection = location.pathname.includes('/missions/') && location.pathname.includes('/run')
     ? 'missions'
+    : location.pathname.includes('/runs/')
+    ? 'history'
     : activePath;
 
   return (
@@ -80,13 +105,26 @@ export function AppSidebar() {
           </SelectContent>
         </Select>
         {currentInstance && (
-          <div className="mt-2 text-xs text-muted-foreground">
-            v{currentInstance.version}
+          <div className="mt-2 flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">v{currentInstance.version}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5"
+              onClick={handleReload}
+              disabled={reloading || !currentInstance.connected}
+              title="Reload config"
+            >
+              <RefreshCw className={`h-3 w-3 ${reloading ? 'animate-spin' : ''}`} />
+            </Button>
+            <div className="ml-auto">
+              <ThemeToggle />
+            </div>
           </div>
         )}
       </SidebarHeader>
 
-      <SidebarSeparator />
+      <SidebarSeparator className="!w-auto" />
 
       <SidebarContent>
         <SidebarGroup>

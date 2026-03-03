@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { getInstance, getMissionHistory } from '@/api/client';
 import { StatusBadge, formatTime, formatDuration } from '@/lib/mission-utils';
 
 export function MissionHistory() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { data: instance } = useQuery({
     queryKey: ['instance', id],
     queryFn: () => getInstance(id!),
@@ -29,11 +30,11 @@ export function MissionHistory() {
       {isLoading && <p className="text-muted-foreground">Loading history...</p>}
       {error && <p className="text-destructive">Error: {(error as Error).message}</p>}
 
-      {history && history.missions.length === 0 && (
+      {history && (!history.missions || history.missions.length === 0) && (
         <p className="text-muted-foreground">No mission runs yet.</p>
       )}
 
-      {history && history.missions.length > 0 && (
+      {history && history.missions && history.missions.length > 0 && (
         <div className="bg-card rounded-lg border overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -46,7 +47,7 @@ export function MissionHistory() {
             </thead>
             <tbody>
               {history.missions.map((m) => (
-                <tr key={m.id} className="border-b last:border-b-0 hover:bg-muted/50">
+                <tr key={m.id} className="border-b last:border-b-0 hover:bg-muted/50 cursor-pointer" onClick={() => navigate(`/instances/${id}/runs/${m.id}`)}>
                   <td className="px-4 py-3 font-medium">{m.name}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={m.status} />
@@ -66,7 +67,7 @@ export function MissionHistory() {
 
       {history && (
         <p className="text-xs text-muted-foreground mt-3">
-          Showing {history.missions.length} of {history.total} runs
+          Showing {history.missions?.length ?? 0} of {history.total} runs
         </p>
       )}
     </div>

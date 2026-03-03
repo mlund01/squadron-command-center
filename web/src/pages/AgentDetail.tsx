@@ -20,17 +20,11 @@ import { subscribeChatEvents } from '@/api/chat-sse';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { StatusBadge, formatTime } from '@/lib/mission-utils';
 import { useResizablePanel } from '@/hooks/use-resizable-panel';
 import { ZoomControls } from '@/components/zoom-controls';
-import type { AgentInfo, MissionInfo, PluginInfo, ToolInfo, ChatSessionInfo, ChatMessageInfo, ChatEvent } from '@/api/types';
+import type { AgentInfo, MissionInfo, PluginInfo, ToolInfo, ChatSessionInfo, ChatEvent } from '@/api/types';
 
 /* ── Chat types & component (preserved) ── */
 
@@ -52,7 +46,7 @@ function AgentChat({ instanceId, agentName, connected, initialMessages, existing
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? []);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [sessionId, setSessionId] = useState<string | undefined>(existingSessionId);
+  const sessionIdRef = useRef<string | undefined>(existingSessionId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -81,10 +75,10 @@ function AgentChat({ instanceId, agentName, connected, initialMessages, existing
 
     try {
       // Send message first — backend returns the sessionId in the ack
-      const response = await sendChatMessage(instanceId, agentName, trimmed, sessionId);
+      const response = await sendChatMessage(instanceId, agentName, trimmed, sessionIdRef.current);
       const activeSessionId = response.sessionId;
-      if (!sessionId) {
-        setSessionId(activeSessionId);
+      if (!sessionIdRef.current) {
+        sessionIdRef.current = activeSessionId;
       }
 
       // Subscribe to SSE — buffered events are replayed immediately
@@ -168,7 +162,7 @@ function AgentChat({ instanceId, agentName, connected, initialMessages, existing
   };
 
   return (
-    <div className="flex flex-col h-[60vh]">
+    <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && (
           <p className="text-muted-foreground text-sm text-center mt-8">
@@ -222,7 +216,7 @@ function AgentChat({ instanceId, agentName, connected, initialMessages, existing
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="border-t p-3 flex gap-2">
+      <div className="shrink-0 border-t p-3 flex gap-2">
         <textarea
           ref={inputRef}
           value={input}
@@ -841,24 +835,35 @@ function ChatsTabContent({
   chatHistory,
   selectedChat,
   onSelectChat,
-  chatMessages,
   connected,
   onNewChat,
-  onResumeChat,
   onArchiveChat,
+  instanceId,
+  agentName,
+  onChatCreated,
+  liveChatActive,
+  liveChatKey,
+  liveChatSessionId,
+  liveChatMessages,
 }: {
   chatHistory: ChatSessionInfo[];
   selectedChat: ChatSessionInfo | null;
-  onSelectChat: (chat: ChatSessionInfo) => void;
-  chatMessages: ChatMessageInfo[];
+  onSelectChat: (chat: ChatSessionInfo | null) => void;
   connected: boolean;
   onNewChat: () => void;
-  onResumeChat: (sessionId: string) => void;
   onArchiveChat: (sessionId: string) => void;
+  instanceId: string;
+  agentName: string;
+  onChatCreated: () => void;
+  liveChatActive: boolean;
+  liveChatKey: number;
+  liveChatSessionId?: string;
+  liveChatMessages?: ChatMessage[];
 }) {
   if (!connected) {
     return <p className="text-sm text-muted-foreground p-4">Instance disconnected. Chat history unavailable.</p>;
   }
+
   return (
     <div className="flex h-full">
       <div className="w-56 shrink-0 border-r overflow-y-auto">
@@ -894,37 +899,17 @@ function ChatsTabContent({
           )}
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto p-4">
-        {selectedChat ? (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <StatusBadge status={selectedChat.status} />
-                <span className="text-xs text-muted-foreground">{formatTime(selectedChat.startedAt)}</span>
-              </div>
-              <Button size="sm" variant="outline" onClick={() => onResumeChat(selectedChat.sessionId)}>
-                Resume
-              </Button>
-            </div>
-            <div className="space-y-2">
-              {chatMessages.map((msg) => (
-                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div
-                    className={`max-w-[80%] rounded-lg px-3 py-1.5 ${
-                      msg.role === 'user'
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted'
-                    }`}
-                  >
-                    <p className="text-xs whitespace-pre-wrap break-words">{msg.content}</p>
-                  </div>
-                </div>
-              ))}
-              {chatMessages.length === 0 && (
-                <p className="text-xs text-muted-foreground">No messages in this conversation.</p>
-              )}
-            </div>
-          </div>
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {liveChatActive ? (
+          <AgentChat
+            key={liveChatKey}
+            instanceId={instanceId}
+            agentName={agentName}
+            connected={connected}
+            initialMessages={liveChatMessages}
+            existingSessionId={liveChatSessionId}
+            onChatCreated={onChatCreated}
+          />
         ) : null}
       </div>
     </div>
@@ -943,10 +928,11 @@ export function AgentDetail() {
   const [selectedPlugin, setSelectedPlugin] = useState<PluginInfo | null>(null);
   const [selectedChat, setSelectedChat] = useState<ChatSessionInfo | null>(null);
 
-  // Chat dialog state (preserved)
-  const [chatDialogOpen, setChatDialogOpen] = useState(false);
-  const [resumeSessionId, setResumeSessionId] = useState<string | undefined>();
-  const [resumeMessages, setResumeMessages] = useState<ChatMessage[] | undefined>();
+  // Active chat state (inline in tab)
+  const [liveChatActive, setLiveChatActive] = useState(false);
+  const [liveChatKey, setLiveChatKey] = useState(0);
+  const [liveChatSessionId, setLiveChatSessionId] = useState<string | undefined>();
+  const [liveChatMessages, setLiveChatMessages] = useState<ChatMessage[] | undefined>();
 
   // Resizable panel + canvas
   const {
@@ -973,12 +959,6 @@ export function AgentDetail() {
     queryFn: () => getChatHistory(id!, name!),
     enabled: !!id && !!name && !!instance?.connected,
     refetchInterval: 10000,
-  });
-
-  const { data: chatMessagesData } = useQuery({
-    queryKey: ['chatMessages', id, selectedChat?.sessionId],
-    queryFn: () => getChatMessages(id!, selectedChat!.sessionId),
-    enabled: !!id && !!selectedChat?.sessionId,
   });
 
   // Derived data
@@ -1084,31 +1064,47 @@ export function AgentDetail() {
     }
   }, [missions, plugins, toolToPlugin]);
 
-  // Chat handlers (preserved)
+  // Chat handlers
   const handleNewChat = () => {
-    setResumeSessionId(undefined);
-    setResumeMessages(undefined);
-    setChatDialogOpen(true);
+    setSelectedChat(null);
+    setLiveChatActive(true);
+    setLiveChatKey((k) => k + 1);
+    setLiveChatSessionId(undefined);
+    setLiveChatMessages(undefined);
+    setActiveTab('chats');
   };
 
-  const handleResumeChat = async (sessionId: string) => {
+  const handleSelectChat = async (chat: ChatSessionInfo | null) => {
+    if (!chat) {
+      setLiveChatActive(false);
+      setLiveChatSessionId(undefined);
+      setLiveChatMessages(undefined);
+      setSelectedChat(null);
+      return;
+    }
+    setSelectedChat(chat);
     try {
-      const result = await getChatMessages(id!, sessionId);
+      const result = await getChatMessages(id!, chat.sessionId);
       const msgs: ChatMessage[] = result.messages.map((m) => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
       }));
-      setResumeSessionId(sessionId);
-      setResumeMessages(msgs);
-      setChatDialogOpen(true);
+      setLiveChatActive(true);
+      setLiveChatKey((k) => k + 1);
+      setLiveChatSessionId(chat.sessionId);
+      setLiveChatMessages(msgs);
     } catch (err) {
       console.error('Failed to load chat messages:', err);
     }
   };
 
   const handleArchiveChat = async (sessionId: string) => {
-    // Clear selection immediately before the async call
     setSelectedChat((prev) => prev?.sessionId === sessionId ? null : prev);
+    if (liveChatSessionId === sessionId) {
+      setLiveChatActive(false);
+      setLiveChatSessionId(undefined);
+      setLiveChatMessages(undefined);
+    }
     try {
       await archiveChat(id!, sessionId);
       queryClient.invalidateQueries({ queryKey: ['chatHistory', id, name] });
@@ -1119,7 +1115,6 @@ export function AgentDetail() {
 
   const handleChatCreated = () => {
     queryClient.invalidateQueries({ queryKey: ['chatHistory', id, name] });
-    queryClient.invalidateQueries({ queryKey: ['chatMessages', id] });
   };
 
   if (isLoading) return <div className="p-8 text-muted-foreground">Loading...</div>;
@@ -1202,7 +1197,14 @@ export function AgentDetail() {
                   {plugins.length}
                 </Badge>
               </TabsTrigger>
-              <TabsTrigger value="chats">Chats</TabsTrigger>
+              <TabsTrigger value="chats">
+                Chats
+                {(chatHistory?.chats?.length ?? 0) > 0 && (
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 ml-0.5">
+                    {chatHistory!.chats.length}
+                  </Badge>
+                )}
+              </TabsTrigger>
             </TabsList>
             <div className="ml-auto">
               <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={togglePanel}>
@@ -1236,38 +1238,22 @@ export function AgentDetail() {
               <ChatsTabContent
                 chatHistory={chatHistory?.chats ?? []}
                 selectedChat={selectedChat}
-                onSelectChat={setSelectedChat}
-                chatMessages={chatMessagesData?.messages ?? []}
+                onSelectChat={handleSelectChat}
                 connected={instance.connected}
                 onNewChat={handleNewChat}
-                onResumeChat={handleResumeChat}
                 onArchiveChat={handleArchiveChat}
+                instanceId={id!}
+                agentName={name!}
+                onChatCreated={handleChatCreated}
+                liveChatActive={liveChatActive}
+                liveChatKey={liveChatKey}
+                liveChatSessionId={liveChatSessionId}
+                liveChatMessages={liveChatMessages}
               />
             </TabsContent>
           </div>
         </Tabs>
       </div>
-
-      {/* Chat dialog (preserved) */}
-      <Dialog open={chatDialogOpen} onOpenChange={setChatDialogOpen}>
-        <DialogContent className="sm:max-w-2xl p-0">
-          <DialogHeader className="px-6 pt-6 pb-0">
-            <DialogTitle>
-              {resumeSessionId ? `Chat with ${agent.name}` : `New chat with ${agent.name}`}
-            </DialogTitle>
-          </DialogHeader>
-          {chatDialogOpen && (
-            <AgentChat
-              instanceId={id!}
-              agentName={name!}
-              connected={instance.connected}
-              initialMessages={resumeMessages}
-              existingSessionId={resumeSessionId}
-              onChatCreated={handleChatCreated}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

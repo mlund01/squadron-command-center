@@ -1,4 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { Toaster } from 'sonner'
+import { ThemeProvider } from './components/ThemeProvider'
 import { AppLayout } from './components/AppLayout'
 import { RootRedirect } from './pages/RootRedirect'
 import { MissionsPage } from './pages/MissionsPage'
@@ -7,10 +9,14 @@ import { PluginsPage } from './pages/PluginsPage'
 import { MissionDetail } from './pages/MissionDetail'
 import { MissionRun } from './pages/MissionRun'
 import { MissionHistory } from './pages/MissionHistory'
+import { MissionInstanceDetail } from './pages/MissionInstanceDetail'
 import { AgentDetail } from './pages/AgentDetail'
+import { ConfigPage } from './pages/ConfigPage'
 
 function App() {
   return (
+    <ThemeProvider>
+    <Toaster richColors position="bottom-right" />
     <Routes>
       <Route path="/" element={<RootRedirect />} />
       <Route path="/instances/:id" element={<AppLayout />}>
@@ -22,8 +28,11 @@ function App() {
         <Route path="history" element={<MissionHistory />} />
         <Route path="missions/:name" element={<MissionDetail />} />
         <Route path="missions/:name/run" element={<MissionRun />} />
+        <Route path="runs/:mid" element={<MissionInstanceDetail />} />
+        <Route path="config" element={<ConfigPage />} />
       </Route>
     </Routes>
+    </ThemeProvider>
   )
 }
 

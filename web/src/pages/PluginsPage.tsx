@@ -40,8 +40,8 @@ export function PluginsPage() {
                     {p.tools && p.tools.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 mt-2">
                         {p.tools.map((tool) => (
-                          <Badge key={tool} variant="outline" className="text-xs font-mono">
-                            {tool}
+                          <Badge key={tool.name} variant="outline" className="text-xs font-mono">
+                            {tool.name}
                           </Badge>
                         ))}
                       </div>
@@ -63,8 +63,8 @@ export function PluginsPage() {
                     {p.tools && p.tools.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 mt-2">
                         {p.tools.map((tool) => (
-                          <Badge key={tool} variant="outline" className="text-xs font-mono">
-                            {tool}
+                          <Badge key={tool.name} variant="outline" className="text-xs font-mono">
+                            {tool.name}
                           </Badge>
                         ))}
                       </div>

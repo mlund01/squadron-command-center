@@ -15,6 +15,7 @@ import (
 func main() {
 	addr := flag.String("addr", ":8080", "HTTP server listen address")
 	webDir := flag.String("web-dir", "", "Path to web/dist directory (defaults to web/dist relative to executable)")
+	disableConfigEdit := flag.Bool("disable-config-edit", false, "Disable editing config files from the web UI")
 	flag.Parse()
 
 	// Resolve web directory
@@ -31,7 +32,7 @@ func main() {
 		log.Fatalf("Web directory not found at %s: %v", dir, err)
 	}
 
-	srv, err := server.New(*addr, os.DirFS(dir))
+	srv, err := server.New(*addr, os.DirFS(dir), !*disableConfigEdit)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}

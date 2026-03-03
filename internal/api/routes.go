@@ -13,10 +13,24 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub) {
 	mux.HandleFunc("GET /api/instances/{id}", handleGetInstance(h))
 	mux.HandleFunc("GET /api/instances/{id}/config", handleGetConfig(h))
 
+	// Config reload
+	mux.HandleFunc("POST /api/instances/{id}/reload", handleReloadConfig(h))
+
+	// Config file operations
+	mux.HandleFunc("GET /api/instances/{id}/config/files", handleListConfigFiles(h))
+	mux.HandleFunc("GET /api/instances/{id}/config/files/{name...}", handleGetConfigFile(h))
+	mux.HandleFunc("PUT /api/instances/{id}/config/files/{name...}", handleWriteConfigFile(h))
+	mux.HandleFunc("POST /api/instances/{id}/config/validate", handleValidateConfig(h))
+
 	// Mission execution endpoints
 	mux.HandleFunc("POST /api/instances/{id}/missions/{name}/run", handleRunMission(h))
 	mux.HandleFunc("GET /api/instances/{id}/missions/{mid}/events", handleMissionEvents(h))
 	mux.HandleFunc("GET /api/instances/{id}/history", handleMissionHistory(h))
+	mux.HandleFunc("GET /api/instances/{id}/missions/{mid}/detail", handleGetMission(h))
+	mux.HandleFunc("GET /api/instances/{id}/missions/{mid}/history-events", handleGetMissionEvents(h))
+	mux.HandleFunc("GET /api/instances/{id}/tasks/{tid}/detail", handleGetTaskDetail(h))
+	mux.HandleFunc("GET /api/instances/{id}/missions/{mid}/datasets", handleGetDatasets(h))
+	mux.HandleFunc("GET /api/instances/{id}/datasets/{did}/items", handleGetDatasetItems(h))
 
 	// Agent chat endpoints
 	mux.HandleFunc("POST /api/instances/{id}/agents/{name}/chat", handleChatMessage(h))

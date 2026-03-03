@@ -21,8 +21,8 @@ type Server struct {
 
 // New creates a new Server listening on the given address.
 // webFS should be an fs.FS pointing at the web/dist directory.
-func New(addr string, webFS fs.FS) (*Server, error) {
-	h := hub.New()
+func New(addr string, webFS fs.FS, allowConfigEdit bool) (*Server, error) {
+	h := hub.New(allowConfigEdit)
 	mux := http.NewServeMux()
 
 	// WebSocket endpoint for squadron instances

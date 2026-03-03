@@ -98,6 +98,15 @@ func (r *Registry) GetInstance(instanceID string) *InstanceState {
 	return &cp
 }
 
+// UpdateConfig updates the cached config for an instance.
+func (r *Registry) UpdateConfig(instanceID string, config protocol.InstanceConfig) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if state, ok := r.instances[instanceID]; ok {
+		state.Config = config
+	}
+}
+
 // ListInstances returns all known instances.
 func (r *Registry) ListInstances() []InstanceState {
 	r.mu.RLock()

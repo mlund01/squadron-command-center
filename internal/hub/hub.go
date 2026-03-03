@@ -16,16 +16,18 @@ var upgrader = websocket.Upgrader{
 
 // Hub manages all WebSocket connections from squadron instances.
 type Hub struct {
-	mu          sync.RWMutex
-	connections map[string]*Connection // instanceID → connection
-	registry    *Registry
+	mu              sync.RWMutex
+	connections     map[string]*Connection // instanceID → connection
+	registry        *Registry
+	AllowConfigEdit bool
 }
 
 // New creates a new Hub.
-func New() *Hub {
+func New(allowConfigEdit bool) *Hub {
 	return &Hub{
-		connections: make(map[string]*Connection),
-		registry:    NewRegistry(),
+		connections:     make(map[string]*Connection),
+		registry:        NewRegistry(),
+		AllowConfigEdit: allowConfigEdit,
 	}
 }
 
