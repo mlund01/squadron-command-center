@@ -9,6 +9,8 @@ const (
 	EventMissionStarted   MissionEventType = "mission_started"
 	EventMissionCompleted MissionEventType = "mission_completed"
 	EventMissionFailed    MissionEventType = "mission_failed"
+	EventMissionStopped   MissionEventType = "mission_stopped"
+	EventMissionResumed   MissionEventType = "mission_resumed"
 
 	// Task lifecycle
 	EventTaskStarted   MissionEventType = "task_started"
@@ -35,6 +37,9 @@ const (
 
 	// Compaction events
 	EventCompaction MissionEventType = "compaction"
+
+	// Session turn telemetry
+	EventSessionTurn MissionEventType = "session_turn"
 
 	// Agent events
 	EventAgentStarted      MissionEventType = "agent_started"
@@ -64,6 +69,14 @@ type MissionCompletedData struct {
 type MissionFailedData struct {
 	MissionName string `json:"missionName"`
 	Error       string `json:"error"`
+}
+
+type MissionStoppedData struct {
+	MissionID string `json:"missionId"`
+}
+
+type MissionResumedData struct {
+	MissionID string `json:"missionId"`
 }
 
 // Task lifecycle
@@ -167,6 +180,24 @@ type CompactionData struct {
 	TokenLimit        int    `json:"tokenLimit"`
 	MessagesCompacted int    `json:"messagesCompacted"`
 	TurnRetention     int    `json:"turnRetention"`
+}
+
+// Session turn telemetry
+
+type SessionTurnData struct {
+	TaskName                 string `json:"taskName"`
+	Entity                   string `json:"entity"` // "commander" or agent name
+	Model                    string `json:"model"`
+	InputTokens              int    `json:"inputTokens"`
+	OutputTokens             int    `json:"outputTokens"`
+	CacheCreationInputTokens int    `json:"cacheCreationInputTokens,omitempty"`
+	CacheReadInputTokens     int    `json:"cacheReadInputTokens,omitempty"`
+	CachedTokens             int    `json:"cachedTokens,omitempty"`
+	UserMessages             int    `json:"userMessages"`
+	AssistantMessages        int    `json:"assistantMessages"`
+	SystemMessages           int    `json:"systemMessages"`
+	PayloadBytes             int    `json:"payloadBytes"`
+	TurnDurationMs           int64  `json:"turnDurationMs"`
 }
 
 // Agent events

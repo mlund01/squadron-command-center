@@ -22,9 +22,13 @@ const (
 	TypeGetConfigResult MessageType = "get_config_result"
 
 	// Mission execution
-	TypeRunMission    MessageType = "run_mission"
-	TypeRunMissionAck MessageType = "run_mission_ack"
-	TypeMissionEvent  MessageType = "mission_event"
+	TypeRunMission      MessageType = "run_mission"
+	TypeRunMissionAck   MessageType = "run_mission_ack"
+	TypeStopMission     MessageType = "stop_mission"
+	TypeStopMissionAck  MessageType = "stop_mission_ack"
+	TypeResumeMission     MessageType = "resume_mission"
+	TypeResumeMissionAck  MessageType = "resume_mission_ack"
+	TypeMissionEvent    MessageType = "mission_event"
 	TypeMissionComplete MessageType = "mission_complete"
 
 	// Historical queries

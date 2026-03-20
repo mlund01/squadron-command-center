@@ -163,6 +163,30 @@ type RunMissionAckPayload struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
+// StopMissionPayload is sent by commander to stop a running mission.
+type StopMissionPayload struct {
+	MissionID string `json:"missionId"`
+}
+
+// StopMissionAckPayload is the instance's response to a stop request.
+type StopMissionAckPayload struct {
+	Accepted bool   `json:"accepted"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// ResumeMissionPayload is sent by commander to resume a failed/stopped mission.
+type ResumeMissionPayload struct {
+	MissionID   string `json:"missionId"`
+	MissionName string `json:"missionName"`
+}
+
+// ResumeMissionAckPayload is the instance's response to a resume request.
+type ResumeMissionAckPayload struct {
+	Accepted  bool   `json:"accepted"`
+	MissionID string `json:"missionId,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 // MissionEventPayload wraps a streaming mission execution event.
 type MissionEventPayload struct {
 	MissionID string          `json:"missionId"`

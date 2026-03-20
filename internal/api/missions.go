@@ -72,6 +72,105 @@ func handleRunMission(h *hub.Hub) http.HandlerFunc {
 	}
 }
 
+func handleStopMission(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		instanceID := r.PathValue("id")
+		missionID := r.PathValue("mid")
+
+		instance := h.GetRegistry().GetInstance(instanceID)
+		if instance == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "instance not found"})
+			return
+		}
+		if !instance.Connected {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "instance disconnected"})
+			return
+		}
+
+		req, err := protocol.NewRequest(protocol.TypeStopMission, &protocol.StopMissionPayload{
+			MissionID: missionID,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		resp, err := h.SendRequest(instanceID, req, proxyTimeout)
+		if err != nil {
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": fmt.Sprintf("request failed: %v", err)})
+			return
+		}
+
+		var ack protocol.StopMissionAckPayload
+		if err := protocol.DecodePayload(resp, &ack); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "invalid response from instance"})
+			return
+		}
+
+		if !ack.Accepted {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": ack.Reason})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+	}
+}
+
+func handleResumeMission(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		instanceID := r.PathValue("id")
+		missionID := r.PathValue("mid")
+
+		instance := h.GetRegistry().GetInstance(instanceID)
+		if instance == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "instance not found"})
+			return
+		}
+		if !instance.Connected {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "instance disconnected"})
+			return
+		}
+
+		var body struct {
+			MissionName string `json:"missionName"`
+		}
+		if r.Body != nil {
+			json.NewDecoder(r.Body).Decode(&body)
+		}
+
+		req, err := protocol.NewRequest(protocol.TypeResumeMission, &protocol.ResumeMissionPayload{
+			MissionID:   missionID,
+			MissionName: body.MissionName,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		resp, err := h.SendRequest(instanceID, req, proxyTimeout)
+		if err != nil {
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": fmt.Sprintf("request failed: %v", err)})
+			return
+		}
+
+		var ack protocol.ResumeMissionAckPayload
+		if err := protocol.DecodePayload(resp, &ack); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "invalid response from instance"})
+			return
+		}
+
+		if !ack.Accepted {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": ack.Reason})
+			return
+		}
+
+		writeJSON(w, http.StatusAccepted, map[string]string{
+			"missionId": ack.MissionID,
+			"status":    "resumed",
+		})
+	}
+}
+
 func handleMissionEvents(h *hub.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		instanceID := r.PathValue("id")

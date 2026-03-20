@@ -13,13 +13,14 @@ import {
 } from '@xyflow/react';
 import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
-import { ChevronsDown, ChevronsUp, ChevronDown, Repeat, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronsDown, ChevronsUp, ChevronDown, Repeat, ChevronLeft, ChevronRight, HelpCircle, Square, RotateCcw } from 'lucide-react';
 
-import { getInstance, getMissionDetail, getMissionEvents, getTaskDetail, getRunDatasets, getDatasetItems, getChatMessages } from '@/api/client';
+import { getInstance, getMissionDetail, getMissionEvents, getTaskDetail, getRunDatasets, getDatasetItems, getChatMessages, stopMission, resumeMission } from '@/api/client';
 import { subscribeMissionEvents } from '@/api/sse';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { StatusBadge, formatTime, formatDuration } from '@/lib/mission-utils';
 import { useResizablePanel } from '@/hooks/use-resizable-panel';
@@ -40,6 +41,7 @@ function RunTaskNode({ data, selected }: { data: Record<string, unknown>; select
   const borderColor = status === 'completed' ? 'border-green-500'
     : status === 'running' ? 'border-blue-500'
     : status === 'failed' ? 'border-red-500'
+    : status === 'stopped' ? 'border-orange-500'
     : 'border-border';
 
   return (
@@ -64,6 +66,7 @@ function RunTaskNode({ data, selected }: { data: Record<string, unknown>; select
               status === 'completed' ? 'bg-green-500' :
               status === 'running' ? 'bg-blue-500 animate-pulse' :
               status === 'failed' ? 'bg-red-500' :
+              status === 'stopped' ? 'bg-orange-500' :
               'bg-muted-foreground/30'
             )} />
             <span className="font-semibold text-sm">{task.name}</span>
@@ -146,6 +149,7 @@ function parseTaskConfig(task: MissionTaskRecord): TaskInfo | null {
 
 const VERBOSE_EVENTS = new Set([
   'agent_thinking', 'agent_answer', 'commander_reasoning', 'commander_answer',
+  'session_turn', 'mission_stopped', 'mission_resumed',
 ]);
 
 function getEventBg(eventType: string): string {
@@ -368,6 +372,7 @@ interface GanttSpan {
   category: 'commander' | 'agent' | 'tool' | 'dataset_next';
   sessionId?: string;
   toolResult?: ToolResultDTO;
+  breaks?: number[]; // timestamps where a break (stop→resume gap) occurred
 }
 
 const SPAN_COLORS: Record<GanttSpan['category'], string> = {
@@ -489,8 +494,9 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedIteration, setSelectedIteration] = useState<number | null>(null);
   const [selection, setSelection] = useState<PanelSelection>(null);
-  const [traceView, setTraceView] = useState<'detail' | 'subtasks' | 'output' | 'iterations' | 'flamegraph' | 'table'>('detail');
+  const [traceView, setTraceView] = useState<'detail' | 'subtasks' | 'output' | 'iterations' | 'flamegraph' | 'table' | 'telemetry'>('detail');
   const [collapsedRows, setCollapsedRows] = useState<Set<string>>(new Set());
+  const [telemetryEntityFilter, setTelemetryEntityFilter] = useState('all');
 
   const selectedSessionId = selection?.type === 'session' ? selection.sessionId : null;
 
@@ -571,43 +577,92 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
   // Tool results from API, filtered by iteration
   const allToolResults = taskDetail?.toolResults ?? [];
 
-  // Gantt time range from all sessions and tool results
+  // Parse all mission events (not filtered by task — includes mission-level lifecycle events)
+  const allMissionEvents = useMemo(() => {
+    if (!missionEventsData?.events) return [];
+    return missionEventsData.events.map(e => {
+      let data: Record<string, unknown> = {};
+      try { data = JSON.parse(e.dataJson || '{}'); } catch { /* skip */ }
+      return { ...e, data, time: new Date(e.createdAt).getTime() };
+    });
+  }, [missionEventsData]);
+
+  // Latest event timestamp — the "now" for the flamegraph. Purely event-driven.
+  const latestEventTime = useMemo(() => {
+    if (allMissionEvents.length === 0) return 0;
+    return Math.max(...allMissionEvents.map(e => e.time));
+  }, [allMissionEvents]);
+
+  // Stop/resume gap computation — pairs stop[i] with resume[i] to get dead-time intervals
+  const { gaps, compressTime, resumeBreaks } = useMemo(() => {
+    const stops: number[] = [];
+    const resumes: number[] = [];
+    for (const e of allMissionEvents) {
+      if (e.eventType === 'mission_stopped') stops.push(e.time);
+      if (e.eventType === 'mission_resumed') resumes.push(e.time);
+    }
+    stops.sort((a, b) => a - b);
+    resumes.sort((a, b) => a - b);
+
+    // Pair each stop with the next resume to form gaps
+    const gapList: { start: number; end: number; duration: number }[] = [];
+    for (let i = 0; i < Math.min(stops.length, resumes.length); i++) {
+      if (resumes[i] > stops[i]) {
+        gapList.push({ start: stops[i], end: resumes[i], duration: resumes[i] - stops[i] });
+      }
+    }
+
+    // compressTime: map a raw timestamp to compressed time by subtracting elapsed gaps
+    const compress = (t: number): number => {
+      let offset = 0;
+      for (const g of gapList) {
+        if (t <= g.start) break;
+        if (t >= g.end) {
+          offset += g.duration;
+        } else {
+          // Inside a gap — clamp to gap start
+          offset += t - g.start;
+          break;
+        }
+      }
+      return t - offset;
+    };
+
+    // Break points in compressed time (where each resume lands after gap removal)
+    const breaks = resumes.slice(0, gapList.length).map(r => compress(r));
+
+    return { gaps: gapList, compressTime: compress, resumeBreaks: breaks };
+  }, [allMissionEvents]);
+
+  // Task-specific events (filtered by selected task name)
+  const taskEvents = useMemo(() => {
+    if (!selectedTask) return [];
+    return allMissionEvents.filter(e => {
+      const evtTaskName = String(e.data.taskName || '');
+      const baseName = selectedTask.taskName;
+      return evtTaskName === baseName || evtTaskName.startsWith(baseName + '[');
+    });
+  }, [allMissionEvents, selectedTask]);
+
+  // Gantt time range — driven entirely by events, with stop/resume gaps compressed out
   const { ganttStart, ganttEnd, ganttDuration } = useMemo(() => {
     if (allSessions.length === 0) return { ganttStart: 0, ganttEnd: 0, ganttDuration: 1 };
     let earliest = Infinity;
     let latest = 0;
     for (const s of allSessions) {
-      const start = new Date(s.startedAt).getTime();
-      const end = s.finishedAt ? new Date(s.finishedAt).getTime() : Date.now();
+      const start = compressTime(new Date(s.startedAt).getTime());
+      const end = compressTime(s.finishedAt ? new Date(s.finishedAt).getTime() : latestEventTime);
       if (start < earliest) earliest = start;
       if (end > latest) latest = end;
     }
-    // Extend bounds to include tool results that fall outside session timestamps
     for (const tr of allToolResults) {
-      const s = new Date(tr.startedAt).getTime();
-      const e = new Date(tr.finishedAt).getTime();
+      const s = compressTime(new Date(tr.startedAt).getTime());
+      const e = compressTime(new Date(tr.finishedAt).getTime());
       if (s < earliest) earliest = s;
       if (e > latest) latest = e;
     }
     return { ganttStart: earliest, ganttEnd: latest, ganttDuration: Math.max(latest - earliest, 1) };
-  }, [allSessions, allToolResults]);
-
-  // Parse events for this task (always include all iterations for flame graph)
-  const taskEvents = useMemo(() => {
-    if (!missionEventsData?.events || !selectedTask) return [];
-    return missionEventsData.events
-      .map(e => {
-        let data: Record<string, unknown> = {};
-        try { data = JSON.parse(e.dataJson || '{}'); } catch { /* skip */ }
-        return { ...e, data, time: new Date(e.createdAt).getTime() };
-      })
-      .filter(e => {
-        const evtTaskName = String(e.data.taskName || '');
-        const baseName = selectedTask.taskName;
-        // Match exact name or iteration pattern (e.g. "task[0]")
-        return evtTaskName === baseName || evtTaskName.startsWith(baseName + '[');
-      });
-  }, [missionEventsData, selectedTask]);
+  }, [allSessions, allToolResults, latestEventTime, compressTime]);
 
   // Session IDs for current iteration (used to filter tool results, subtasks, etc.)
   const iterationSessionIds = useMemo(() => new Set(sessions.map(s => s.id)), [sessions]);
@@ -705,64 +760,135 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
   const ganttLines = useMemo((): GanttSpan[][] => {
     const lines: GanttSpan[][] = [];
 
-    // Line 1: Commander session
-    const cmdr = allSessions.find(s => s.role === 'commander');
+    // Helper: compress a raw timestamp or use latestEventTime as fallback for open-ended spans
+    const ct = compressTime;
+    const cEnd = compressTime(latestEventTime);
+
+    // Line 1: Commander session(s) — merged into one span with break markers at resume points
+    const cmdrSessions = allSessions
+      .filter(s => s.role === 'commander')
+      .sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
+    const cmdr = cmdrSessions[0];
     if (cmdr) {
+      const lastCmdr = cmdrSessions[cmdrSessions.length - 1];
+      const spanStart = ct(new Date(cmdr.startedAt).getTime());
+      const spanEnd = lastCmdr.finishedAt ? ct(new Date(lastCmdr.finishedAt).getTime()) : cEnd;
+      // Break markers: resumeBreaks that fall within this span (already in compressed time)
+      const breaks = resumeBreaks.filter(t => t > spanStart && t < spanEnd);
       lines.push([{
         id: cmdr.id, label: 'commander',
-        start: new Date(cmdr.startedAt).getTime(),
-        end: cmdr.finishedAt ? new Date(cmdr.finishedAt).getTime() : Date.now(),
-        category: 'commander', sessionId: cmdr.id,
+        start: spanStart, end: spanEnd,
+        category: 'commander', sessionId: lastCmdr.id,
+        breaks: breaks.length > 0 ? breaks : undefined,
       }]);
     }
 
-    // Line 2: Commander's tool calls from tool results (always show all)
+    // Collect agent sessions early — used for lines 3+
+    const agentSessions = allSessions.filter(s => s.role !== 'commander');
+
+    // Line 2: Commander's tool calls + agent spans from events
     const cmdrResults = allToolResults.filter(tr => cmdr && tr.sessionId === cmdr.id);
-    if (cmdrResults.length > 0) {
-      const line2: GanttSpan[] = cmdrResults.map(tr => {
-        // call_agent: show as agent-colored span with agent name
-        if (tr.toolName === 'call_agent') {
-          let agentName = 'agent';
-          try {
-            const parsed = JSON.parse(tr.inputParams || '{}');
-            if (parsed.name) agentName = parsed.name;
-          } catch { /* use default */ }
-          return {
-            id: tr.id, label: agentName,
-            start: new Date(tr.startedAt).getTime(),
-            end: new Date(tr.finishedAt).getTime(),
-            category: 'agent' as const, toolResult: tr,
-          };
-        }
-        return {
-          id: tr.id, label: tr.toolName,
-          start: new Date(tr.startedAt).getTime(),
-          end: new Date(tr.finishedAt).getTime(),
-          category: (tr.toolName === 'dataset_next' ? 'dataset_next' : 'tool') as GanttSpan['category'], toolResult: tr,
-        };
+    const line2: GanttSpan[] = cmdrResults
+      .filter(tr => tr.toolName !== 'call_agent')
+      .map(tr => ({
+        id: tr.id, label: tr.toolName,
+        start: ct(new Date(tr.startedAt).getTime()),
+        end: tr.finishedAt ? ct(new Date(tr.finishedAt).getTime()) : cEnd,
+        category: (tr.toolName === 'dataset_next' ? 'dataset_next' : 'tool') as GanttSpan['category'], toolResult: tr,
+      }));
+
+    // Build agent spans from agent_started / agent_completed event pairs.
+    // Segments interrupted by mission_stopped are merged into one continuous span
+    // per call_agent invocation, with break markers at resume points (like commander).
+    const stopTimes = allMissionEvents
+      .filter(e => e.eventType === 'mission_stopped')
+      .map(e => e.time)
+      .sort((a, b) => a - b);
+    const agentStarts = taskEvents.filter(e => e.eventType === 'agent_started');
+    const agentCompletes = [...taskEvents.filter(e => e.eventType === 'agent_completed')];
+
+    // First pass: build individual segments (start → complete or start → stop)
+    type AgentSegment = { agentName: string; startTime: number; endTime: number; completed: boolean; startId: string };
+    const segments: AgentSegment[] = [];
+    for (const startEvt of agentStarts) {
+      const agentName = String(startEvt.data.agentName || 'agent');
+      const nextStop = stopTimes.find(t => t > startEvt.time);
+      const completeEvt = agentCompletes.find(e =>
+        String(e.data.agentName || '') === agentName && e.time >= startEvt.time
+      );
+      const interrupted = nextStop != null && (!completeEvt || nextStop < completeEvt.time);
+      if (!interrupted && completeEvt) {
+        agentCompletes.splice(agentCompletes.indexOf(completeEvt), 1);
+      }
+      segments.push({
+        agentName,
+        startTime: startEvt.time,
+        endTime: interrupted ? nextStop! : (completeEvt ? completeEvt.time : latestEventTime),
+        completed: !interrupted && !!completeEvt,
+        startId: startEvt.id,
       });
+    }
+
+    // Second pass: merge consecutive segments for the same agent across stop/resume gaps.
+    // Merge consecutive interrupted segments for the same agent into one span.
+    // A completed segment ends the merge — the next start for the same agent is a new call_agent.
+    const mergedAgentSpans: { agentName: string; start: number; end: number; breaks: number[]; id: string }[] = [];
+    let current: typeof mergedAgentSpans[0] | null = null;
+    let lastWasInterrupted = false;
+    for (const seg of segments) {
+      const shouldMerge = current
+        && current.agentName === seg.agentName
+        && lastWasInterrupted;
+
+      if (shouldMerge) {
+        const breakTime = ct(seg.startTime);
+        if (breakTime > current!.start) {
+          current!.breaks.push(breakTime);
+        }
+        current!.end = ct(seg.endTime);
+      } else {
+        if (current) mergedAgentSpans.push(current);
+        current = {
+          agentName: seg.agentName,
+          start: ct(seg.startTime),
+          end: ct(seg.endTime),
+          breaks: [],
+          id: seg.startId,
+        };
+      }
+      lastWasInterrupted = !seg.completed;
+    }
+    if (current) mergedAgentSpans.push(current);
+
+    for (const span of mergedAgentSpans) {
+      line2.push({
+        id: `agent-evt-${span.id}`, label: span.agentName,
+        start: span.start, end: span.end,
+        category: 'agent' as const,
+        breaks: span.breaks.length > 0 ? span.breaks : undefined,
+      });
+    }
+
+    if (line2.length > 0) {
       line2.sort((a, b) => a.start - b.start);
       lines.push(line2);
     }
 
     // Lines 3+: Agent tool calls, one line per agent session
-    const agentSessions = allSessions.filter(s => s.role !== 'commander');
     for (const agentSession of agentSessions) {
       const agentResults = allToolResults.filter(tr => tr.sessionId === agentSession.id);
-      if (agentResults.length > 0) {
-        const line: GanttSpan[] = agentResults.map(tr => ({
-          id: tr.id, label: tr.toolName,
-          start: new Date(tr.startedAt).getTime(),
-          end: new Date(tr.finishedAt).getTime(),
-          category: 'tool' as const, toolResult: tr,
-        }));
-        line.sort((a, b) => a.start - b.start);
-        lines.push(line);
-      }
+      const line: GanttSpan[] = agentResults.map(tr => ({
+        id: tr.id, label: tr.toolName,
+        start: ct(new Date(tr.startedAt).getTime()),
+        end: tr.finishedAt ? ct(new Date(tr.finishedAt).getTime()) : cEnd,
+        category: 'tool' as const, toolResult: tr,
+      }));
+      line.sort((a, b) => a.start - b.start);
+      lines.push(line);
     }
 
     return lines;
-  }, [allSessions, allToolResults]);
+  }, [allSessions, allToolResults, taskEvents, allMissionEvents, latestEventTime, compressTime, resumeBreaks]);
 
   // Reasoning ticks for flame graph: map spanId → array of { pct, time } within each session/agent span
   const messageTicks = useMemo(() => {
@@ -794,11 +920,12 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
 
         for (const evt of taskEvents) {
           if (!REASONING_EVENTS.has(evt.eventType)) continue;
-          if (evt.time < span.start || evt.time > span.end) continue;
+          const ct = compressTime(evt.time);
+          if (ct < span.start || ct > span.end) continue;
           if (!isCmd && evt.data.agentName !== session.agentName) continue;
 
-          const pct = ((evt.time - span.start) / spanDur) * 100;
-          spanTicks.push({ pct, time: evt.time });
+          const pct = ((ct - span.start) / spanDur) * 100;
+          spanTicks.push({ pct, time: ct });
         }
 
         if (spanTicks.length > 0) {
@@ -815,7 +942,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
       }
     }
     return ticks;
-  }, [ganttLines, taskEvents, sessionMap, findAgentSession]);
+  }, [ganttLines, taskEvents, sessionMap, findAgentSession, compressTime]);
 
   // State for scrolling to a specific activity event in the detail panel
   const [scrollToActivityTime, setScrollToActivityTime] = useState<number | null>(null);
@@ -829,7 +956,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
     const session = allSessions.find(s => s.id === selectedSessionId);
     if (!session) return [];
     const sStart = new Date(session.startedAt).getTime();
-    const sEnd = session.finishedAt ? new Date(session.finishedAt).getTime() + 1000 : Date.now();
+    const sEnd = session.finishedAt ? new Date(session.finishedAt).getTime() + 1000 : latestEventTime;
     const isCmd = session.role === 'commander';
 
     // For iterated tasks, match the iteration-specific taskName (e.g. "write_story[0]")
@@ -1049,6 +1176,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                   task.status === 'completed' ? 'bg-green-500' :
                   task.status === 'running' ? 'bg-blue-500 animate-pulse' :
                   task.status === 'failed' ? 'bg-red-500' :
+                  task.status === 'stopped' ? 'bg-orange-500' :
                   'bg-muted-foreground/30'
                 )} />
                 <span className="truncate">{task.taskName}</span>
@@ -1082,6 +1210,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                 )}
                 <TabsTrigger value="flamegraph" className="text-xs px-2 py-1">Flame Graph</TabsTrigger>
                 <TabsTrigger value="table" className="text-xs px-2 py-1">Table</TabsTrigger>
+                <TabsTrigger value="telemetry" className="text-xs px-2 py-1">Telemetry</TabsTrigger>
               </TabsList>
             </div>
 
@@ -1214,6 +1343,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                           selectedTask.status === 'completed' ? 'text-green-500' :
                           selectedTask.status === 'failed' ? 'text-red-500' :
                           selectedTask.status === 'running' ? 'text-blue-500' :
+                          selectedTask.status === 'stopped' ? 'text-orange-500' :
                           'text-muted-foreground'
                         }>{selectedTask.status}</span>
                         {selectedTask.startedAt && (
@@ -1487,11 +1617,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                           const durLabel = ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
                           const isSelected = (span.sessionId && selection?.type === 'session' && selection.sessionId === span.sessionId)
                             || (span.toolResult && selection?.type === 'tool' && selection.toolResult.id === span.toolResult.id)
-                            || (span.category === 'agent' && selection?.type === 'session' && selection.agentName && span.label === selection.agentName)
-                            || (span.toolResult?.toolName === 'call_agent' && selection?.type === 'session' && !selection.agentName && (() => {
-                              const as = findAgentSession(span.toolResult!);
-                              return as && as.id === selection.sessionId;
-                            })());
+                            || (span.category === 'agent' && selection?.type === 'session' && selection.agentName && span.label === selection.agentName);
                           const clampedLeft = Math.max(0, left);
                           const clampedWidth = Math.min(100 - clampedLeft, Math.max(0.3, left + width - clampedLeft));
                           return (
@@ -1509,10 +1635,10 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                               }
                               title={`${span.label} (${durLabel})`}
                               onClick={() => {
-                                if (span.category === 'agent' && span.toolResult?.toolName === 'call_agent') {
-                                  const agentSession = findAgentSession(span.toolResult);
+                                if (span.category === 'agent') {
+                                  // Agent spans built from events — find the agent session by name
+                                  const agentSession = allSessions.find(s => s.role !== 'commander' && s.agentName === span.label);
                                   if (agentSession) setSelection({ type: 'session', sessionId: agentSession.id, agentName: span.label });
-                                  else setSelection({ type: 'tool', toolResult: span.toolResult });
                                 }
                                 else if (span.sessionId) setSelection({ type: 'session', sessionId: span.sessionId });
                                 else if (span.toolResult) setSelection({ type: 'tool', toolResult: span.toolResult });
@@ -1526,6 +1652,26 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                                   {durLabel}
                                 </span>
                               )}
+                              {/* Break markers (lightning bolt) for stop→resume gaps */}
+                              {span.breaks?.map((breakTime, bi) => {
+                                const breakPct = ((toPercent(breakTime) - clampedLeft) / clampedWidth) * 100;
+                                if (breakPct < 0 || breakPct > 100) return null;
+                                return (
+                                  <div
+                                    key={`break-${bi}`}
+                                    className="absolute top-0 h-full pointer-events-none z-20 flex items-center justify-center"
+                                    style={{ left: `${breakPct}%`, transform: 'translateX(-50%)' }}
+                                    title="Resumed after stop"
+                                  >
+                                    {/* Vertical gap line */}
+                                    <div className="absolute top-0 h-full w-[2px] bg-black/40" />
+                                    {/* Lightning bolt */}
+                                    <svg viewBox="0 0 12 20" className="w-3 h-5 relative z-10 drop-shadow-md" fill="none">
+                                      <path d="M7 0L2 9h3.5L4 20l7-12H7.5L10 0z" fill="#facc15" stroke="#000" strokeWidth="0.5" />
+                                    </svg>
+                                  </div>
+                                );
+                              })}
                               {/* Reasoning tick marks */}
                               {messageTicks.get(span.id)?.map((tick, ti) => {
                                 // Adjust tick position for clamped span bounds
@@ -1626,8 +1772,8 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                       const cmdr = allSessions.find(s => s.role === 'commander');
                       if (cmdr) {
                         const cmdrRowId = `session-${cmdr.id}`;
-                        const startMs = new Date(cmdr.startedAt).getTime();
-                        const endMs = cmdr.finishedAt ? new Date(cmdr.finishedAt).getTime() : Date.now();
+                        const startMs = compressTime(new Date(cmdr.startedAt).getTime());
+                        const endMs = compressTime(cmdr.finishedAt ? new Date(cmdr.finishedAt).getTime() : latestEventTime);
 
                         // Commander's tool results, sorted by time (always show all)
                         const cmdrResults = allToolResults
@@ -1652,18 +1798,18 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                             } catch { /* use toolName */ }
                           }
 
-                          const trStart = new Date(tr.startedAt).getTime();
-                          const trEnd = new Date(tr.finishedAt).getTime();
+                          const trStart = compressTime(new Date(tr.startedAt).getTime());
+                          const trEnd = compressTime(tr.finishedAt ? new Date(tr.finishedAt).getTime() : latestEventTime);
 
                           // Collect agent children first to know if this row has children
                           let agentResults: typeof allToolResults = [];
                           if (isAgentCall) {
-                            const agentSessions = allSessions.filter(s => s.role !== 'commander');
+                            const agentSessionsForTable = allSessions.filter(s => s.role !== 'commander');
                             agentResults = allToolResults
                               .filter(atr => {
                                 if (atr.sessionId === cmdr.id) return false;
                                 const aStart = new Date(atr.startedAt).getTime();
-                                return agentSessions.some(as => as.id === atr.sessionId)
+                                return agentSessionsForTable.some(as => as.id === atr.sessionId)
                                   && aStart >= trStart && aStart <= trEnd;
                               })
                               .sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
@@ -1685,8 +1831,8 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                           });
 
                           for (const atr of agentResults) {
-                            const aStart = new Date(atr.startedAt).getTime();
-                            const aEnd = new Date(atr.finishedAt).getTime();
+                            const aStart = compressTime(new Date(atr.startedAt).getTime());
+                            const aEnd = compressTime(atr.finishedAt ? new Date(atr.finishedAt).getTime() : latestEventTime);
                             rows.push({
                               id: `tr-${atr.id}`, parentId: trRowId, depth: 2, hasChildren: false,
                               type: 'Tool', typeColor: 'bg-teal-500',
@@ -1766,6 +1912,144 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
               </div>
               </div>
               )}
+            </TabsContent>
+
+            {/* Telemetry view */}
+            <TabsContent value="telemetry" className="flex-1 relative min-h-0 m-0">
+              {(() => {
+                const events = (missionEventsData?.events ?? [])
+                  .filter(e => e.eventType === 'session_turn' && e.taskId === selectedTaskId)
+                  .map(e => {
+                    try { return { ...JSON.parse(e.dataJson || '{}'), createdAt: e.createdAt }; } catch { return null; }
+                  })
+                  .filter(Boolean) as Array<{
+                    entity: string; model?: string; inputTokens: number; outputTokens: number;
+                    cacheCreationInputTokens?: number; cacheReadInputTokens?: number; cachedTokens?: number;
+                    userMessages: number; assistantMessages: number; systemMessages: number;
+                    payloadBytes: number; turnDurationMs: number; createdAt: string;
+                  }>;
+
+                const entities = ['all', ...Array.from(new Set(events.map(e => e.entity)))];
+                const filtered = telemetryEntityFilter === 'all' ? events : events.filter(e => e.entity === telemetryEntityFilter);
+
+                const totals = filtered.reduce((acc, e) => ({
+                  inputTokens: acc.inputTokens + e.inputTokens,
+                  outputTokens: acc.outputTokens + e.outputTokens,
+                  cacheCreation: acc.cacheCreation + (e.cacheCreationInputTokens || 0),
+                  cacheRead: acc.cacheRead + (e.cacheReadInputTokens || 0),
+                  cached: acc.cached + (e.cachedTokens || 0),
+                  payloadBytes: acc.payloadBytes + e.payloadBytes,
+                  duration: acc.duration + e.turnDurationMs,
+                }), { inputTokens: 0, outputTokens: 0, cacheCreation: 0, cacheRead: 0, cached: 0, payloadBytes: 0, duration: 0 });
+
+                const fmtBytes = (b: number) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`;
+                const fmtNum = (n: number) => n.toLocaleString();
+
+                return (
+                  <div className="absolute inset-0 overflow-auto p-3 space-y-3">
+                    {/* Filter */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Session:</span>
+                      <select
+                        value={telemetryEntityFilter}
+                        onChange={e => setTelemetryEntityFilter(e.target.value)}
+                        className="text-xs border rounded px-2 py-0.5 bg-background"
+                      >
+                        {entities.map(e => (
+                          <option key={e} value={e}>{e === 'all' ? 'All sessions' : e}</option>
+                        ))}
+                      </select>
+                      <span className="text-xs text-muted-foreground ml-auto">{filtered.length} turns</span>
+                    </div>
+
+                    {filtered.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No telemetry data for this task.</p>
+                    ) : (
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 bg-background z-10">
+                          <tr className="border-b text-left text-muted-foreground">
+                            <th className="px-2 py-1 font-medium">#</th>
+                            <th className="px-2 py-1 font-medium">Entity</th>
+                            <th className="px-2 py-1 font-medium">Model</th>
+                            <th className="px-2 py-1 font-medium text-right">
+                              <span className="inline-flex items-center gap-1">Input
+                                <Tooltip><TooltipTrigger asChild><HelpCircle className="size-3 text-muted-foreground/50" /></TooltipTrigger>
+                                <TooltipContent>Total input tokens (uncached + cache write + cache read)</TooltipContent></Tooltip>
+                              </span>
+                            </th>
+                            <th className="px-2 py-1 font-medium text-right">
+                              <span className="inline-flex items-center gap-1">Output
+                                <Tooltip><TooltipTrigger asChild><HelpCircle className="size-3 text-muted-foreground/50" /></TooltipTrigger>
+                                <TooltipContent>Tokens generated by the LLM</TooltipContent></Tooltip>
+                              </span>
+                            </th>
+                            <th className="px-2 py-1 font-medium text-right">
+                              <span className="inline-flex items-center gap-1">Cache Write
+                                <Tooltip><TooltipTrigger asChild><HelpCircle className="size-3 text-muted-foreground/50" /></TooltipTrigger>
+                                <TooltipContent>Tokens written to cache this turn (billed at 1.25x input rate)</TooltipContent></Tooltip>
+                              </span>
+                            </th>
+                            <th className="px-2 py-1 font-medium text-right">
+                              <span className="inline-flex items-center gap-1">Cache Read
+                                <Tooltip><TooltipTrigger asChild><HelpCircle className="size-3 text-muted-foreground/50" /></TooltipTrigger>
+                                <TooltipContent>Tokens read from cache (billed at 0.1x input rate)</TooltipContent></Tooltip>
+                              </span>
+                            </th>
+                            <th className="px-2 py-1 font-medium text-right">
+                              <span className="inline-flex items-center gap-1">Msgs (U/A/S)
+                                <Tooltip><TooltipTrigger asChild><HelpCircle className="size-3 text-muted-foreground/50" /></TooltipTrigger>
+                                <TooltipContent>Message count by role: User / Assistant / System</TooltipContent></Tooltip>
+                              </span>
+                            </th>
+                            <th className="px-2 py-1 font-medium text-right">Payload</th>
+                            <th className="px-2 py-1 font-medium text-right">Duration</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filtered.map((e, i) => {
+                            const totalInput = e.inputTokens + (e.cacheCreationInputTokens || 0) + (e.cacheReadInputTokens || 0);
+                            const cacheWrite = e.cacheCreationInputTokens || 0;
+                            const cacheRead = e.cacheReadInputTokens || 0;
+                            return (
+                              <tr key={i} className="border-b border-border/30 hover:bg-muted/30">
+                                <td className="px-2 py-1 tabular-nums text-muted-foreground">{i + 1}</td>
+                                <td className="px-2 py-1">
+                                  <Badge variant={e.entity === 'commander' ? 'outline' : 'secondary'} className="text-[10px] px-1.5 py-0">
+                                    {e.entity}
+                                  </Badge>
+                                </td>
+                                <td className="px-2 py-1 text-muted-foreground">{e.model || '—'}</td>
+                                <td className="px-2 py-1 text-right tabular-nums">{fmtNum(totalInput)}</td>
+                                <td className="px-2 py-1 text-right tabular-nums">{fmtNum(e.outputTokens)}</td>
+                                <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">{cacheWrite > 0 ? fmtNum(cacheWrite) : '—'}</td>
+                                <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">{cacheRead > 0 ? fmtNum(cacheRead) : '—'}</td>
+                                <td className="px-2 py-1 text-right tabular-nums">{e.userMessages}/{e.assistantMessages}/{e.systemMessages}</td>
+                                <td className="px-2 py-1 text-right tabular-nums">{fmtBytes(e.payloadBytes)}</td>
+                                <td className="px-2 py-1 text-right tabular-nums">{(e.turnDurationMs / 1000).toFixed(1)}s</td>
+                              </tr>
+                            );
+                          })}
+                          {/* Totals row */}
+                          <tr className="border-t-2 font-medium">
+                            <td className="px-2 py-1.5" colSpan={3}>Total ({filtered.length} turns)</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(totals.inputTokens + totals.cacheCreation + totals.cacheRead)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(totals.outputTokens)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+                              {totals.cacheCreation > 0 ? fmtNum(totals.cacheCreation) : '—'}
+                            </td>
+                            <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+                              {totals.cacheRead > 0 ? fmtNum(totals.cacheRead) : '—'}
+                            </td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">—</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{fmtBytes(totals.payloadBytes)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{(totals.duration / 1000).toFixed(1)}s</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                );
+              })()}
             </TabsContent>
           </Tabs>
         ) : (
@@ -2232,6 +2516,43 @@ export function MissionInstanceDetail() {
                 )}
               </div>
             </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {isRunning && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-red-500 border-red-500/30 hover:bg-red-500/10"
+                onClick={async () => {
+                  try {
+                    await stopMission(id!, mid!);
+                    queryClient.invalidateQueries({ queryKey: ['missionDetail', id, mid] });
+                  } catch (e: unknown) {
+                    console.error('Failed to stop mission:', e);
+                  }
+                }}
+              >
+                <Square className="h-3.5 w-3.5 mr-1.5" />
+                Stop
+              </Button>
+            )}
+            {(mission.status === 'failed' || mission.status === 'stopped') && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    await resumeMission(id!, mid!, mission.name);
+                    queryClient.invalidateQueries({ queryKey: ['missionDetail', id, mid] });
+                  } catch (e: unknown) {
+                    console.error('Failed to resume mission:', e);
+                  }
+                }}
+              >
+                <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                Restart
+              </Button>
+            )}
           </div>
         </div>
       </div>

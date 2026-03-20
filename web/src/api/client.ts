@@ -31,6 +31,20 @@ export async function runMission(instanceId: string, missionName: string, inputs
   });
 }
 
+export async function stopMission(instanceId: string, missionId: string): Promise<{ status: string }> {
+  return fetchJSON<{ status: string }>(`/instances/${instanceId}/missions/${missionId}/stop`, {
+    method: 'POST',
+  });
+}
+
+export async function resumeMission(instanceId: string, missionId: string, missionName: string): Promise<{ missionId: string; status: string }> {
+  return fetchJSON<{ missionId: string; status: string }>(`/instances/${instanceId}/missions/${missionId}/resume`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ missionName }),
+  });
+}
+
 export async function getMissionHistory(instanceId: string): Promise<MissionHistoryResponse> {
   return fetchJSON<MissionHistoryResponse>(`/instances/${instanceId}/history`);
 }

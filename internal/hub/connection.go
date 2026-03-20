@@ -222,7 +222,7 @@ func (c *Connection) fanOutMissionComplete(env *protocol.Envelope) {
 			MissionName: payload.MissionID,
 		},
 	}
-	if payload.Status == "failed" {
+	if payload.Status == "failed" || payload.Status == "stopped" {
 		terminalEvent.EventType = protocol.EventMissionFailed
 		terminalEvent.Data = protocol.MissionFailedData{Error: payload.Error}
 	}

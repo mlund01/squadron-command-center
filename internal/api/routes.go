@@ -24,6 +24,8 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub) {
 
 	// Mission execution endpoints
 	mux.HandleFunc("POST /api/instances/{id}/missions/{name}/run", handleRunMission(h))
+	mux.HandleFunc("POST /api/instances/{id}/missions/{mid}/stop", handleStopMission(h))
+	mux.HandleFunc("POST /api/instances/{id}/missions/{mid}/resume", handleResumeMission(h))
 	mux.HandleFunc("GET /api/instances/{id}/missions/{mid}/events", handleMissionEvents(h))
 	mux.HandleFunc("GET /api/instances/{id}/history", handleMissionHistory(h))
 	mux.HandleFunc("GET /api/instances/{id}/missions/{mid}/detail", handleGetMission(h))

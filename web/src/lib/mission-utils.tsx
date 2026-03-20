@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 export function StatusBadge({ status }: { status: string }) {
   const variant = status === 'completed' ? 'default' as const
     : status === 'failed' ? 'destructive' as const
+    : status === 'stopped' ? 'outline' as const
     : 'secondary' as const;
   return <Badge variant={variant}>{status}</Badge>;
 }

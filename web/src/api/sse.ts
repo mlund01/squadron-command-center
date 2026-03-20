@@ -30,13 +30,14 @@ export function subscribeMissionEvents(
 
   // Listen for all event types we care about
   const eventTypes = [
-    'mission_started', 'mission_completed', 'mission_failed',
+    'mission_started', 'mission_completed', 'mission_failed', 'mission_stopped', 'mission_resumed',
     'task_started', 'task_completed', 'task_failed',
     'task_iteration_started', 'task_iteration_completed',
     'iteration_started', 'iteration_completed', 'iteration_failed', 'iteration_retrying',
     'commander_reasoning', 'commander_answer', 'commander_calling_tool', 'commander_tool_complete',
     'agent_started', 'agent_completed', 'agent_thinking', 'agent_calling_tool', 'agent_tool_complete', 'agent_answer',
     'compaction',
+    'session_turn',
   ];
 
   for (const type of eventTypes) {
