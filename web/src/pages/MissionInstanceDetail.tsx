@@ -494,9 +494,9 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedIteration, setSelectedIteration] = useState<number | null>(null);
   const [selection, setSelection] = useState<PanelSelection>(null);
-  const [traceView, setTraceView] = useState<'detail' | 'subtasks' | 'output' | 'iterations' | 'flamegraph' | 'table' | 'telemetry'>('detail');
+  const [traceView, setTraceView] = useState<'detail' | 'subtasks' | 'output' | 'iterations' | 'flamegraph' | 'table' | 'turns'>('detail');
   const [collapsedRows, setCollapsedRows] = useState<Set<string>>(new Set());
-  const [telemetryEntityFilter, setTelemetryEntityFilter] = useState('all');
+  const [turnsEntityFilter, setTurnsEntityFilter] = useState('all');
 
   const selectedSessionId = selection?.type === 'session' ? selection.sessionId : null;
 
@@ -644,67 +644,18 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
     });
   }, [allMissionEvents, selectedTask]);
 
-  // Gantt time range — driven entirely by events, with stop/resume gaps compressed out
-  const { ganttStart, ganttDuration } = useMemo(() => {
-    if (allSessions.length === 0) return { ganttStart: 0, ganttEnd: 0, ganttDuration: 1 };
-    let earliest = Infinity;
-    let latest = 0;
-    for (const s of allSessions) {
-      const start = compressTime(new Date(s.startedAt).getTime());
-      const end = compressTime(s.finishedAt ? new Date(s.finishedAt).getTime() : latestEventTime);
-      if (start < earliest) earliest = start;
-      if (end > latest) latest = end;
-    }
-    for (const tr of allToolResults) {
-      const s = compressTime(new Date(tr.startedAt).getTime());
-      const e = compressTime(new Date(tr.finishedAt).getTime());
-      if (s < earliest) earliest = s;
-      if (e > latest) latest = e;
-    }
-    return { ganttStart: earliest, ganttEnd: latest, ganttDuration: Math.max(latest - earliest, 1) };
-  }, [allSessions, allToolResults, latestEventTime, compressTime]);
-
-  // Session IDs for current iteration (used to filter tool results, subtasks, etc.)
+  // Session IDs for current iteration (used to filter subtasks, etc.)
   const iterationSessionIds = useMemo(() => new Set(sessions.map(s => s.id)), [sessions]);
 
-  const toolResults = useMemo(() => {
-    if (!isIterated || selectedIteration == null) return allToolResults;
-    if (!isParallelIteration) {
-      // Sequential: partition by dataset_next boundaries
-      // Each dataset_next marks the start of an iteration
-      const boundaries: number[] = [];
-      for (let i = 0; i < allToolResults.length; i++) {
-        if (allToolResults[i].toolName === 'dataset_next') boundaries.push(i);
-      }
-      // Iteration N = from boundaries[N] (inclusive) to boundaries[N+1] (exclusive)
-      // If no dataset_next exists for iteration 0, it starts at index 0
-      const start = boundaries[selectedIteration] != null ? boundaries[selectedIteration] : (selectedIteration === 0 ? 0 : allToolResults.length);
-      const end = boundaries[selectedIteration + 1] != null ? boundaries[selectedIteration + 1] : allToolResults.length;
-      return allToolResults.slice(start, end);
-    }
-    return allToolResults.filter(tr => iterationSessionIds.has(tr.sessionId));
-  }, [allToolResults, isIterated, isParallelIteration, selectedIteration, iterationSessionIds]);
-
-  // Set of tool result IDs in the selected iteration (for table row highlighting)
-  const iterationToolResultIds = useMemo(() => {
-    if (!isIterated || selectedIteration == null) return null;
-    return new Set(toolResults.map(tr => tr.id));
-  }, [isIterated, selectedIteration, toolResults]);
-
-  // Compute iteration time range for flame graph highlight
+  // Compute iteration time range for flame graph highlight (sequential only — parallel already scopes the entire graph)
   const iterationTimeRange = useMemo(() => {
-    if (!isIterated || selectedIteration == null) return null;
-    if (toolResults.length === 0) return null;
-    let earliest = Infinity, latest = 0;
-    for (const tr of toolResults) {
-      const s = new Date(tr.startedAt).getTime();
-      const e = new Date(tr.finishedAt).getTime();
-      if (s < earliest) earliest = s;
-      if (e > latest) latest = e;
-    }
-    if (earliest === Infinity) return null;
+    if (!isIterated || isParallelIteration || selectedIteration == null) return null;
+    const iterEvents = taskEvents.filter(e => e.iterationIndex === selectedIteration);
+    if (iterEvents.length === 0) return null;
+    const earliest = Math.min(...iterEvents.map(e => e.time));
+    const latest = Math.max(...iterEvents.map(e => e.time));
     return { start: earliest, end: latest };
-  }, [isIterated, selectedIteration, toolResults]);
+  }, [isIterated, isParallelIteration, selectedIteration, taskEvents]);
 
   // Subtasks filtered by iteration
   const subtasks = useMemo(() => {
@@ -757,57 +708,99 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
   // Line 1: Commander session (continuous bar)
   // Line 2: Commander's tool calls (call_agent shown as agent spans, others as tool spans)
   // Line 3+: Agent tool calls (grouped by agent session)
+  // Helper: pair calling_tool → tool_complete events within same sessionId
+  const pairToolEvents = useCallback((
+    events: typeof taskEvents,
+    callingType: string,
+    completeType: string,
+    fallbackEnd: number,
+  ) => {
+    const calls = events.filter(e => e.eventType === callingType);
+    const completions = [...events.filter(e => e.eventType === completeType)];
+    const pairs: { id: string; toolName: string; start: number; end: number; sessionId: string }[] = [];
+    for (const call of calls) {
+      const toolName = String(call.data.toolName || '');
+      const matchIdx = completions.findIndex(c =>
+        c.sessionId === call.sessionId &&
+        c.time >= call.time &&
+        String(c.data.toolName || '') === toolName
+      );
+      const completion = matchIdx >= 0 ? completions.splice(matchIdx, 1)[0] : null;
+      pairs.push({
+        id: call.id,
+        toolName,
+        start: call.time,
+        end: completion ? completion.time : fallbackEnd,
+        sessionId: call.sessionId || '',
+      });
+    }
+    return pairs;
+  }, []);
+
+  // Helper: find a ToolResultDTO matching an event-derived span (for detail panel click-through)
+  const findToolResultForEvent = useCallback((sessionId: string, toolName: string, startTime: number) => {
+    return allToolResults.find(tr =>
+      tr.sessionId === sessionId &&
+      tr.toolName === toolName &&
+      Math.abs(new Date(tr.startedAt).getTime() - startTime) < 2000
+    );
+  }, [allToolResults]);
+
   const ganttLines = useMemo((): GanttSpan[][] => {
     const lines: GanttSpan[][] = [];
-
-    // Helper: compress a raw timestamp or use latestEventTime as fallback for open-ended spans
     const ct = compressTime;
     const cEnd = compressTime(latestEventTime);
 
-    // Line 1: Commander session(s) — merged into one span with break markers at resume points
-    const cmdrSessions = allSessions
-      .filter(s => s.role === 'commander')
-      .sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
-    const cmdr = cmdrSessions[0];
-    if (cmdr) {
-      const lastCmdr = cmdrSessions[cmdrSessions.length - 1];
-      const spanStart = ct(new Date(cmdr.startedAt).getTime());
-      const spanEnd = lastCmdr.finishedAt ? ct(new Date(lastCmdr.finishedAt).getTime()) : cEnd;
-      // Break markers: resumeBreaks that fall within this span (already in compressed time)
+    // Filter events by iteration for parallel tasks
+    // Use iterationIndex if available, otherwise parse from taskName (e.g. "write_story[2]" → 2)
+    const activeEvents = isParallelIteration && selectedIteration != null
+      ? taskEvents.filter(e => e.iterationIndex === selectedIteration)
+      : taskEvents;
+
+    // --- Line 1: Commander span ---
+    // Use first commander event as start, last as end
+    const CMDR_EVENTS = new Set([
+      'commander_reasoning', 'commander_answer', 'commander_calling_tool', 'commander_tool_complete',
+      'iteration_reasoning', 'iteration_answer',
+    ]);
+    const cmdrEvents = activeEvents.filter(e => CMDR_EVENTS.has(e.eventType));
+    const cmdrSessionId = cmdrEvents.find(e => e.sessionId)?.sessionId;
+    if (cmdrEvents.length > 0) {
+      const spanStart = ct(Math.min(...cmdrEvents.map(e => e.time)));
+      const spanEnd = ct(Math.max(...cmdrEvents.map(e => e.time)));
       const breaks = resumeBreaks.filter(t => t > spanStart && t < spanEnd);
       lines.push([{
-        id: cmdr.id, label: 'commander',
-        start: spanStart, end: spanEnd,
-        category: 'commander', sessionId: lastCmdr.id,
+        id: cmdrSessionId || 'commander', label: 'commander',
+        start: spanStart, end: Math.max(spanEnd, cEnd),
+        category: 'commander', sessionId: cmdrSessionId,
         breaks: breaks.length > 0 ? breaks : undefined,
       }]);
     }
 
-    // Collect agent sessions early — used for lines 3+
-    const agentSessions = allSessions.filter(s => s.role !== 'commander');
+    // --- Line 2: Commander tool calls + agent spans ---
+    const line2: GanttSpan[] = [];
 
-    // Line 2: Commander's tool calls + agent spans from events
-    const cmdrResults = allToolResults.filter(tr => cmdr && tr.sessionId === cmdr.id);
-    const line2: GanttSpan[] = cmdrResults
-      .filter(tr => tr.toolName !== 'call_agent')
-      .map(tr => ({
-        id: tr.id, label: tr.toolName,
-        start: ct(new Date(tr.startedAt).getTime()),
-        end: tr.finishedAt ? ct(new Date(tr.finishedAt).getTime()) : cEnd,
-        category: (tr.toolName === 'dataset_next' ? 'dataset_next' : 'tool') as GanttSpan['category'], toolResult: tr,
-      }));
+    // Commander tool calls (excluding call_agent — those become agent spans)
+    const cmdrToolPairs = pairToolEvents(activeEvents, 'commander_calling_tool', 'commander_tool_complete', latestEventTime);
+    for (const pair of cmdrToolPairs) {
+      if (pair.toolName === 'call_agent') continue;
+      const matchedTR = findToolResultForEvent(pair.sessionId, pair.toolName, pair.start);
+      line2.push({
+        id: pair.id, label: pair.toolName,
+        start: ct(pair.start), end: ct(pair.end),
+        category: pair.toolName === 'dataset_next' ? 'dataset_next' : 'tool',
+        toolResult: matchedTR,
+      });
+    }
 
-    // Build agent spans from agent_started / agent_completed event pairs.
-    // Segments interrupted by mission_stopped are merged into one continuous span
-    // per call_agent invocation, with break markers at resume points (like commander).
+    // Agent spans from agent_started / agent_completed events
     const stopTimes = allMissionEvents
       .filter(e => e.eventType === 'mission_stopped')
       .map(e => e.time)
       .sort((a, b) => a - b);
-    const agentStarts = taskEvents.filter(e => e.eventType === 'agent_started');
-    const agentCompletes = [...taskEvents.filter(e => e.eventType === 'agent_completed')];
+    const agentStarts = activeEvents.filter(e => e.eventType === 'agent_started');
+    const agentCompletes = [...activeEvents.filter(e => e.eventType === 'agent_completed')];
 
-    // First pass: build individual segments (start → complete or start → stop)
     type AgentSegment = { agentName: string; startTime: number; endTime: number; completed: boolean; startId: string };
     const segments: AgentSegment[] = [];
     for (const startEvt of agentStarts) {
@@ -829,32 +822,18 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
       });
     }
 
-    // Second pass: merge consecutive segments for the same agent across stop/resume gaps.
-    // Merge consecutive interrupted segments for the same agent into one span.
-    // A completed segment ends the merge — the next start for the same agent is a new call_agent.
+    // Merge consecutive interrupted segments across stop/resume gaps
     const mergedAgentSpans: { agentName: string; start: number; end: number; breaks: number[]; id: string }[] = [];
     let current: typeof mergedAgentSpans[0] | null = null;
     let lastWasInterrupted = false;
     for (const seg of segments) {
-      const shouldMerge = current
-        && current.agentName === seg.agentName
-        && lastWasInterrupted;
-
-      if (shouldMerge) {
+      if (current && current.agentName === seg.agentName && lastWasInterrupted) {
         const breakTime = ct(seg.startTime);
-        if (breakTime > current!.start) {
-          current!.breaks.push(breakTime);
-        }
-        current!.end = ct(seg.endTime);
+        if (breakTime > current.start) current.breaks.push(breakTime);
+        current.end = ct(seg.endTime);
       } else {
         if (current) mergedAgentSpans.push(current);
-        current = {
-          agentName: seg.agentName,
-          start: ct(seg.startTime),
-          end: ct(seg.endTime),
-          breaks: [],
-          id: seg.startId,
-        };
+        current = { agentName: seg.agentName, start: ct(seg.startTime), end: ct(seg.endTime), breaks: [], id: seg.startId };
       }
       lastWasInterrupted = !seg.completed;
     }
@@ -874,21 +853,51 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
       lines.push(line2);
     }
 
-    // Lines 3+: Agent tool calls, one line per agent session
-    for (const agentSession of agentSessions) {
-      const agentResults = allToolResults.filter(tr => tr.sessionId === agentSession.id);
-      const line: GanttSpan[] = agentResults.map(tr => ({
-        id: tr.id, label: tr.toolName,
-        start: ct(new Date(tr.startedAt).getTime()),
-        end: tr.finishedAt ? ct(new Date(tr.finishedAt).getTime()) : cEnd,
-        category: 'tool' as const, toolResult: tr,
-      }));
+    // --- Lines 3+: Agent tool calls, one line per agent session ---
+    const agentToolPairs = pairToolEvents(activeEvents, 'agent_calling_tool', 'agent_tool_complete', latestEventTime);
+    // Group by sessionId
+    const bySession = new Map<string, typeof agentToolPairs>();
+    for (const pair of agentToolPairs) {
+      const key = pair.sessionId;
+      if (!bySession.has(key)) bySession.set(key, []);
+      bySession.get(key)!.push(pair);
+    }
+    for (const [, pairs] of bySession) {
+      const line: GanttSpan[] = pairs.map(pair => {
+        const matchedTR = findToolResultForEvent(pair.sessionId, pair.toolName, pair.start);
+        return {
+          id: pair.id, label: pair.toolName,
+          start: ct(pair.start), end: ct(pair.end),
+          category: 'tool' as const,
+          toolResult: matchedTR,
+        };
+      });
       line.sort((a, b) => a.start - b.start);
       lines.push(line);
     }
 
     return lines;
-  }, [allSessions, allToolResults, taskEvents, allMissionEvents, latestEventTime, compressTime, resumeBreaks]);
+  }, [taskEvents, allMissionEvents, isParallelIteration, selectedIteration, latestEventTime, compressTime, resumeBreaks, pairToolEvents, findToolResultForEvent]);
+
+  // Gantt time range — derived entirely from ganttLines (event-driven)
+  const { ganttStart, ganttDuration } = useMemo(() => {
+    let earliest = Infinity;
+    let latest = 0;
+    for (const line of ganttLines) {
+      for (const span of line) {
+        if (span.start < earliest) earliest = span.start;
+        if (span.end > latest) latest = span.end;
+      }
+    }
+    if (earliest === Infinity) return { ganttStart: 0, ganttDuration: 1 };
+    return { ganttStart: earliest, ganttDuration: Math.max(latest - earliest, 1) };
+  }, [ganttLines]);
+
+  // Events filtered by iteration (same logic as ganttLines uses)
+  const activeEvents = useMemo(() => {
+    if (!(isParallelIteration && selectedIteration != null)) return taskEvents;
+    return taskEvents.filter(e => e.iterationIndex === selectedIteration);
+  }, [taskEvents, isParallelIteration, selectedIteration, ]);
 
   // Reasoning ticks for flame graph: map spanId → array of { pct, time } within each session/agent span
   const messageTicks = useMemo(() => {
@@ -918,11 +927,13 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
         const isCmd = session.role === 'commander';
         const spanTicks: { pct: number; time: number }[] = [];
 
-        for (const evt of taskEvents) {
+        for (const evt of activeEvents) {
           if (!REASONING_EVENTS.has(evt.eventType)) continue;
           const ct = compressTime(evt.time);
           if (ct < span.start || ct > span.end) continue;
-          if (!isCmd && evt.data.agentName !== session.agentName) continue;
+          // Commander spans only show commander_reasoning; agent spans only show agent_thinking
+          if (isCmd && evt.eventType !== 'commander_reasoning') continue;
+          if (!isCmd && (evt.eventType !== 'agent_thinking' || evt.data.agentName !== session.agentName)) continue;
 
           const pct = ((ct - span.start) / spanDur) * 100;
           spanTicks.push({ pct, time: ct });
@@ -942,7 +953,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
       }
     }
     return ticks;
-  }, [ganttLines, taskEvents, sessionMap, findAgentSession, compressTime]);
+  }, [ganttLines, activeEvents, sessionMap, findAgentSession, compressTime]);
 
   // State for scrolling to a specific activity event in the detail panel
   const [scrollToActivityTime, setScrollToActivityTime] = useState<number | null>(null);
@@ -1205,7 +1216,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                 )}
                 <TabsTrigger value="flamegraph" className="text-xs px-2 py-1">Flame Graph</TabsTrigger>
                 <TabsTrigger value="table" className="text-xs px-2 py-1">Table</TabsTrigger>
-                <TabsTrigger value="telemetry" className="text-xs px-2 py-1">Telemetry</TabsTrigger>
+                <TabsTrigger value="turns" className="text-xs px-2 py-1">Turns</TabsTrigger>
               </TabsList>
             </div>
 
@@ -1632,7 +1643,8 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                               onClick={() => {
                                 if (span.category === 'agent') {
                                   // Agent spans built from events — find the agent session by name
-                                  const agentSession = allSessions.find(s => s.role !== 'commander' && s.agentName === span.label);
+                                  const clickSessions = isParallelIteration && selectedIteration != null ? sessions : allSessions;
+                                  const agentSession = clickSessions.find(s => s.role !== 'commander' && s.agentName === span.label);
                                   if (agentSession) setSelection({ type: 'session', sessionId: agentSession.id, agentName: span.label });
                                 }
                                 else if (span.sessionId) setSelection({ type: 'session', sessionId: span.sessionId });
@@ -1760,82 +1772,80 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                   </thead>
                   <tbody>
                     {(() => {
-                      // Build hierarchical rows: commander → its tools/agent calls → agent's tools
-                      type TableRow = { id: string; parentId: string | null; depth: number; hasChildren: boolean; type: string; typeColor: string; name: string; startMs: number; durMs: number; agentSessionId?: string; inIteration?: boolean | null; onClick: () => void };
+                      // Build hierarchical table rows from ganttLines (event-driven)
+                      // Line 0 = commander (depth 0), Line 1 = commander tools + agents (depth 1), Lines 2+ = agent tools (depth 2)
+                      type TableRow = { id: string; parentId: string | null; depth: number; hasChildren: boolean; type: string; typeColor: string; name: string; startMs: number; durMs: number; sessionId?: string; toolResultId?: string; onClick: () => void };
                       const rows: TableRow[] = [];
 
-                      const cmdr = allSessions.find(s => s.role === 'commander');
-                      if (cmdr) {
-                        const cmdrRowId = `session-${cmdr.id}`;
-                        const startMs = compressTime(new Date(cmdr.startedAt).getTime());
-                        const endMs = compressTime(cmdr.finishedAt ? new Date(cmdr.finishedAt).getTime() : latestEventTime);
+                      if (ganttLines.length === 0) return null;
 
-                        // Commander's tool results, sorted by time (always show all)
-                        const cmdrResults = allToolResults
-                          .filter(tr => tr.sessionId === cmdr.id)
-                          .sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
-
+                      // Line 0: Commander
+                      const cmdrLine = ganttLines[0];
+                      const cmdrSpan = cmdrLine?.[0];
+                      const cmdrRowId = cmdrSpan ? `gantt-${cmdrSpan.id}` : 'commander';
+                      if (cmdrSpan) {
+                        const hasChildren = (ganttLines[1]?.length ?? 0) > 0;
                         rows.push({
-                          id: cmdrRowId, parentId: null, depth: 0, hasChildren: cmdrResults.length > 0,
-                          type: 'Commander', typeColor: 'bg-purple-500', name: 'commander',
-                          startMs, durMs: endMs - startMs, inIteration: iterationToolResultIds ? true : null,
-                          onClick: () => setSelection({ type: 'session', sessionId: cmdr.id }),
+                          id: cmdrRowId, parentId: null, depth: 0, hasChildren,
+                          type: 'Commander', typeColor: 'bg-purple-500', name: cmdrSpan.label,
+                          startMs: cmdrSpan.start, durMs: cmdrSpan.end - cmdrSpan.start,
+                          sessionId: cmdrSpan.sessionId,
+                          onClick: () => { if (cmdrSpan.sessionId) setSelection({ type: 'session', sessionId: cmdrSpan.sessionId }); },
                         });
+                      }
 
-                        for (const tr of cmdrResults) {
-                          const isAgentCall = tr.toolName === 'call_agent';
-                          const trRowId = `tr-${tr.id}`;
-                          let name = tr.toolName;
-                          if (isAgentCall) {
-                            try {
-                              const parsed = JSON.parse(tr.inputParams || '{}');
-                              if (parsed.name) name = parsed.name;
-                            } catch { /* use toolName */ }
-                          }
+                      // Line 1: Commander tools + agent spans
+                      const line1 = ganttLines[1] ?? [];
+                      // Map agent span id → whether it has children (tool lines 2+)
+                      const agentHasChildren = new Map<string, boolean>();
 
-                          const trStart = compressTime(new Date(tr.startedAt).getTime());
-                          const trEnd = compressTime(tr.finishedAt ? new Date(tr.finishedAt).getTime() : latestEventTime);
+                      // Lines 2+: agent tool lines — figure out which agent they belong to
+                      // Each agent tool line's spans share a sessionId; match to agent span by checking if agent's time range overlaps
+                      type AgentToolLine = { parentAgentId: string | null; spans: GanttSpan[] };
+                      const agentToolLines: AgentToolLine[] = [];
+                      for (let li = 2; li < ganttLines.length; li++) {
+                        const lineSpans = ganttLines[li];
+                        if (lineSpans.length === 0) continue;
+                        // Find which agent span in line1 contains these tool calls (by time overlap)
+                        const firstTool = lineSpans[0];
+                        const parentAgent = line1.find(s =>
+                          s.category === 'agent' && firstTool.start >= s.start && firstTool.start <= s.end
+                        );
+                        const parentId = parentAgent ? `gantt-${parentAgent.id}` : null;
+                        if (parentId) agentHasChildren.set(parentId, true);
+                        agentToolLines.push({ parentAgentId: parentId, spans: lineSpans });
+                      }
 
-                          // Collect agent children first to know if this row has children
-                          let agentResults: typeof allToolResults = [];
-                          if (isAgentCall) {
-                            const agentSessionsForTable = allSessions.filter(s => s.role !== 'commander');
-                            agentResults = allToolResults
-                              .filter(atr => {
-                                if (atr.sessionId === cmdr.id) return false;
-                                const aStart = new Date(atr.startedAt).getTime();
-                                return agentSessionsForTable.some(as => as.id === atr.sessionId)
-                                  && aStart >= trStart && aStart <= trEnd;
-                              })
-                              .sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
-                          }
+                      for (const span of [...line1].sort((a, b) => a.start - b.start)) {
+                        const spanRowId = `gantt-${span.id}`;
+                        const isAgent = span.category === 'agent';
+                        const isDatasetNext = span.category === 'dataset_next';
+                        rows.push({
+                          id: spanRowId, parentId: cmdrRowId, depth: 1,
+                          hasChildren: isAgent ? (agentHasChildren.get(spanRowId) ?? false) : false,
+                          type: isAgent ? 'Agent' : isDatasetNext ? 'Iterator' : 'Tool',
+                          typeColor: isAgent ? 'bg-blue-500' : isDatasetNext ? 'bg-amber-500' : 'bg-teal-500',
+                          name: span.label, startMs: span.start, durMs: span.end - span.start,
+                          sessionId: span.sessionId, toolResultId: span.toolResult?.id,
+                          onClick: () => {
+                            if (span.toolResult) { setSelection({ type: 'tool', toolResult: span.toolResult }); return; }
+                            if (span.sessionId) { setSelection({ type: 'session', sessionId: span.sessionId }); }
+                          },
+                        });
+                      }
 
-                          const resolvedAgentSession = isAgentCall ? findAgentSession(tr) : undefined;
-                          const isDatasetNext = tr.toolName === 'dataset_next';
-                          const trInIteration = iterationToolResultIds ? iterationToolResultIds.has(tr.id) : null;
+                      // Lines 2+: Agent tool calls
+                      for (const atl of agentToolLines) {
+                        for (const span of atl.spans) {
                           rows.push({
-                            id: trRowId, parentId: cmdrRowId, depth: 1, hasChildren: agentResults.length > 0,
-                            type: isAgentCall ? 'Agent' : isDatasetNext ? 'Iterator' : 'Tool',
-                            typeColor: isAgentCall ? 'bg-blue-500' : isDatasetNext ? 'bg-amber-500' : 'bg-teal-500',
-                            name, startMs: trStart, durMs: trEnd - trStart,
-                            agentSessionId: resolvedAgentSession?.id, inIteration: trInIteration,
+                            id: `gantt-${span.id}`, parentId: atl.parentAgentId, depth: 2, hasChildren: false,
+                            type: 'Tool', typeColor: 'bg-teal-500',
+                            name: span.label, startMs: span.start, durMs: span.end - span.start,
+                            toolResultId: span.toolResult?.id,
                             onClick: () => {
-                              if (resolvedAgentSession) { setSelection({ type: 'session', sessionId: resolvedAgentSession.id }); return; }
-                              setSelection({ type: 'tool', toolResult: tr });
+                              if (span.toolResult) setSelection({ type: 'tool', toolResult: span.toolResult });
                             },
                           });
-
-                          for (const atr of agentResults) {
-                            const aStart = compressTime(new Date(atr.startedAt).getTime());
-                            const aEnd = compressTime(atr.finishedAt ? new Date(atr.finishedAt).getTime() : latestEventTime);
-                            rows.push({
-                              id: `tr-${atr.id}`, parentId: trRowId, depth: 2, hasChildren: false,
-                              type: 'Tool', typeColor: 'bg-teal-500',
-                              name: atr.toolName, startMs: aStart, durMs: aEnd - aStart,
-                              inIteration: trInIteration,
-                              onClick: () => setSelection({ type: 'tool', toolResult: atr }),
-                            });
-                          }
                         }
                       }
 
@@ -1854,11 +1864,9 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                           const offsetLabel = offsetMs < 1000 ? `+${offsetMs}ms` : `+${(offsetMs / 1000).toFixed(1)}s`;
                           const durLabel = row.durMs <= 0 ? '<1ms' : row.durMs < 1000 ? `${row.durMs}ms` : `${(row.durMs / 1000).toFixed(1)}s`;
                           const isSelected =
-                            (row.id.startsWith('session-') && selection?.type === 'session' && selection.sessionId === row.id.slice(8))
-                            || (row.id.startsWith('tr-') && selection?.type === 'tool' && selection.toolResult.id === row.id.slice(3))
-                            || (row.agentSessionId != null && selection?.type === 'session' && selection.sessionId === row.agentSessionId);
+                            (selection?.type === 'session' && row.sessionId === selection.sessionId)
+                            || (selection?.type === 'tool' && row.toolResultId === selection.toolResult.id);
                           const isCollapsed = collapsedRows.has(row.id);
-                          const inIteration = row.inIteration;
 
                           return (
                             <tr
@@ -1866,8 +1874,6 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                               className={cn(
                                 'border-b border-border/30 cursor-pointer hover:bg-muted/50 transition-colors',
                                 isSelected && 'bg-muted',
-                                inIteration === false && 'opacity-40',
-                                inIteration === true && 'border-l-2 border-l-amber-400',
                               )}
                               onClick={row.onClick}
                             >
@@ -1909,8 +1915,8 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
               )}
             </TabsContent>
 
-            {/* Telemetry view */}
-            <TabsContent value="telemetry" className="flex-1 relative min-h-0 m-0">
+            {/* Turns view */}
+            <TabsContent value="turns" className="flex-1 relative min-h-0 m-0">
               {(() => {
                 const events = (missionEventsData?.events ?? [])
                   .filter(e => e.eventType === 'session_turn' && e.taskId === selectedTaskId)
@@ -1925,7 +1931,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                   }>;
 
                 const entities = ['all', ...Array.from(new Set(events.map(e => e.entity)))];
-                const filtered = telemetryEntityFilter === 'all' ? events : events.filter(e => e.entity === telemetryEntityFilter);
+                const filtered = turnsEntityFilter === 'all' ? events : events.filter(e => e.entity === turnsEntityFilter);
 
                 const totals = filtered.reduce((acc, e) => ({
                   inputTokens: acc.inputTokens + e.inputTokens,
@@ -1946,8 +1952,8 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">Session:</span>
                       <select
-                        value={telemetryEntityFilter}
-                        onChange={e => setTelemetryEntityFilter(e.target.value)}
+                        value={turnsEntityFilter}
+                        onChange={e => setTurnsEntityFilter(e.target.value)}
                         className="text-xs border rounded px-2 py-0.5 bg-background"
                       >
                         {entities.map(e => (
@@ -1958,7 +1964,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                     </div>
 
                     {filtered.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No telemetry data for this task.</p>
+                      <p className="text-sm text-muted-foreground">No turns data for this task.</p>
                     ) : (
                       <table className="w-full text-xs">
                         <thead className="sticky top-0 bg-background z-10">
