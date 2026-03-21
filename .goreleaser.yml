@@ -4,7 +4,7 @@ project_name: command-center
 
 before:
   hooks:
-    - cmd: sh -c "cd web && npm ci && npm run build"
+    - sh -c "cd web && npm ci && npm run build"
 
 builds:
   - id: command-center
