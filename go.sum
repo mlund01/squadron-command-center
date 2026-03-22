@@ -2,3 +2,5 @@ github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
+github.com/mlund01/squadron-sdk v0.0.27 h1:pOwAms+S1ckvVzlkr5p2y0wy1vIc02JsQj2OQQmzjs8=
+github.com/mlund01/squadron-sdk v0.0.27/go.mod h1:sfa7zyvk2smddBZLGLqDj5e0Ofpn/dB3zVDkaqGUUos=
