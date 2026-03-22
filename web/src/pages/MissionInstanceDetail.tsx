@@ -2409,13 +2409,22 @@ export function MissionInstanceDetail() {
     }
   }, [mission]);
 
-  // Parse task configs from stored snapshots (point-in-time, not live config)
+  // Parse task list from mission config snapshot (contains ALL tasks from mission start)
   const parsedTasks: TaskInfo[] = useMemo(() => {
+    if (mission?.configJson) {
+      try {
+        const config = JSON.parse(mission.configJson);
+        if (Array.isArray(config.tasks) && config.tasks.length > 0) {
+          return config.tasks as TaskInfo[];
+        }
+      } catch { /* fall through */ }
+    }
+    // Fallback: derive from task records (only started tasks, for older data)
     return taskRecords.map(tr => {
       const parsed = parseTaskConfig(tr);
       return parsed ?? { name: tr.taskName };
     });
-  }, [taskRecords]);
+  }, [mission?.configJson, taskRecords]);
 
   // Build status map from task records + live statuses
   const statusMap = useMemo(() => {
@@ -2486,12 +2495,9 @@ export function MissionInstanceDetail() {
   }, [isRunning, id, mid, queryClient]);
 
   const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
-    const taskRecord = taskRecords.find(t => t.taskName === node.id);
-    if (taskRecord) {
-      setSelectedTask(node.id);
-      setActiveTab('tasks');
-    }
-  }, [taskRecords]);
+    setSelectedTask(node.id);
+    setActiveTab('tasks');
+  }, []);
 
   if (instanceLoading || detailLoading) return <div className="p-8 text-muted-foreground">Loading...</div>;
   if (!instance || !mission) return <div className="p-8 text-muted-foreground">Mission run not found</div>;
