@@ -71,14 +71,26 @@ export interface TaskIteratorInfo {
   concurrencyLimit?: number;
 }
 
+export interface TaskRouteInfo {
+  target: string;
+  condition: string;
+  isMission?: boolean;
+}
+
+export interface TaskRouterInfo {
+  routes: TaskRouteInfo[];
+}
+
 export interface TaskInfo {
   name: string;
   description?: string;
   objective?: string;
+  sendTo?: string[];
   agent?: string;
   commander?: string;
   dependsOn?: string[];
   iterator?: TaskIteratorInfo;
+  router?: TaskRouterInfo;
 }
 
 export interface PluginInfo {
@@ -249,6 +261,7 @@ export interface TaskOutputInfo {
 export interface ToolResultDTO {
   id: string;
   sessionId: string;
+  toolCallId?: string;
   toolName: string;
   inputParams?: string;
   output?: string;

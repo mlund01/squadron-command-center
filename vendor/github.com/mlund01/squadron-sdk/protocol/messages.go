@@ -85,7 +85,9 @@ type TaskInfo struct {
 	Agent       string            `json:"agent,omitempty"`
 	Commander   string            `json:"commander,omitempty"`
 	DependsOn   []string          `json:"dependsOn,omitempty"`
+	SendTo      []string          `json:"sendTo,omitempty"`
 	Iterator    *TaskIteratorInfo `json:"iterator,omitempty"`
+	Router      *TaskRouterInfo   `json:"router,omitempty"`
 }
 
 type TaskIteratorInfo struct {
@@ -93,6 +95,16 @@ type TaskIteratorInfo struct {
 	Parallel         bool   `json:"parallel"`
 	MaxRetries       int    `json:"maxRetries,omitempty"`
 	ConcurrencyLimit int    `json:"concurrencyLimit,omitempty"`
+}
+
+type TaskRouterInfo struct {
+	Routes []TaskRouteInfo `json:"routes"`
+}
+
+type TaskRouteInfo struct {
+	Target    string `json:"target"`
+	Condition string `json:"condition"`
+	IsMission bool   `json:"isMission,omitempty"`
 }
 
 
@@ -260,6 +272,7 @@ type SubtaskInfo struct {
 type ToolResultDTO struct {
 	ID          string `json:"id"`
 	SessionID   string `json:"sessionId"`
+	ToolCallId  string `json:"toolCallId,omitempty"`
 	ToolName    string `json:"toolName"`
 	InputParams string `json:"inputParams,omitempty"`
 	Output      string `json:"output,omitempty"`

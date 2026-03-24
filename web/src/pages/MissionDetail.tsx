@@ -7,6 +7,7 @@ import {
   type Node,
   type Edge,
   type NodeTypes,
+  type EdgeTypes,
   type NodeMouseHandler,
   Handle,
   Position,
@@ -23,12 +24,13 @@ import { cn } from '@/lib/utils';
 import { useResizablePanel } from '@/hooks/use-resizable-panel';
 import { ZoomControls } from '@/components/zoom-controls';
 import { RunMissionDialog } from '@/components/RunMissionDialog';
-import type { TaskInfo, AgentInfo, MissionInputInfo, DatasetInfo, MissionInfo } from '@/api/types';
+import type { TaskInfo, AgentInfo, DatasetInfo, MissionInfo } from '@/api/types';
+import { RouterEdge } from '@/components/RouterEdge';
 
 const NODE_WIDTH = 260;
 const NODE_HEIGHT = 100;
 
-function TaskNode({ data, selected }: { data: TaskInfo; selected?: boolean }) {
+function TaskNode({ data, selected }: { data: TaskInfo & { hasIncoming?: boolean; hasOutgoing?: boolean }; selected?: boolean }) {
   const isIterated = !!data.iterator;
   return (
     <div className="relative">
@@ -45,7 +47,7 @@ function TaskNode({ data, selected }: { data: TaskInfo; selected?: boolean }) {
           ? `bg-muted border-2 border-foreground ${isIterated ? '' : 'shadow-sm'}`
           : `bg-card border-2 border-border ${isIterated ? '' : 'shadow-sm'}`,
       )}>
-        <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />
+        {data.hasIncoming !== false && <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />}
         <div className="flex items-start justify-between gap-2 mb-1">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-sm">{data.name}</span>
@@ -60,19 +62,37 @@ function TaskNode({ data, selected }: { data: TaskInfo; selected?: boolean }) {
               </Badge>
             )}
           </div>
-          {isIterated && (
-            <div className="flex items-center gap-1 shrink-0 text-[10px] text-muted-foreground">
-              <Repeat className="h-3 w-3" />
-              <span>iterated</span>
-            </div>
-          )}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {isIterated && (
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Repeat className="h-3 w-3" />
+                <span>iterated</span>
+              </div>
+            )}
+            <span className="text-[9px] font-semibold uppercase tracking-wider px-1 py-0 rounded border border-purple-500/40 text-purple-500">Task</span>
+          </div>
         </div>
         {data.objective && (
           <p className="text-xs text-muted-foreground line-clamp-2">
             {data.objective}
           </p>
         )}
-        <Handle type="source" position={Position.Right} className="!bg-muted-foreground/50 !w-2 !h-2" />
+        {data.hasOutgoing !== false && <Handle type="source" position={Position.Right} className="!bg-muted-foreground/50 !w-2 !h-2" />}
+      </div>
+    </div>
+  );
+}
+
+function MissionRouteNode({ data }: { data: Record<string, unknown> }) {
+  const missionName = data.missionName as string;
+  return (
+    <div className="relative">
+      <div className="relative rounded-lg p-3 cursor-default w-[260px] bg-card border-2 border-border shadow-sm">
+        <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />
+        <div className="flex items-start justify-between gap-2">
+          <span className="font-semibold text-sm">{missionName}</span>
+          <span className="text-[9px] font-semibold uppercase tracking-wider px-1 py-0 rounded border border-teal-500/40 text-teal-500 shrink-0">Mission</span>
+        </div>
       </div>
     </div>
   );
@@ -80,6 +100,11 @@ function TaskNode({ data, selected }: { data: TaskInfo; selected?: boolean }) {
 
 const nodeTypes: NodeTypes = {
   task: TaskNode,
+  missionRoute: MissionRouteNode,
+};
+
+const edgeTypes: EdgeTypes = {
+  router: RouterEdge,
 };
 
 function layoutGraph(tasks: TaskInfo[], nodeWidth = NODE_WIDTH, nodeHeight = NODE_HEIGHT): { nodes: Node[]; edges: Edge[] } {
@@ -93,6 +118,7 @@ function layoutGraph(tasks: TaskInfo[], nodeWidth = NODE_WIDTH, nodeHeight = NOD
 
   const edges: Edge[] = [];
   for (const task of tasks) {
+    // Dependency edges (solid)
     if (task.dependsOn) {
       for (const dep of task.dependsOn) {
         const edgeId = `${dep}->${task.name}`;
@@ -105,9 +131,65 @@ function layoutGraph(tasks: TaskInfo[], nodeWidth = NODE_WIDTH, nodeHeight = NOD
         });
       }
     }
+    // Router edges (dotted, with hover tooltip) — skip mission targets (handled below)
+    if (task.router) {
+      for (const route of task.router.routes) {
+        if (route.isMission) continue; // mission route nodes added separately
+        g.setEdge(task.name, route.target);
+        edges.push({
+          id: `${task.name}->route:${route.target}`,
+          source: task.name,
+          target: route.target,
+          type: 'router',
+          animated: false,
+          data: { condition: route.condition },
+          style: { strokeDasharray: '5,5', stroke: '#9ca3af' },
+        });
+      }
+    }
+    // send_to edges (solid, like depends_on but direction is source→target)
+    if (task.sendTo) {
+      for (const target of task.sendTo) {
+        g.setEdge(task.name, target);
+        edges.push({
+          id: `${task.name}->send:${target}`,
+          source: task.name,
+          target: target,
+          animated: false,
+        });
+      }
+    }
+  }
+
+  // Add mission route nodes (virtual nodes for cross-mission router targets)
+  const missionNodeIds: { id: string; missionName: string }[] = [];
+  const taskNameSet = new Set(tasks.map(t => t.name));
+  for (const task of tasks) {
+    if (task.router) {
+      for (const route of task.router.routes) {
+        if (route.isMission && !taskNameSet.has(route.target)) {
+          const missionNodeId = `mission:${route.target}`;
+          missionNodeIds.push({ id: missionNodeId, missionName: route.target });
+          g.setNode(missionNodeId, { width: nodeWidth, height: nodeHeight });
+          g.setEdge(task.name, missionNodeId);
+          edges.push({
+            id: `${task.name}->mission:${route.target}`,
+            source: task.name,
+            target: missionNodeId,
+            type: 'router',
+            animated: false,
+            data: { condition: route.condition },
+            style: { strokeDasharray: '5,5', stroke: '#9ca3af' },
+          });
+        }
+      }
+    }
   }
 
   dagre.layout(g);
+
+  const hasIncoming = new Set(edges.map(e => e.target));
+  const hasOutgoing = new Set(edges.map(e => e.source));
 
   const nodes: Node[] = tasks.map((task) => {
     const pos = g.node(task.name);
@@ -115,9 +197,22 @@ function layoutGraph(tasks: TaskInfo[], nodeWidth = NODE_WIDTH, nodeHeight = NOD
       id: task.name,
       type: 'task',
       position: { x: pos.x - nodeWidth / 2, y: pos.y - nodeHeight / 2 },
-      data: task as unknown as Record<string, unknown>,
+      data: { ...task, hasIncoming: hasIncoming.has(task.name), hasOutgoing: hasOutgoing.has(task.name) } as unknown as Record<string, unknown>,
     };
   });
+
+  // Add mission route node positions
+  for (const mn of missionNodeIds) {
+    const pos = g.node(mn.id);
+    nodes.push({
+      id: mn.id,
+      type: 'missionRoute',
+      position: { x: pos.x - nodeWidth / 2, y: pos.y - nodeHeight / 2 },
+      selectable: false,
+      draggable: false,
+      data: { missionName: mn.missionName },
+    });
+  }
 
   return { nodes, edges };
 }
@@ -148,7 +243,7 @@ function GeneralTabContent({
             <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
               Directive
             </span>
-            <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap leading-relaxed">
+            <p className="text-sm text-muted-foreground mt-1 leading-relaxed line-clamp-1">
               {mission.description}
             </p>
           </div>
@@ -169,27 +264,7 @@ function GeneralTabContent({
           </div>
         )}
 
-        {mission.inputs && mission.inputs.length > 0 && (
-          <div>
-            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
-              Inputs
-            </span>
-            <div className="mt-1 space-y-1">
-              {mission.inputs.map((inp) => (
-                <div key={inp.name} className="flex items-center gap-2 text-sm">
-                  <span className="font-medium">{inp.name}</span>
-                  {inp.type && (
-                    <Badge variant="outline" className="text-[10px] px-1.5 py-0">{inp.type}</Badge>
-                  )}
-                  {inp.required && <span className="text-destructive text-xs">required</span>}
-                  {inp.description && (
-                    <span className="text-muted-foreground text-xs">{inp.description}</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Inputs shown in dedicated Inputs tab */}
       </div>
     </div>
   );
@@ -279,32 +354,16 @@ function TasksTabContent({
   tasks,
   selectedTask,
   onSelectTask,
-  inputs,
 }: {
   tasks: TaskInfo[];
   selectedTask: TaskInfo | null;
   onSelectTask: (task: TaskInfo) => void;
-  inputs?: MissionInputInfo[];
 }) {
   return (
     <div className="flex h-full">
       {/* Left: task list */}
       <div className="w-56 shrink-0 border-r overflow-y-auto">
-        {inputs && inputs.length > 0 && (
-          <div className="px-3 py-2 border-b">
-            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
-              Inputs
-            </span>
-            <div className="mt-1 space-y-0.5">
-              {inputs.map((inp) => (
-                <div key={inp.name} className="text-xs flex items-center gap-1">
-                  <span className="font-medium">{inp.name}</span>
-                  {inp.required && <span className="text-destructive">*</span>}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Inputs shown in General tab only */}
         <div className="py-1">
           {tasks.map((task) => (
             <button
@@ -577,7 +636,7 @@ export function MissionDetail() {
           <div>
             <h1 className="text-xl font-bold">{mission.name}</h1>
             {mission.description && (
-              <p className="text-sm text-muted-foreground mt-0.5">{mission.description}</p>
+              <p className="text-sm text-muted-foreground mt-0.5 line-clamp-1">{mission.description}</p>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -606,6 +665,7 @@ export function MissionDetail() {
             nodes={nodesWithSelection}
             edges={edges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onInit={onInit}
             onNodeClick={onNodeClick}
             fitView
@@ -640,6 +700,14 @@ export function MissionDetail() {
           >
             <TabsList variant="line">
               <TabsTrigger value="general">General</TabsTrigger>
+              {mission.inputs && mission.inputs.length > 0 && (
+                <TabsTrigger value="inputs">
+                  Inputs
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 ml-0.5">
+                    {mission.inputs.length}
+                  </Badge>
+                </TabsTrigger>
+              )}
               <TabsTrigger value="datasets">
                 Datasets
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0 ml-0.5">
@@ -674,6 +742,30 @@ export function MissionDetail() {
                 agents={agents ?? []}
               />
             </TabsContent>
+            {mission.inputs && mission.inputs.length > 0 && (
+              <TabsContent value="inputs" className="h-full m-0">
+                <div className="overflow-y-auto p-4 h-full">
+                  <div className="space-y-3 max-w-2xl">
+                    {mission.inputs.map((inp) => (
+                      <div key={inp.name} className="border rounded-lg p-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">{inp.name}</span>
+                          {inp.type && (
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0">{inp.type}</Badge>
+                          )}
+                          {inp.required && (
+                            <Badge variant="destructive" className="text-[10px] px-1.5 py-0">required</Badge>
+                          )}
+                        </div>
+                        {inp.description && (
+                          <p className="text-sm text-muted-foreground mt-1">{inp.description}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </TabsContent>
+            )}
             <TabsContent value="datasets" className="h-full m-0">
               <DatasetsTabContent
                 datasets={mission.datasets ?? []}
@@ -686,7 +778,6 @@ export function MissionDetail() {
                 tasks={mission.tasks ?? []}
                 selectedTask={selectedTask}
                 onSelectTask={setSelectedTask}
-                inputs={mission.inputs}
               />
             </TabsContent>
             <TabsContent value="agents" className="h-full m-0">

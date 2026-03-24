@@ -48,6 +48,7 @@ const (
 	EventAgentCallingTool  MissionEventType = "agent_calling_tool"
 	EventAgentToolComplete MissionEventType = "agent_tool_complete"
 	EventAgentAnswer       MissionEventType = "agent_answer"
+	EventRouteChosen       MissionEventType = "route_chosen"
 )
 
 // =============================================================================
@@ -160,15 +161,17 @@ type CommanderAnswerData struct {
 }
 
 type CommanderCallingToolData struct {
-	TaskName string `json:"taskName"`
-	ToolName string `json:"toolName"`
-	Input    string `json:"input"`
+	TaskName   string `json:"taskName"`
+	ToolCallId string `json:"toolCallId"`
+	ToolName   string `json:"toolName"`
+	Input      string `json:"input"`
 }
 
 type CommanderToolCompleteData struct {
-	TaskName string `json:"taskName"`
-	ToolName string `json:"toolName"`
-	Result   string `json:"result"`
+	TaskName   string `json:"taskName"`
+	ToolCallId string `json:"toolCallId"`
+	ToolName   string `json:"toolName"`
+	Result     string `json:"result"`
 }
 
 // Compaction events
@@ -218,17 +221,19 @@ type AgentThinkingData struct {
 }
 
 type AgentCallingToolData struct {
-	TaskName  string `json:"taskName"`
-	AgentName string `json:"agentName"`
-	ToolName  string `json:"toolName"`
-	Payload   string `json:"payload"`
+	TaskName   string `json:"taskName"`
+	AgentName  string `json:"agentName"`
+	ToolCallId string `json:"toolCallId"`
+	ToolName   string `json:"toolName"`
+	Payload    string `json:"payload"`
 }
 
 type AgentToolCompleteData struct {
-	TaskName  string `json:"taskName"`
-	AgentName string `json:"agentName"`
-	ToolName  string `json:"toolName"`
-	Result    string `json:"result"`
+	TaskName   string `json:"taskName"`
+	AgentName  string `json:"agentName"`
+	ToolCallId string `json:"toolCallId"`
+	ToolName   string `json:"toolName"`
+	Result     string `json:"result"`
 }
 
 type AgentAnswerData struct {
@@ -270,4 +275,11 @@ type ChatToolData struct {
 
 type ChatErrorData struct {
 	Message string `json:"message"`
+}
+
+type RouteChosenData struct {
+	RouterTask string `json:"routerTask"`
+	TargetTask string `json:"targetTask"`
+	Condition  string `json:"condition"`
+	IsMission  bool   `json:"isMission,omitempty"`
 }

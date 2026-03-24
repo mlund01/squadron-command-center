@@ -38,6 +38,7 @@ export function subscribeMissionEvents(
     'agent_started', 'agent_completed', 'agent_thinking', 'agent_calling_tool', 'agent_tool_complete', 'agent_answer',
     'compaction',
     'session_turn',
+    'route_chosen',
   ];
 
   for (const type of eventTypes) {

@@ -7,6 +7,7 @@ import {
   type Node,
   type Edge,
   type NodeTypes,
+  type EdgeTypes,
   type NodeMouseHandler,
   Handle,
   Position,
@@ -26,6 +27,7 @@ import { StatusBadge, formatTime, formatDuration } from '@/lib/mission-utils';
 import { useResizablePanel } from '@/hooks/use-resizable-panel';
 import { ZoomControls } from '@/components/zoom-controls';
 import type { TaskInfo, MissionEvent, MissionTaskRecord, ToolResultDTO, TaskOutputInfo, SubtaskInfo, DatasetItemInfo } from '@/api/types';
+import { RouterEdge } from '@/components/RouterEdge';
 
 
 const NODE_WIDTH = 260;
@@ -34,7 +36,7 @@ const NODE_HEIGHT = 100;
 /* ── Status-aware task node for run view ── */
 
 function RunTaskNode({ data, selected }: { data: Record<string, unknown>; selected?: boolean }) {
-  const task = data as unknown as TaskInfo & { runStatus?: string; runError?: string };
+  const task = data as unknown as TaskInfo & { runStatus?: string; runError?: string; hasIncoming?: boolean; hasOutgoing?: boolean };
   const isIterated = !!task.iterator;
   const status = task.runStatus ?? 'pending';
 
@@ -58,7 +60,7 @@ function RunTaskNode({ data, selected }: { data: Record<string, unknown>; select
         selected ? 'bg-muted shadow-sm' : 'bg-card shadow-sm',
         status === 'running' && 'task-pulse',
       )}>
-        <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />
+        {task.hasIncoming !== false && <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />}
         <div className="flex items-start justify-between gap-2 mb-1">
           <div className="flex items-center gap-2">
             <span className={cn(
@@ -77,30 +79,64 @@ function RunTaskNode({ data, selected }: { data: Record<string, unknown>; select
               <Badge variant="outline" className="text-[10px] px-1.5 py-0">cmdr</Badge>
             )}
           </div>
-          {isIterated && (
-            <div className="flex items-center gap-1 shrink-0 text-[10px] text-muted-foreground">
-              <Repeat className="h-3 w-3" />
-              <span>iterated</span>
-            </div>
-          )}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {isIterated && (
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Repeat className="h-3 w-3" />
+                <span>iterated</span>
+              </div>
+            )}
+            <span className="text-[9px] font-semibold uppercase tracking-wider px-1 py-0 rounded border border-purple-500/40 text-purple-500">Task</span>
+          </div>
         </div>
-        {status === 'failed' && task.runError && (
+        {status === 'failed' && task.runError ? (
           <p className="text-xs text-red-500 line-clamp-2">{task.runError}</p>
-        )}
-        {status === 'pending' && task.objective && (
+        ) : task.objective ? (
           <p className="text-xs text-muted-foreground line-clamp-2">{task.objective}</p>
-        )}
-        <Handle type="source" position={Position.Right} className="!bg-muted-foreground/50 !w-2 !h-2" />
+        ) : null}
+        {task.hasOutgoing !== false && <Handle type="source" position={Position.Right} className="!bg-muted-foreground/50 !w-2 !h-2" />}
       </div>
     </div>
   );
 }
 
-const runNodeTypes: NodeTypes = { task: RunTaskNode };
+function TerminalNode() {
+  return (
+    <div className="cursor-grab">
+      <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />
+      <div className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-orange-500/50 bg-orange-500/5">
+        <Square className="w-3.5 h-3.5 text-orange-500 fill-orange-500" />
+        <span className="text-sm font-medium text-orange-600">No route taken</span>
+      </div>
+    </div>
+  );
+}
+
+function MissionRouteNode({ data }: { data: Record<string, unknown> }) {
+  const missionName = data.missionName as string;
+  const isActive = data.isActive as boolean | undefined;
+  return (
+    <div className="relative">
+      <div className={cn(
+        'relative rounded-lg p-3 cursor-default w-[260px] transition-all border-2',
+        isActive ? 'border-teal-500 bg-card shadow-sm' : 'border-border bg-card shadow-sm',
+      )}>
+        <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />
+        <div className="flex items-start justify-between gap-2">
+          <span className="font-semibold text-sm">{missionName}</span>
+          <span className="text-[9px] font-semibold uppercase tracking-wider px-1 py-0 rounded border border-teal-500/40 text-teal-500 shrink-0">Mission</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const runNodeTypes: NodeTypes = { task: RunTaskNode, terminal: TerminalNode, missionRoute: MissionRouteNode };
+const runEdgeTypes: EdgeTypes = { router: RouterEdge };
 
 /* ── Layout helper (reused from MissionDetail) ── */
 
-function layoutGraph(tasks: TaskInfo[]): { nodes: Node[]; edges: Edge[] } {
+function layoutGraph(tasks: TaskInfo[], chosenRoutes?: Record<string, string>, statusMap?: Record<string, { status: string }>): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80 });
@@ -109,17 +145,118 @@ function layoutGraph(tasks: TaskInfo[]): { nodes: Node[]; edges: Edge[] } {
     g.setNode(task.name, { width: NODE_WIDTH, height: NODE_HEIGHT });
   }
 
+  // Status → color mapping (matches card border colors)
+  const statusColor = (status?: string): string | undefined => {
+    if (status === 'completed') return '#22c55e';
+    if (status === 'running') return '#3b82f6';
+    if (status === 'failed') return '#ef4444';
+    if (status === 'stopped') return '#f97316';
+    return undefined;
+  };
+
+  const defaultEdgeColor = '#9ca3af';
+
+  const edgeStyle = (src: string, tgt: string): { style: Record<string, unknown> } => {
+    const srcRan = statusMap?.[src]?.status && statusMap[src].status !== 'pending';
+    if (!srcRan) return { style: { stroke: defaultEdgeColor, strokeWidth: 2 } };
+    const color = statusColor(statusMap?.[tgt]?.status) ?? defaultEdgeColor;
+    return { style: { stroke: color, strokeWidth: 2 } };
+  };
+
   const edges: Edge[] = [];
   for (const task of tasks) {
+    // Dependency edges (solid)
     if (task.dependsOn) {
       for (const dep of task.dependsOn) {
         g.setEdge(dep, task.name);
-        edges.push({ id: `${dep}->${task.name}`, source: dep, target: task.name, animated: false });
+        edges.push({ id: `${dep}->${task.name}`, source: dep, target: task.name, ...edgeStyle(dep, task.name) });
+      }
+    }
+    // Router edges (dotted, with hover tooltip) — skip mission targets (handled below)
+    if (task.router) {
+      for (const route of task.router.routes) {
+        if (route.isMission) continue; // mission route nodes added separately
+        g.setEdge(task.name, route.target);
+        const srcRan = statusMap?.[task.name]?.status && statusMap[task.name].status !== 'pending';
+        const routerColor = srcRan ? (statusColor(statusMap?.[route.target]?.status) ?? defaultEdgeColor) : defaultEdgeColor;
+        const routerWidth = routerColor !== defaultEdgeColor ? 2 : 1;
+        edges.push({
+          id: `${task.name}->route:${route.target}`,
+          source: task.name,
+          target: route.target,
+          type: 'router',
+          data: { condition: route.condition },
+          style: {
+            strokeDasharray: '5,5',
+            stroke: routerColor,
+            strokeWidth: routerWidth,
+          },
+        });
+      }
+    }
+    // send_to edges (solid, like depends_on but direction is source→target)
+    if (task.sendTo) {
+      for (const target of task.sendTo) {
+        g.setEdge(task.name, target);
+        edges.push({
+          id: `${task.name}->send:${target}`,
+          source: task.name,
+          target: target,
+          ...edgeStyle(task.name, target),
+        });
+      }
+    }
+  }
+
+  // Add mission route nodes (virtual nodes for cross-mission router targets)
+  const missionNodes: { id: string; missionName: string; isActive: boolean }[] = [];
+  const taskNames = new Set(tasks.map(t => t.name));
+  for (const task of tasks) {
+    if (task.router) {
+      for (const route of task.router.routes) {
+        if (route.isMission && !taskNames.has(route.target)) {
+          const missionNodeId = `mission:${route.target}`;
+          const isActive = chosenRoutes?.[task.name] === route.target;
+          missionNodes.push({ id: missionNodeId, missionName: route.target, isActive: !!isActive });
+          g.setNode(missionNodeId, { width: NODE_WIDTH, height: NODE_HEIGHT });
+          g.setEdge(task.name, missionNodeId);
+          const missionColor = isActive ? '#14b8a6' : defaultEdgeColor;
+          edges.push({
+            id: `${task.name}->mission:${route.target}`,
+            source: task.name,
+            target: missionNodeId,
+            type: 'router',
+            data: { condition: route.condition },
+            style: { strokeDasharray: '5,5', stroke: missionColor, strokeWidth: isActive ? 2 : 1 },
+          });
+        }
+      }
+    }
+  }
+
+  // Add terminal "end" nodes for routers that chose "none"
+  const terminalNodes: string[] = [];
+  if (chosenRoutes) {
+    for (const task of tasks) {
+      if (task.router && chosenRoutes[task.name] === 'none') {
+        const termId = `${task.name}__end`;
+        terminalNodes.push(termId);
+        g.setNode(termId, { width: 160, height: 40 });
+        g.setEdge(task.name, termId);
+        edges.push({
+          id: `${task.name}->end`,
+          source: task.name,
+          target: termId,
+          style: { strokeDasharray: '5,5', stroke: '#f97316', strokeWidth: 2 },
+        });
       }
     }
   }
 
   dagre.layout(g);
+
+  const hasIncoming = new Set(edges.map(e => e.target));
+  const hasOutgoing = new Set(edges.map(e => e.source));
 
   const nodes: Node[] = tasks.map((task) => {
     const pos = g.node(task.name);
@@ -127,9 +264,35 @@ function layoutGraph(tasks: TaskInfo[]): { nodes: Node[]; edges: Edge[] } {
       id: task.name,
       type: 'task',
       position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 },
-      data: task as unknown as Record<string, unknown>,
+      data: { ...task, hasIncoming: hasIncoming.has(task.name), hasOutgoing: hasOutgoing.has(task.name) } as unknown as Record<string, unknown>,
     };
   });
+
+  // Add mission route node positions
+  for (const mn of missionNodes) {
+    const pos = g.node(mn.id);
+    nodes.push({
+      id: mn.id,
+      type: 'missionRoute',
+      position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 },
+      selectable: false,
+      draggable: false,
+      data: { missionName: mn.missionName, isActive: mn.isActive },
+    });
+  }
+
+  // Add terminal node positions
+  for (const termId of terminalNodes) {
+    const pos = g.node(termId);
+    nodes.push({
+      id: termId,
+      type: 'terminal',
+      position: { x: pos.x - 80, y: pos.y - 20 },
+      selectable: false,
+      draggable: false,
+      data: {},
+    });
+  }
 
   return { nodes, edges };
 }
@@ -179,6 +342,7 @@ function formatEventText(eventType: string, d: Record<string, unknown>): string 
     case 'iteration_completed': return `Iteration ${d.index} completed for "${d.taskName}"`;
     case 'iteration_failed': return `Iteration ${d.index} failed for "${d.taskName}"`;
     case 'compaction': return `Context compacted (${d.entity}): ${d.inputTokens} tokens > ${d.tokenLimit} limit, ${d.messagesCompacted} msgs compacted`;
+    case 'route_chosen': return `Route chosen: "${d.routerTask}" → "${d.targetTask}"${d.condition ? ` (${d.condition})` : ''}`;
     default: return JSON.stringify(d);
   }
 }
@@ -217,19 +381,7 @@ function GeneralTab({ mission, tasks }: { mission: { name: string; status: strin
           </div>
         </div>
 
-        {inputs && Object.keys(inputs).length > 0 && (
-          <div>
-            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Inputs</span>
-            <div className="mt-1 space-y-1">
-              {Object.entries(inputs).map(([k, v]) => (
-                <div key={k} className="flex items-start gap-2 text-sm">
-                  <span className="font-medium shrink-0">{k}:</span>
-                  <span className="text-muted-foreground break-all">{v}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Inputs shown in dedicated Inputs tab */}
       </div>
     </div>
   );
@@ -361,7 +513,7 @@ function DatasetsTab({ instanceId, missionId, isRunning }: { instanceId: string;
 
 type PanelSelection =
   | { type: 'session'; sessionId: string; agentName?: string }
-  | { type: 'tool'; toolResult: ToolResultDTO }
+  | { type: 'tool'; toolResult: ToolResultDTO; spanId?: string }
   | null;
 
 interface GanttSpan {
@@ -490,8 +642,15 @@ function IterationBar({
   );
 }
 
-function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: string; tasks: MissionTaskRecord[]; missionId: string; isRunning: boolean }) {
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRoutes, selectedTaskName, onSelectTaskName }: { instanceId: string; tasks: MissionTaskRecord[]; allTasks: TaskInfo[]; missionId: string; isRunning: boolean; chosenRoutes?: Record<string, string>; selectedTaskName?: string | null; onSelectTaskName?: (name: string | null) => void }) {
+  // Track selected task by name (synced with canvas node clicks)
+  const [localSelectedName, setLocalSelectedName] = useState<string | null>(null);
+  const activeName = selectedTaskName ?? localSelectedName;
+  const setActiveName = (name: string | null) => {
+    setLocalSelectedName(name);
+    onSelectTaskName?.(name);
+  };
+
   const [selectedIteration, setSelectedIteration] = useState<number | null>(null);
   const [selection, setSelection] = useState<PanelSelection>(null);
   const [traceView, setTraceView] = useState<'detail' | 'subtasks' | 'output' | 'iterations' | 'flamegraph' | 'table' | 'turns'>('detail');
@@ -500,12 +659,23 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
 
   const selectedSessionId = selection?.type === 'session' ? selection.sessionId : null;
 
+  // Build task record lookup by name
+  const taskRecordByName = useMemo(() => {
+    const map: Record<string, MissionTaskRecord> = {};
+    for (const t of tasks) map[t.taskName] = t;
+    return map;
+  }, [tasks]);
+
   // Auto-select first task
   useEffect(() => {
-    if (!selectedTaskId && tasks.length > 0) {
-      setSelectedTaskId(tasks[0].id);
+    if (!activeName && allTasks.length > 0) {
+      setActiveName(allTasks[0].name);
     }
-  }, [tasks, selectedTaskId]);
+  }, [allTasks, activeName]);
+
+  // The selected task record (may be undefined if task hasn't run)
+  const selectedTaskRecord = activeName ? taskRecordByName[activeName] : undefined;
+  const selectedTaskId = selectedTaskRecord?.id ?? null;
 
   const { data: taskDetail } = useQuery({
     queryKey: ['taskDetail', instanceId, selectedTaskId],
@@ -518,7 +688,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
   const { data: missionEventsData } = useQuery({
     queryKey: ['missionEvents', instanceId, missionId],
     queryFn: () => getMissionEvents(instanceId, missionId),
-    refetchInterval: isRunning ? 2000 : false,
+    refetchInterval: isRunning ? 1000 : false,
   });
 
   // Messages for selected session
@@ -529,7 +699,8 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
   });
 
   const allSessions = taskDetail?.sessions ?? [];
-  const selectedTask = tasks.find(t => t.id === selectedTaskId);
+  const selectedTask = selectedTaskRecord ?? null;
+  const selectedTaskConfig = allTasks.find(t => t.name === activeName) ?? null;
 
   // Detect iterations from sessions (parallel) or inputs (sequential)
   const { iterations, isIterated, isParallelIteration } = useMemo(() => {
@@ -587,11 +758,21 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
     });
   }, [missionEventsData]);
 
-  // Latest event timestamp — the "now" for the flamegraph. Purely event-driven.
+
+  // Live clock that ticks every second while running — makes open spans grow
+  const [liveNow, setLiveNow] = useState(Date.now());
+  useEffect(() => {
+    if (!isRunning) return;
+    const id = setInterval(() => setLiveNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isRunning]);
+
+  // Latest event timestamp, or live clock if mission is still running
   const latestEventTime = useMemo(() => {
     if (allMissionEvents.length === 0) return 0;
-    return Math.max(...allMissionEvents.map(e => e.time));
-  }, [allMissionEvents]);
+    const maxEvent = Math.max(...allMissionEvents.map(e => e.time));
+    return isRunning ? Math.max(maxEvent, liveNow) : maxEvent;
+  }, [allMissionEvents, isRunning, liveNow]);
 
   // Stop/resume gap computation — pairs stop[i] with resume[i] to get dead-time intervals
   const { compressTime, resumeBreaks } = useMemo(() => {
@@ -717,17 +898,22 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
   ) => {
     const calls = events.filter(e => e.eventType === callingType);
     const completions = [...events.filter(e => e.eventType === completeType)];
-    const pairs: { id: string; toolName: string; start: number; end: number; sessionId: string }[] = [];
+    const pairs: { id: string; toolCallId: string; toolName: string; start: number; end: number; sessionId: string }[] = [];
     for (const call of calls) {
       const toolName = String(call.data.toolName || '');
-      const matchIdx = completions.findIndex(c =>
-        c.sessionId === call.sessionId &&
-        c.time >= call.time &&
-        String(c.data.toolName || '') === toolName
-      );
+      const toolCallId = String(call.data.toolCallId || '');
+      // Prefer matching by toolCallId when available, fall back to session+time+name
+      const matchIdx = toolCallId
+        ? completions.findIndex(c => String(c.data.toolCallId || '') === toolCallId)
+        : completions.findIndex(c =>
+            c.sessionId === call.sessionId &&
+            c.time >= call.time &&
+            String(c.data.toolName || '') === toolName
+          );
       const completion = matchIdx >= 0 ? completions.splice(matchIdx, 1)[0] : null;
       pairs.push({
         id: call.id,
+        toolCallId,
         toolName,
         start: call.time,
         end: completion ? completion.time : fallbackEnd,
@@ -738,24 +924,41 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
   }, []);
 
   // Helper: find a ToolResultDTO matching an event-derived span (for detail panel click-through)
-  const findToolResultForEvent = useCallback((sessionId: string, toolName: string, startTime: number) => {
-    return allToolResults.find(tr =>
-      tr.sessionId === sessionId &&
-      tr.toolName === toolName &&
-      Math.abs(new Date(tr.startedAt).getTime() - startTime) < 2000
-    );
+  const findToolResultForEvent = useCallback((toolCallId: string, sessionId: string, toolName: string, startTime: number) => {
+    // Prefer direct match by toolCallId when available
+    if (toolCallId) {
+      const direct = allToolResults.find(tr => tr.toolCallId === toolCallId);
+      if (direct) return direct;
+    }
+    // Fall back to fuzzy time-based matching for old data without toolCallId
+    let best: ToolResultDTO | undefined;
+    let bestDelta = Infinity;
+    for (const tr of allToolResults) {
+      if (tr.sessionId !== sessionId || tr.toolName !== toolName) continue;
+      const delta = Math.abs(new Date(tr.startedAt).getTime() - startTime);
+      if (delta < 2000 && delta < bestDelta) {
+        best = tr;
+        bestDelta = delta;
+      }
+    }
+    return best;
   }, [allToolResults]);
 
   const ganttLines = useMemo((): GanttSpan[][] => {
     const lines: GanttSpan[][] = [];
     const ct = compressTime;
-    const cEnd = compressTime(latestEventTime);
 
     // Filter events by iteration for parallel tasks
     // Use iterationIndex if available, otherwise parse from taskName (e.g. "write_story[2]" → 2)
     const activeEvents = isParallelIteration && selectedIteration != null
       ? taskEvents.filter(e => e.iterationIndex === selectedIteration)
       : taskEvents;
+
+    // Use task-scoped end time so completed tasks don't stretch as mission continues
+    const taskEndTime = activeEvents.length > 0
+      ? Math.max(...activeEvents.map(e => e.time))
+      : latestEventTime;
+    const cEnd = compressTime(taskEndTime);
 
     // --- Line 1: Commander span ---
     // Use first commander event as start, last as end
@@ -781,10 +984,10 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
     const line2: GanttSpan[] = [];
 
     // Commander tool calls (excluding call_agent — those become agent spans)
-    const cmdrToolPairs = pairToolEvents(activeEvents, 'commander_calling_tool', 'commander_tool_complete', latestEventTime);
+    const cmdrToolPairs = pairToolEvents(activeEvents, 'commander_calling_tool', 'commander_tool_complete', taskEndTime);
     for (const pair of cmdrToolPairs) {
       if (pair.toolName === 'call_agent') continue;
-      const matchedTR = findToolResultForEvent(pair.sessionId, pair.toolName, pair.start);
+      const matchedTR = findToolResultForEvent(pair.toolCallId, pair.sessionId, pair.toolName, pair.start);
       line2.push({
         id: pair.id, label: pair.toolName,
         start: ct(pair.start), end: ct(pair.end),
@@ -816,7 +1019,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
       segments.push({
         agentName,
         startTime: startEvt.time,
-        endTime: interrupted ? nextStop! : (completeEvt ? completeEvt.time : latestEventTime),
+        endTime: interrupted ? nextStop! : (completeEvt ? completeEvt.time : taskEndTime),
         completed: !interrupted && !!completeEvt,
         startId: startEvt.id,
       });
@@ -854,7 +1057,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
     }
 
     // --- Lines 3+: Agent tool calls, one line per agent session ---
-    const agentToolPairs = pairToolEvents(activeEvents, 'agent_calling_tool', 'agent_tool_complete', latestEventTime);
+    const agentToolPairs = pairToolEvents(activeEvents, 'agent_calling_tool', 'agent_tool_complete', taskEndTime);
     // Group by sessionId
     const bySession = new Map<string, typeof agentToolPairs>();
     for (const pair of agentToolPairs) {
@@ -864,7 +1067,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
     }
     for (const [, pairs] of bySession) {
       const line: GanttSpan[] = pairs.map(pair => {
-        const matchedTR = findToolResultForEvent(pair.sessionId, pair.toolName, pair.start);
+        const matchedTR = findToolResultForEvent(pair.toolCallId, pair.sessionId, pair.toolName, pair.start);
         return {
           id: pair.id, label: pair.toolName,
           start: ct(pair.start), end: ct(pair.end),
@@ -1167,33 +1370,37 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
       {/* Left: task list */}
       <div className="w-56 shrink-0 border-r overflow-y-auto">
         <div className="py-1">
-          {tasks.map(task => (
-            <button
-              key={task.id}
-              onClick={() => { setSelectedTaskId(task.id); setSelection(null); }}
-              className={cn(
-                'w-full text-left px-3 py-2 text-sm hover:bg-muted/50 transition-colors',
-                selectedTaskId === task.id && 'bg-muted font-medium',
-              )}
-            >
-              <div className="flex items-center gap-1.5">
-                <span className={cn(
-                  'w-2 h-2 rounded-full shrink-0',
-                  task.status === 'completed' ? 'bg-green-500' :
-                  task.status === 'running' ? 'bg-blue-500 animate-pulse' :
-                  task.status === 'failed' ? 'bg-red-500' :
-                  task.status === 'stopped' ? 'bg-orange-500' :
-                  'bg-muted-foreground/30'
-                )} />
-                <span className="truncate">{task.taskName}</span>
-              </div>
-              {task.startedAt && task.finishedAt && (
-                <span className="text-[10px] text-muted-foreground ml-3.5">
-                  {formatDuration(task.startedAt, task.finishedAt)}
-                </span>
-              )}
-            </button>
-          ))}
+          {allTasks.map(t => {
+            const record = taskRecordByName[t.name];
+            const status = record?.status;
+            return (
+              <button
+                key={t.name}
+                onClick={() => { setActiveName(t.name); setSelection(null); }}
+                className={cn(
+                  'w-full text-left px-3 py-2 text-sm hover:bg-muted/50 transition-colors',
+                  activeName === t.name && 'bg-muted font-medium',
+                )}
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className={cn(
+                    'w-2 h-2 rounded-full shrink-0',
+                    status === 'completed' ? 'bg-green-500' :
+                    status === 'running' ? 'bg-blue-500 animate-pulse' :
+                    status === 'failed' ? 'bg-red-500' :
+                    status === 'stopped' ? 'bg-orange-500' :
+                    'bg-muted-foreground/30'
+                  )} />
+                  <span className="truncate">{t.name}</span>
+                </div>
+                {record?.startedAt && record?.finishedAt && (
+                  <span className="text-[10px] text-muted-foreground ml-3.5">
+                    {formatDuration(record.startedAt, record.finishedAt)}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -1337,6 +1544,19 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                               {taskConfig.iterator.concurrencyLimit ? `, max ${taskConfig.iterator.concurrencyLimit}` : ''}
                               {taskConfig.iterator.maxRetries ? `, ${taskConfig.iterator.maxRetries} retries` : ''}
                               {')'}
+                            </span>
+                          </>
+                        )}
+                        {taskConfig?.router && (
+                          <>
+                            <span className="text-muted-foreground">Routes</span>
+                            <span>
+                              {taskConfig.router.routes.map(r => r.target).join(', ')}
+                              {chosenRoutes?.[taskConfig.name] && (
+                                <span className="text-green-500 ml-1">
+                                  (chose: {chosenRoutes[taskConfig.name]})
+                                </span>
+                              )}
                             </span>
                           </>
                         )}
@@ -1622,7 +1842,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                           const ms = span.end - span.start;
                           const durLabel = ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
                           const isSelected = (span.sessionId && selection?.type === 'session' && selection.sessionId === span.sessionId)
-                            || (span.toolResult && selection?.type === 'tool' && selection.toolResult.id === span.toolResult.id)
+                            || (span.toolResult && selection?.type === 'tool' && (selection.spanId ? selection.spanId === span.id : selection.toolResult.id === span.toolResult.id))
                             || (span.category === 'agent' && selection?.type === 'session' && selection.agentName && span.label === selection.agentName);
                           const clampedLeft = Math.max(0, left);
                           const clampedWidth = Math.min(100 - clampedLeft, Math.max(0.3, left + width - clampedLeft));
@@ -1648,7 +1868,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                                   if (agentSession) setSelection({ type: 'session', sessionId: agentSession.id, agentName: span.label });
                                 }
                                 else if (span.sessionId) setSelection({ type: 'session', sessionId: span.sessionId });
-                                else if (span.toolResult) setSelection({ type: 'tool', toolResult: span.toolResult });
+                                else if (span.toolResult) setSelection({ type: 'tool', toolResult: span.toolResult, spanId: span.id });
                               }}
                             >
                               <span className="text-[10px] text-white font-medium pl-1.5 truncate pointer-events-none whitespace-nowrap">
@@ -1828,7 +2048,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                           name: span.label, startMs: span.start, durMs: span.end - span.start,
                           sessionId: span.sessionId, toolResultId: span.toolResult?.id,
                           onClick: () => {
-                            if (span.toolResult) { setSelection({ type: 'tool', toolResult: span.toolResult }); return; }
+                            if (span.toolResult) { setSelection({ type: 'tool', toolResult: span.toolResult, spanId: span.id }); return; }
                             if (span.sessionId) { setSelection({ type: 'session', sessionId: span.sessionId }); }
                           },
                         });
@@ -1843,7 +2063,7 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
                             name: span.label, startMs: span.start, durMs: span.end - span.start,
                             toolResultId: span.toolResult?.id,
                             onClick: () => {
-                              if (span.toolResult) setSelection({ type: 'tool', toolResult: span.toolResult });
+                              if (span.toolResult) setSelection({ type: 'tool', toolResult: span.toolResult, spanId: span.id });
                             },
                           });
                         }
@@ -2052,8 +2272,73 @@ function TasksTab({ instanceId, tasks, missionId, isRunning }: { instanceId: str
               })()}
             </TabsContent>
           </Tabs>
+        ) : selectedTaskConfig ? (
+          <div className="overflow-auto p-4 h-full space-y-4">
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold text-sm">{selectedTaskConfig.name}</h3>
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0">not started</Badge>
+            </div>
+            <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-xs max-w-md">
+              {selectedTaskConfig.dependsOn && selectedTaskConfig.dependsOn.length > 0 && (
+                <>
+                  <span className="text-muted-foreground">Dependencies</span>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedTaskConfig.dependsOn.map(dep => (
+                      <Badge key={dep} variant="outline" className="text-[10px] px-1.5 py-0">{dep}</Badge>
+                    ))}
+                  </div>
+                </>
+              )}
+              {selectedTaskConfig.sendTo && selectedTaskConfig.sendTo.length > 0 && (
+                <>
+                  <span className="text-muted-foreground">Send to</span>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedTaskConfig.sendTo.map(t => (
+                      <Badge key={t} variant="outline" className="text-[10px] px-1.5 py-0">{t}</Badge>
+                    ))}
+                  </div>
+                </>
+              )}
+              {selectedTaskConfig.router && (
+                <>
+                  <span className="text-muted-foreground">Router</span>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedTaskConfig.router.routes.map(r => (
+                      <Badge key={r.target} variant="outline" className="text-[10px] px-1.5 py-0">{r.target}</Badge>
+                    ))}
+                  </div>
+                </>
+              )}
+              {selectedTaskConfig.iterator && (
+                <>
+                  <span className="text-muted-foreground">Iterator</span>
+                  <span>{selectedTaskConfig.iterator.parallel ? 'Parallel' : 'Sequential'} over {selectedTaskConfig.iterator.dataset}</span>
+                </>
+              )}
+            </div>
+            {selectedTaskConfig.objective && (
+              <div>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Objective</span>
+                <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{selectedTaskConfig.objective}</p>
+              </div>
+            )}
+            {selectedTaskConfig.output && selectedTaskConfig.output.length > 0 && (
+              <div>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Output Schema</span>
+                <div className="mt-1 space-y-1">
+                  {selectedTaskConfig.output.map(f => (
+                    <div key={f.name} className="flex items-center gap-2 text-xs">
+                      <span className="font-medium">{f.name}</span>
+                      <Badge variant="outline" className="text-[10px] px-1 py-0">{f.type}</Badge>
+                      {f.required && <span className="text-destructive">required</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         ) : (
-          <p className="text-sm text-muted-foreground p-4">Select a task to view sessions.</p>
+          <p className="text-sm text-muted-foreground p-4">Select a task to view details.</p>
         )}
       </div>
 
@@ -2282,12 +2567,12 @@ function EventsTab({ instanceId, missionId, isRunning }: { instanceId: string; m
     queryFn: () => getMissionEvents(instanceId, missionId),
   });
 
-  // SSE for real-time streaming when running
+  // SSE for real-time streaming when running.
+  // Let the SSE stream close itself on mission_completed/failed to avoid race conditions.
+  const eventsSSERef = useRef<{ close: () => void } | null>(null);
   useEffect(() => {
-    if (!isRunning) {
-      setLiveEvents([]);
-      return;
-    }
+    if (!isRunning || eventsSSERef.current) return;
+    setLiveEvents([]);
 
     const source = subscribeMissionEvents(
       instanceId,
@@ -2303,14 +2588,19 @@ function EventsTab({ instanceId, missionId, isRunning }: { instanceId: string; m
       },
       () => {
         // Mission completed — refetch history for final state, drop live events
+        eventsSSERef.current = null;
         queryClient.invalidateQueries({ queryKey: ['missionEvents', instanceId, missionId] });
         queryClient.invalidateQueries({ queryKey: ['missionDetail'] });
         setLiveEvents([]);
       },
-      () => {},
+      () => { eventsSSERef.current = null; },
     );
+    eventsSSERef.current = source;
 
-    return () => source.close();
+    return () => {
+      source.close();
+      eventsSSERef.current = null;
+    };
   }, [isRunning, instanceId, missionId, queryClient]);
 
   const historyEvents: NormalizedEvent[] = useMemo(() => {
@@ -2364,6 +2654,7 @@ export function MissionInstanceDetail() {
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('general');
   const [liveTaskStatuses, setLiveTaskStatuses] = useState<Record<string, string>>({});
+  const [chosenRoutes, setChosenRoutes] = useState<Record<string, string>>({});
 
   const {
     panelHeight,
@@ -2408,13 +2699,51 @@ export function MissionInstanceDetail() {
     }
   }, [mission]);
 
+  // Load route decisions from stored events
+  const { data: eventsForRoutes } = useQuery({
+    queryKey: ['missionEvents', id, mid],
+    queryFn: () => getMissionEvents(id!, mid!),
+    enabled: !!id && !!mid,
+  });
+  useEffect(() => {
+    if (!eventsForRoutes?.events) return;
+    const routes: Record<string, string> = {};
+    for (const e of eventsForRoutes.events) {
+      if (e.eventType === 'route_chosen' && e.dataJson) {
+        try {
+          const d = JSON.parse(e.dataJson) as Record<string, string>;
+          if (d.routerTask && d.targetTask) {
+            routes[d.routerTask] = d.targetTask;
+          }
+        } catch { /* ignore malformed */ }
+      }
+    }
+    if (Object.keys(routes).length > 0) {
+      setChosenRoutes(prev => ({ ...prev, ...routes }));
+    }
+  }, [eventsForRoutes]);
+
   // Parse task list from mission config snapshot (contains ALL tasks from mission start)
   const parsedTasks: TaskInfo[] = useMemo(() => {
     if (mission?.configJson) {
       try {
         const config = JSON.parse(mission.configJson);
         if (Array.isArray(config.tasks) && config.tasks.length > 0) {
-          return config.tasks as TaskInfo[];
+          // Backfill empty objectives from individual task record configs
+          // (handles iterated tasks whose objective was stored empty in older snapshots)
+          const tasks = config.tasks as TaskInfo[];
+          for (const t of tasks) {
+            if (!t.objective) {
+              const tr = taskRecords.find(r => r.taskName === t.name);
+              if (tr) {
+                const taskConfig = parseTaskConfig(tr);
+                if (taskConfig?.objective) {
+                  t.objective = taskConfig.objective;
+                }
+              }
+            }
+          }
+          return tasks;
         }
       } catch { /* fall through */ }
     }
@@ -2450,8 +2779,8 @@ export function MissionInstanceDetail() {
 
   const { nodes, edges } = useMemo(() => {
     if (tasksWithStatus.length === 0) return { nodes: [], edges: [] };
-    return layoutGraph(tasksWithStatus);
-  }, [tasksWithStatus]);
+    return layoutGraph(tasksWithStatus, chosenRoutes, statusMap);
+  }, [tasksWithStatus, chosenRoutes, statusMap]);
 
   const nodesWithSelection = useMemo(() => {
     return nodes.map(n => ({
@@ -2460,9 +2789,13 @@ export function MissionInstanceDetail() {
     }));
   }, [nodes, selectedTask, activeTab]);
 
-  // SSE for running missions — update canvas node statuses
+  // SSE for running missions — update canvas node statuses.
+  // Keyed on mission status: subscribe once when running, let SSE close itself on completion.
+  const canvasSSERef = useRef<{ close: () => void } | null>(null);
   useEffect(() => {
-    if (!isRunning || !id || !mid) return;
+    if (!id || !mid) return;
+    // Only open a new stream when mission is running and we don't already have one
+    if (!isRunning || canvasSSERef.current) return;
     setLiveTaskStatuses({});
 
     const source = subscribeMissionEvents(
@@ -2483,17 +2816,29 @@ export function MissionInstanceDetail() {
               break;
           }
         }
+        if (event.eventType === 'route_chosen') {
+          const d = event.data as Record<string, string>;
+          if (d.routerTask && d.targetTask) {
+            setChosenRoutes(prev => ({ ...prev, [d.routerTask]: d.targetTask }));
+          }
+        }
       },
       () => {
+        canvasSSERef.current = null;
         queryClient.invalidateQueries({ queryKey: ['missionDetail', id, mid] });
       },
-      () => {},
+      () => { canvasSSERef.current = null; },
     );
+    canvasSSERef.current = source;
 
-    return () => source.close();
+    return () => {
+      source.close();
+      canvasSSERef.current = null;
+    };
   }, [isRunning, id, mid, queryClient]);
 
   const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
+    if (node.type === 'terminal' || node.type === 'missionRoute') return;
     setSelectedTask(node.id);
     setActiveTab('tasks');
   }, []);
@@ -2570,6 +2915,7 @@ export function MissionInstanceDetail() {
             nodes={nodesWithSelection}
             edges={edges}
             nodeTypes={runNodeTypes}
+            edgeTypes={runEdgeTypes}
             onInit={onInit}
             onNodeClick={onNodeClick}
             fitView
@@ -2603,6 +2949,9 @@ export function MissionInstanceDetail() {
           >
             <TabsList variant="line">
               <TabsTrigger value="general">General</TabsTrigger>
+              {mission.inputsJson && (
+                <TabsTrigger value="inputs">Inputs</TabsTrigger>
+              )}
               <TabsTrigger value="datasets">Datasets</TabsTrigger>
               <TabsTrigger value="tasks">
                 Tasks
@@ -2621,11 +2970,50 @@ export function MissionInstanceDetail() {
             <TabsContent value="general" className="h-full m-0">
               <GeneralTab mission={mission} tasks={taskRecords} />
             </TabsContent>
+            {mission.inputsJson && (
+              <TabsContent value="inputs" className="h-full m-0">
+                <div className="overflow-y-auto p-4 h-full">
+                  <div className="space-y-3 max-w-2xl">
+                    {(() => {
+                      try {
+                        const values = JSON.parse(mission.inputsJson) as Record<string, string>;
+                        // Get input definitions from config snapshot for descriptions
+                        let defs: Record<string, { description?: string; type?: string }> = {};
+                        if (mission.configJson) {
+                          try {
+                            const config = JSON.parse(mission.configJson);
+                            if (Array.isArray(config.inputs)) {
+                              for (const inp of config.inputs) {
+                                defs[inp.name] = { description: inp.description, type: inp.type };
+                              }
+                            }
+                          } catch { /* ignore */ }
+                        }
+                        return Object.entries(values).map(([k, v]) => (
+                          <div key={k} className="border rounded-lg p-3">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-sm">{k}</span>
+                              {defs[k]?.type && (
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0">{defs[k].type}</Badge>
+                              )}
+                            </div>
+                            {defs[k]?.description && (
+                              <p className="text-xs text-muted-foreground mt-1">{defs[k].description}</p>
+                            )}
+                            <p className="text-sm mt-1.5 whitespace-pre-wrap break-all">{v}</p>
+                          </div>
+                        ));
+                      } catch { return null; }
+                    })()}
+                  </div>
+                </div>
+              </TabsContent>
+            )}
             <TabsContent value="datasets" className="h-full m-0">
               <DatasetsTab instanceId={id!} missionId={mid!} isRunning={isRunning} />
             </TabsContent>
             <TabsContent value="tasks" className="h-full m-0">
-              <TasksTab instanceId={id!} tasks={taskRecords} missionId={mid!} isRunning={isRunning} />
+              <TasksTab instanceId={id!} tasks={taskRecords} allTasks={parsedTasks} missionId={mid!} isRunning={isRunning} chosenRoutes={chosenRoutes} selectedTaskName={selectedTask} onSelectTaskName={setSelectedTask} />
             </TabsContent>
             <TabsContent value="events" className="h-full m-0">
               <EventsTab instanceId={id!} missionId={mid!} isRunning={isRunning} />
