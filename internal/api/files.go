@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mlund01/squadron-sdk/protocol"
+	"github.com/mlund01/squadron-wire/protocol"
 
 	"commander/internal/hub"
 )

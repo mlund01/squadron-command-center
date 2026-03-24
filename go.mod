@@ -1,10 +1,10 @@
 module commander
 
-go 1.23.0
+go 1.25.4
 
 require (
 	github.com/gorilla/websocket v1.5.3
-	github.com/mlund01/squadron-sdk v0.0.27
+	github.com/mlund01/squadron-wire v0.0.29
 )
 
 require github.com/google/uuid v1.6.0 // indirect

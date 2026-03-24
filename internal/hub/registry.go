@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mlund01/squadron-sdk/protocol"
+	"github.com/mlund01/squadron-wire/protocol"
 )
 
 // InstanceState represents the current state of a squadron instance.
