@@ -30,7 +30,7 @@ const staticNavItems = [
   { label: 'Missions', path: 'missions', icon: Rocket },
   { label: 'History', path: 'history', icon: History },
   { label: 'Agents', path: 'agents', icon: Bot },
-  { label: 'Plugins', path: 'plugins', icon: Puzzle },
+  { label: 'Tools', path: 'tools', icon: Puzzle },
   { label: 'Variables', path: 'variables', icon: KeyRound },
   { label: 'Config', path: 'config', icon: FileCode },
 ];
@@ -173,7 +173,7 @@ function getNavCount(path: string, config?: { missions?: unknown[]; agents?: unk
   switch (path) {
     case 'missions': return config.missions?.length;
     case 'agents': return config.agents?.length;
-    case 'plugins': return config.plugins?.length;
+    case 'tools': return config.plugins?.length;
     case 'variables': return config.variables?.length;
     case 'files': return config.sharedFolders?.length;
     default: return undefined;

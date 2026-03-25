@@ -4,3 +4,5 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/mlund01/squadron-wire v0.0.29 h1:QEzGwfB9iCk97IyOfVLzWz8TI4vLtFpsXOe3Tf3iZvA=
 github.com/mlund01/squadron-wire v0.0.29/go.mod h1:BmgUAhEkibCiJ2Cre+qfLs/KjeqTmm4BkfcMu6M+jLU=
+github.com/mlund01/squadron-wire v0.0.30 h1:h75T/eeowIXhCLmCjI0bgpZCFmuFY/MbWFHLTfNFR7g=
+github.com/mlund01/squadron-wire v0.0.30/go.mod h1:BmgUAhEkibCiJ2Cre+qfLs/KjeqTmm4BkfcMu6M+jLU=

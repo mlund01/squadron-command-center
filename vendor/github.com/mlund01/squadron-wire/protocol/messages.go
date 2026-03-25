@@ -111,6 +111,7 @@ type TaskRouteInfo struct {
 type PluginInfo struct {
 	Name    string     `json:"name"`
 	Path    string     `json:"path"`
+	Version string     `json:"version,omitempty"`
 	Builtin bool       `json:"builtin,omitempty"`
 	Tools   []ToolInfo `json:"tools,omitempty"`
 }

@@ -96,6 +96,7 @@ export interface TaskInfo {
 export interface PluginInfo {
   name: string;
   path: string;
+  version?: string;
   builtin?: boolean;
   tools?: ToolInfo[];
 }

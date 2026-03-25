@@ -26,7 +26,7 @@ function App() {
         <Route path="missions" element={<MissionsPage />} />
         <Route path="agents" element={<AgentsPage />} />
         <Route path="agents/:name" element={<AgentDetail />} />
-        <Route path="plugins" element={<PluginsPage />} />
+        <Route path="tools" element={<PluginsPage />} />
         <Route path="history" element={<MissionHistory />} />
         <Route path="missions/:name" element={<MissionDetail />} />
         <Route path="runs/:mid" element={<MissionInstanceDetail />} />
