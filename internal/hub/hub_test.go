@@ -16,7 +16,7 @@ import (
 
 func setupTestServer(t *testing.T) (*hub.Hub, *httptest.Server) {
 	t.Helper()
-	h := hub.New()
+	h := hub.New(false)
 	h.Start()
 
 	mux := http.NewServeMux()

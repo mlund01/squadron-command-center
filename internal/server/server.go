@@ -46,31 +46,38 @@ func New(addr string, webFS fs.FS, allowConfigEdit bool, ka *keepalive.KeepAlive
 	}, nil
 }
 
+// spaRoutePrefix lists URL prefixes that are known SPA (client-side) routes.
+// Only these prefixes get the index.html fallback; everything else 404s properly.
+var spaRoutePrefixes = []string{
+	"/instances/",
+}
+
 // spaFallback serves static files, falling back to index.html for SPA routes.
 func spaFallback(distFS fs.FS, fileServer http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-
-		// Don't intercept API or WS paths — let them 404 properly
-		if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/ws") {
-			http.NotFound(w, r)
-			return
-		}
 
 		if path == "/" {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
 
-		// Check if the file exists in the embedded FS
+		// Check if the file exists in the embedded FS (JS, CSS, images, etc.)
 		if _, err := fs.Stat(distFS, path[1:]); err == nil {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
 
-		// SPA fallback: serve index.html for unmatched routes
-		r.URL.Path = "/"
-		fileServer.ServeHTTP(w, r)
+		// SPA fallback: only serve index.html for known client-side route prefixes
+		for _, prefix := range spaRoutePrefixes {
+			if strings.HasPrefix(path, prefix) {
+				r.URL.Path = "/"
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		http.NotFound(w, r)
 	}
 }
 

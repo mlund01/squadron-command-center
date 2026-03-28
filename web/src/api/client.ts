@@ -11,6 +11,10 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export async function getServerInfo(): Promise<{ baseUrl: string }> {
+  return fetchJSON<{ baseUrl: string }>('/info');
+}
+
 export async function listInstances(): Promise<InstanceState[]> {
   return fetchJSON<InstanceState[]>('/instances');
 }

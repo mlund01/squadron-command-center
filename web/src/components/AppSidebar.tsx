@@ -6,6 +6,7 @@ import { listInstances, reloadConfig } from '@/api/client';
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,
@@ -23,7 +24,8 @@ import {
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Rocket, Bot, Puzzle, RefreshCw, History, FileCode, FolderOpen, KeyRound } from 'lucide-react';
+import { Rocket, Bot, Puzzle, RefreshCw, History, FileCode, FolderOpen, KeyRound, AlertTriangle } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
 const staticNavItems = [
@@ -163,6 +165,31 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {currentInstance && currentInstance.connected && !currentInstance.configReady && (
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="mx-2 rounded-md border border-yellow-500/50 bg-yellow-500/10 px-3 py-2 cursor-default">
+                    <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
+                      <AlertTriangle className="size-4 flex-shrink-0" />
+                      <span className="text-xs font-medium">Config Invalid</span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground line-clamp-3">
+                      {currentInstance.configError || 'Fix config errors or set missing variables to enable missions.'}
+                    </p>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-80">
+                  <p className="text-sm">
+                    {currentInstance.configError || 'Fix config errors or set missing variables to enable missions.'}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
     </Sidebar>
   );

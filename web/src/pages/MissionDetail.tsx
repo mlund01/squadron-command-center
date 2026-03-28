@@ -14,17 +14,19 @@ import {
 } from '@xyflow/react';
 import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
-import { ChevronsDown, ChevronsUp, Repeat } from 'lucide-react';
+import { ChevronsDown, ChevronsUp, Repeat, Clock, Webhook, ChevronLeft, ChevronRight, Copy, Check, Eye, EyeOff } from 'lucide-react';
 
-import { getInstance, getMissionHistory, runMission } from '@/api/client';
+import { getInstance, getMissionHistory, runMission, getServerInfo } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { useResizablePanel } from '@/hooks/use-resizable-panel';
 import { ZoomControls } from '@/components/zoom-controls';
 import { RunMissionDialog } from '@/components/RunMissionDialog';
-import type { TaskInfo, AgentInfo, DatasetInfo, MissionInfo } from '@/api/types';
+import type { TaskInfo, AgentInfo, DatasetInfo, MissionInfo, ScheduleInfo, TriggerInfo } from '@/api/types';
 import { RouterEdge } from '@/components/RouterEdge';
 
 const NODE_WIDTH = 260;
@@ -647,6 +649,7 @@ export function MissionDetail() {
                 </Link>
               </Button>
             )}
+            <ScheduleTriggerPopover mission={mission} instanceName={instance.name} />
             <Button
               variant={instance.connected ? 'default' : 'secondary'}
               disabled={!instance.connected || runningMission}
@@ -799,6 +802,191 @@ export function MissionDetail() {
           onOpenChange={setShowRunDialog}
         />
       )}
+    </div>
+  );
+}
+
+type PopoverView =
+  | { type: 'list' }
+  | { type: 'schedule'; index: number }
+  | { type: 'trigger' };
+
+function ScheduleTriggerPopover({ mission, instanceName }: { mission: MissionInfo; instanceName: string }) {
+  const schedules = mission.schedules ?? [];
+  const trigger = mission.trigger;
+  const count = schedules.length + (trigger ? 1 : 0);
+  const [view, setView] = useState<PopoverView>({ type: 'list' });
+
+  if (count === 0) return null;
+
+  return (
+    <Popover onOpenChange={() => setView({ type: 'list' })}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="icon" className="relative">
+          <Clock className="size-4" />
+          <Badge className="absolute -top-1.5 -right-1.5 h-4 min-w-4 px-1 text-[10px] leading-none">
+            {count}
+          </Badge>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-96 p-0">
+        {view.type === 'list' && (
+          <>
+            <div className="px-4 py-3 border-b">
+              <p className="text-sm font-medium">Schedules & Triggers</p>
+            </div>
+            <div className="divide-y">
+              {schedules.map((sched, i) => (
+                <button
+                  key={i}
+                  onClick={() => setView({ type: 'schedule', index: i })}
+                  className="flex items-center gap-2 w-full px-4 py-2.5 hover:bg-muted/50 text-left"
+                >
+                  <Clock className="size-3.5 text-muted-foreground" />
+                  <span className="text-sm">Schedule {i + 1}</span>
+                  <span className="ml-auto text-xs text-muted-foreground font-mono">{sched.expression}</span>
+                  <ChevronRight className="size-3.5 text-muted-foreground" />
+                </button>
+              ))}
+              {trigger && (
+                <button
+                  onClick={() => setView({ type: 'trigger' })}
+                  className="flex items-center gap-2 w-full px-4 py-2.5 hover:bg-muted/50 text-left"
+                >
+                  <Webhook className="size-3.5 text-muted-foreground" />
+                  <span className="text-sm">Webhook</span>
+                  <span className="ml-auto text-xs text-muted-foreground font-mono">POST</span>
+                  <ChevronRight className="size-3.5 text-muted-foreground" />
+                </button>
+              )}
+            </div>
+          </>
+        )}
+        {view.type === 'schedule' && (
+          <ScheduleDetail
+            schedule={schedules[view.index]}
+            index={view.index}
+            onBack={() => setView({ type: 'list' })}
+          />
+        )}
+        {view.type === 'trigger' && trigger && (
+          <TriggerDetail
+            trigger={trigger}
+            missionName={mission.name}
+            instanceName={instanceName}
+            onBack={() => setView({ type: 'list' })}
+          />
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function ScheduleDetail({ schedule, index, onBack }: { schedule: ScheduleInfo; index: number; onBack: () => void }) {
+  const inputEntries = schedule.inputs ? Object.entries(schedule.inputs) : [];
+  const isFriendly = !!(schedule.at?.length || schedule.every);
+
+  return (
+    <div>
+      <div className="px-4 py-3 border-b flex items-center gap-2">
+        <button onClick={onBack} className="text-muted-foreground hover:text-foreground">
+          <ChevronLeft className="size-4" />
+        </button>
+        <Clock className="size-3.5 text-muted-foreground" />
+        <p className="text-sm font-medium">Schedule {index + 1}</p>
+      </div>
+      <div className="px-4 py-3 space-y-2">
+        {isFriendly ? (
+          <>
+            {schedule.at && schedule.at.length > 0 && (
+              <DetailRow label="At" value={schedule.at.join(', ')} />
+            )}
+            {schedule.every && (
+              <DetailRow label="Every" value={schedule.every} />
+            )}
+            {schedule.weekdays && schedule.weekdays.length > 0 && (
+              <DetailRow label="Weekdays" value={schedule.weekdays.join(', ')} />
+            )}
+          </>
+        ) : (
+          <DetailRow label="Cron" value={schedule.expression} mono />
+        )}
+        {schedule.timezone && <DetailRow label="Timezone" value={schedule.timezone} />}
+        {inputEntries.length > 0 && (
+          <div className="pt-1">
+            <span className="text-xs text-muted-foreground">Inputs</span>
+            <div className="mt-1 rounded-md border bg-muted/30 px-3 py-2 space-y-1">
+              {inputEntries.map(([key, val]) => (
+                <div key={key} className="flex items-baseline justify-between gap-4">
+                  <span className="text-xs font-mono text-muted-foreground">{key}</span>
+                  <span className="text-xs font-mono">{val}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TriggerDetail({ trigger, missionName, instanceName, onBack }: { trigger: TriggerInfo; missionName: string; instanceName: string; onBack: () => void }) {
+  const webhookPath = trigger.webhookPath || `/${missionName}`;
+  const path = `/webhooks/${instanceName}${webhookPath}`;
+  const { data: serverInfo } = useQuery({ queryKey: ['serverInfo'], queryFn: getServerInfo, staleTime: Infinity });
+  const fullUrl = `${serverInfo?.baseUrl ?? window.location.origin}${path}`;
+  const [copied, setCopied] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(fullUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [fullUrl]);
+
+  return (
+    <div>
+      <div className="px-4 py-3 border-b flex items-center gap-2">
+        <button onClick={onBack} className="text-muted-foreground hover:text-foreground">
+          <ChevronLeft className="size-4" />
+        </button>
+        <Webhook className="size-3.5 text-muted-foreground" />
+        <p className="text-sm font-medium">Webhook</p>
+      </div>
+      <div className="px-4 py-3 space-y-2">
+        <div>
+          <span className="text-xs text-muted-foreground">URL</span>
+          <div className="mt-1 flex items-center gap-1.5 rounded-md border bg-muted/30 px-2.5 py-1.5">
+            <span className="text-xs font-mono flex-1 break-all">{path}</span>
+            <button onClick={handleCopy} className="text-muted-foreground hover:text-foreground flex-shrink-0">
+              {copied ? <Check className="size-3.5 text-green-500" /> : <Copy className="size-3.5" />}
+            </button>
+          </div>
+        </div>
+        {trigger.hasSecret && (
+          <div>
+            <span className="text-xs text-muted-foreground">Secret Header</span>
+            <div className="mt-1 flex items-center gap-1.5 rounded-md border bg-muted/30 px-2.5 py-1.5">
+              <code className="text-xs font-mono flex-1">X-Webhook-Secret: {showSecret ? trigger.secret || '••••••••' : '••••••••'}</code>
+              <button onClick={() => setShowSecret(!showSecret)} className="text-muted-foreground hover:text-foreground flex-shrink-0">
+                {showSecret ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+              </button>
+            </div>
+          </div>
+        )}
+        {!trigger.hasSecret && (
+          <DetailRow label="Secret" value="None" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className={cn("text-xs text-right", mono && "font-mono")}>{value}</span>
     </div>
   );
 }

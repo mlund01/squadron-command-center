@@ -102,6 +102,12 @@ func handleSetVariable(h *hub.Hub) http.HandlerFunc {
 			return
 		}
 
+		// Update cached config from reload result
+		if result.Config != nil {
+			h.GetRegistry().UpdateConfig(instanceID, *result.Config)
+		}
+		h.GetRegistry().UpdateConfigState(instanceID, result.ConfigReady, result.ConfigError)
+
 		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 	}
 }
@@ -145,6 +151,12 @@ func handleDeleteVariable(h *hub.Hub) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": result.Error})
 			return
 		}
+
+		// Update cached config from reload result
+		if result.Config != nil {
+			h.GetRegistry().UpdateConfig(instanceID, *result.Config)
+		}
+		h.GetRegistry().UpdateConfigState(instanceID, result.ConfigReady, result.ConfigError)
 
 		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 	}

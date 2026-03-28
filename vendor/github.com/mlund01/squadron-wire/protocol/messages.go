@@ -9,6 +9,8 @@ type RegisterPayload struct {
 	InstanceName string         `json:"instanceName"`
 	Version      string         `json:"version"`
 	ConfigDigest string         `json:"configDigest"`
+	ConfigReady  bool           `json:"configReady"`
+	ConfigError  string         `json:"configError,omitempty"`
 	Config       InstanceConfig `json:"config"`
 }
 
@@ -56,6 +58,27 @@ type MissionInfo struct {
 	Inputs      []MissionInputInfo `json:"inputs,omitempty"`
 	Datasets    []DatasetInfo      `json:"datasets,omitempty"`
 	Tasks       []TaskInfo         `json:"tasks,omitempty"`
+	Schedules   []ScheduleInfo     `json:"schedules,omitempty"`
+	Trigger     *TriggerInfo       `json:"trigger,omitempty"`
+	MaxParallel int                `json:"maxParallel,omitempty"`
+}
+
+// ScheduleInfo describes a schedule for display in the command center UI.
+type ScheduleInfo struct {
+	Expression string            `json:"expression"`         // compiled cron expression
+	At         []string          `json:"at,omitempty"`       // original friendly field
+	Every      string            `json:"every,omitempty"`    // original friendly field
+	Weekdays   []string          `json:"weekdays,omitempty"` // original friendly field
+	Timezone   string            `json:"timezone,omitempty"`
+	Inputs     map[string]string `json:"inputs,omitempty"`
+}
+
+// TriggerInfo describes a trigger for display in the command center UI.
+type TriggerInfo struct {
+	Type        string `json:"type"`                  // "webhook"
+	WebhookPath string `json:"webhookPath,omitempty"` // path suffix, e.g. "/my_mission"
+	HasSecret   bool   `json:"hasSecret,omitempty"`   // whether a secret is configured
+	Secret      string `json:"secret,omitempty"`      // actual secret value (for command center validation)
 }
 
 type DatasetInfo struct {
@@ -544,8 +567,11 @@ type SetVariablePayload struct {
 }
 
 type SetVariableResultPayload struct {
-	Success bool   `json:"success"`
-	Error   string `json:"error,omitempty"`
+	Success     bool            `json:"success"`
+	Error       string          `json:"error,omitempty"`
+	ConfigReady bool            `json:"configReady,omitempty"`
+	ConfigError string          `json:"configError,omitempty"`
+	Config      *InstanceConfig `json:"config,omitempty"` // updated config after reload (nil if reload failed)
 }
 
 type DeleteVariablePayload struct {
@@ -553,8 +579,11 @@ type DeleteVariablePayload struct {
 }
 
 type DeleteVariableResultPayload struct {
-	Success bool   `json:"success"`
-	Error   string `json:"error,omitempty"`
+	Success     bool            `json:"success"`
+	Error       string          `json:"error,omitempty"`
+	ConfigReady bool            `json:"configReady,omitempty"`
+	ConfigError string          `json:"configError,omitempty"`
+	Config      *InstanceConfig `json:"config,omitempty"`
 }
 
 // =============================================================================

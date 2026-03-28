@@ -49,6 +49,11 @@ const (
 	EventAgentToolComplete MissionEventType = "agent_tool_complete"
 	EventAgentAnswer       MissionEventType = "agent_answer"
 	EventRouteChosen       MissionEventType = "route_chosen"
+
+	// Schedule/trigger events
+	EventScheduledRun  MissionEventType = "scheduled_run"
+	EventTriggeredRun  MissionEventType = "triggered_run"
+	EventScheduleSkip  MissionEventType = "schedule_skip"
 )
 
 // =============================================================================

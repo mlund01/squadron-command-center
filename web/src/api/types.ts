@@ -5,6 +5,8 @@ export interface InstanceState {
   name: string;
   version: string;
   configDigest: string;
+  configReady: boolean;
+  configError?: string;
   config: InstanceConfig;
   connected: boolean;
   connectedAt?: string;
@@ -42,6 +44,25 @@ export interface MissionInfo {
   inputs?: MissionInputInfo[];
   datasets?: DatasetInfo[];
   tasks?: TaskInfo[];
+  schedules?: ScheduleInfo[];
+  trigger?: TriggerInfo;
+  maxParallel?: number;
+}
+
+export interface ScheduleInfo {
+  expression: string;
+  at?: string[];
+  every?: string;
+  weekdays?: string[];
+  timezone?: string;
+  inputs?: Record<string, string>;
+}
+
+export interface TriggerInfo {
+  type: string;
+  webhookPath?: string;
+  hasSecret?: boolean;
+  secret?: string;
 }
 
 export interface DatasetInfo {

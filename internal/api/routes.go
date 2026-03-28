@@ -11,6 +11,9 @@ import (
 // RegisterRoutes registers all REST API endpoints.
 // ka is an optional KeepAlive for managed lifecycle (nil to disable).
 func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, ka *keepalive.KeepAlive) {
+	// Server info
+	mux.HandleFunc("GET /api/info", handleInfo())
+
 	// Keep-alive endpoint for managed lifecycle
 	mux.HandleFunc("POST /api/keep-alive", handleKeepAlive(ka))
 
@@ -51,6 +54,9 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, ka *keepalive.KeepAlive) {
 	mux.HandleFunc("GET /api/instances/{id}/variables", handleGetVariables(h))
 	mux.HandleFunc("PUT /api/instances/{id}/variables/{name}", handleSetVariable(h))
 	mux.HandleFunc("DELETE /api/instances/{id}/variables/{name}", handleDeleteVariable(h))
+
+	// Webhook trigger endpoints
+	mux.HandleFunc("POST /webhooks/{instanceName}/{webhookPath...}", handleWebhook(h))
 
 	// Agent chat endpoints
 	mux.HandleFunc("POST /api/instances/{id}/agents/{name}/chat", handleChatMessage(h))
@@ -94,6 +100,18 @@ func handleGetConfig(h *hub.Hub) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, instance.Config)
+	}
+}
+
+func handleInfo() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"baseUrl": scheme + "://" + r.Host,
+		})
 	}
 }
 

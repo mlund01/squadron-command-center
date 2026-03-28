@@ -13,6 +13,8 @@ type InstanceState struct {
 	Name         string                  `json:"name"`
 	Version      string                  `json:"version"`
 	ConfigDigest string                  `json:"configDigest"`
+	ConfigReady  bool                    `json:"configReady"`
+	ConfigError  string                  `json:"configError,omitempty"`
 	Config       protocol.InstanceConfig `json:"config"`
 	Connected    bool                    `json:"connected"`
 	ConnectedAt  *time.Time              `json:"connectedAt,omitempty"`
@@ -49,6 +51,8 @@ func (r *Registry) Register(payload protocol.RegisterPayload) string {
 			state.DisconnectedAt = nil
 			state.Version = payload.Version
 			state.ConfigDigest = payload.ConfigDigest
+			state.ConfigReady = payload.ConfigReady
+			state.ConfigError = payload.ConfigError
 			state.Config = payload.Config
 			return existingID
 		}
@@ -64,6 +68,8 @@ func (r *Registry) Register(payload protocol.RegisterPayload) string {
 		Name:         payload.InstanceName,
 		Version:      payload.Version,
 		ConfigDigest: payload.ConfigDigest,
+		ConfigReady:  payload.ConfigReady,
+		ConfigError:  payload.ConfigError,
 		Config:       payload.Config,
 		Connected:    true,
 		ConnectedAt:  &now,
@@ -98,12 +104,42 @@ func (r *Registry) GetInstance(instanceID string) *InstanceState {
 	return &cp
 }
 
+// GetInstanceByName returns an instance's state by its name.
+func (r *Registry) GetInstanceByName(name string) *InstanceState {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	id, ok := r.byName[name]
+	if !ok {
+		return nil
+	}
+	state, ok := r.instances[id]
+	if !ok {
+		return nil
+	}
+	cp := *state
+	return &cp
+}
+
 // UpdateConfig updates the cached config for an instance.
+// A successful reload means the config is now valid.
 func (r *Registry) UpdateConfig(instanceID string, config protocol.InstanceConfig) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if state, ok := r.instances[instanceID]; ok {
 		state.Config = config
+		state.ConfigReady = true
+		state.ConfigError = ""
+	}
+}
+
+// UpdateConfigState updates the configReady and configError fields for an instance.
+func (r *Registry) UpdateConfigState(instanceID string, ready bool, configError string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if state, ok := r.instances[instanceID]; ok {
+		state.ConfigReady = ready
+		state.ConfigError = configError
 	}
 }
 
