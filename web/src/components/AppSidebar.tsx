@@ -6,7 +6,6 @@ import { listInstances, reloadConfig } from '@/api/client';
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,

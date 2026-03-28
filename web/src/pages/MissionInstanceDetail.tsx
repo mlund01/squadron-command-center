@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -311,7 +311,7 @@ function parseTaskConfig(task: MissionTaskRecord): TaskInfo | null {
 /* ── Event helpers ── */
 
 const VERBOSE_EVENTS = new Set([
-  'agent_thinking', 'agent_answer', 'commander_reasoning', 'commander_answer',
+  'agent_reasoning_started', 'agent_reasoning_completed', 'agent_answer', 'commander_reasoning_started', 'commander_reasoning_completed', 'commander_answer',
   'session_turn', 'mission_stopped', 'mission_resumed',
 ]);
 
@@ -350,11 +350,6 @@ function formatEventText(eventType: string, d: Record<string, unknown>): string 
 /* ── General Tab ── */
 
 function GeneralTab({ mission, tasks }: { mission: { name: string; status: string; inputsJson?: string; startedAt: string; finishedAt?: string }; tasks: MissionTaskRecord[] }) {
-  const inputs = useMemo(() => {
-    if (!mission.inputsJson) return null;
-    try { return JSON.parse(mission.inputsJson) as Record<string, string>; } catch { return null; }
-  }, [mission.inputsJson]);
-
   return (
     <div className="overflow-y-auto p-4 h-full">
       <div className="space-y-4 max-w-2xl">
@@ -524,14 +519,33 @@ interface GanttSpan {
   category: 'commander' | 'agent' | 'tool' | 'dataset_next';
   sessionId?: string;
   toolResult?: ToolResultDTO;
-  breaks?: number[]; // timestamps where a break (stop→resume gap) occurred
 }
 
-const SPAN_COLORS: Record<GanttSpan['category'], string> = {
+// A top-level row in the execution trace (commander or agent session)
+// with expandable child tool call spans
+interface TraceRow {
+  id: string;
+  label: string;
+  start: number;
+  end: number;
+  category: 'commander' | 'agent';
+  sessionId?: string;
+  segments?: { start: number; end: number }[]; // active time ranges (when split by stop/resume)
+  children: GanttSpan[]; // tool call spans within this session
+}
+
+const SPAN_COLORS: Record<GanttSpan['category'] | TraceRow['category'], string> = {
   commander: 'bg-purple-500',
-  agent: 'bg-blue-500',
-  tool: 'bg-teal-500',
+  agent: 'bg-purple-500',
+  tool: 'bg-emerald-500',
   dataset_next: 'bg-amber-500',
+};
+
+const SPAN_COLORS_HEX: Record<GanttSpan['category'] | TraceRow['category'], string> = {
+  commander: '#a855f7',
+  agent: '#a855f7',
+  tool: '#10b981',
+  dataset_next: '#f59e0b',
 };
 
 function IterationBar({
@@ -655,6 +669,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
   const [selection, setSelection] = useState<PanelSelection>(null);
   const [traceView, setTraceView] = useState<'detail' | 'subtasks' | 'output' | 'iterations' | 'flamegraph' | 'table' | 'turns'>('detail');
   const [collapsedRows, setCollapsedRows] = useState<Set<string>>(new Set());
+  const [expandedTraceRows, setExpandedTraceRows] = useState<Set<string>>(new Set());
   const [turnsEntityFilter, setTurnsEntityFilter] = useState('all');
 
   const selectedSessionId = selection?.type === 'session' ? selection.sessionId : null;
@@ -828,16 +843,6 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
   // Session IDs for current iteration (used to filter subtasks, etc.)
   const iterationSessionIds = useMemo(() => new Set(sessions.map(s => s.id)), [sessions]);
 
-  // Compute iteration time range for flame graph highlight (sequential only — parallel already scopes the entire graph)
-  const iterationTimeRange = useMemo(() => {
-    if (!isIterated || isParallelIteration || selectedIteration == null) return null;
-    const iterEvents = taskEvents.filter(e => e.iterationIndex === selectedIteration);
-    if (iterEvents.length === 0) return null;
-    const earliest = Math.min(...iterEvents.map(e => e.time));
-    const latest = Math.max(...iterEvents.map(e => e.time));
-    return { start: earliest, end: latest };
-  }, [isIterated, isParallelIteration, selectedIteration, taskEvents]);
-
   // Subtasks filtered by iteration
   const subtasks = useMemo(() => {
     const all = taskDetail?.subtasks ?? [];
@@ -868,23 +873,6 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
   }, [allSessions]);
 
   // For call_agent tool results, find the agent session that ran during that window
-  const findAgentSession = useCallback((tr: ToolResultDTO) => {
-    // Match by agent name from call_agent input params
-    if (tr.toolName === 'call_agent') {
-      try {
-        const parsed = JSON.parse(tr.inputParams || '{}');
-        if (parsed.name) {
-          const byName = allSessions.find(s => s.role !== 'commander' && s.agentName === parsed.name);
-          if (byName) return byName;
-        }
-      } catch { /* fall through */ }
-    }
-    // Fallback: time-based match
-    const trStart = new Date(tr.startedAt).getTime();
-    const trEnd = new Date(tr.finishedAt).getTime();
-    return allSessions.find(s => s.role !== 'commander' && new Date(s.startedAt).getTime() >= trStart - 1000 && new Date(s.startedAt).getTime() <= trEnd);
-  }, [allSessions]);
-
   // Gantt spans built from tool results
   // Line 1: Commander session (continuous bar)
   // Line 2: Commander's tool calls (call_agent shown as agent spans, others as tool spans)
@@ -944,12 +932,12 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     return best;
   }, [allToolResults]);
 
-  const ganttLines = useMemo((): GanttSpan[][] => {
-    const lines: GanttSpan[][] = [];
+  // Build trace rows: one per commander/agent session, each with child tool call spans
+  const traceRows = useMemo((): TraceRow[] => {
+    const rows: TraceRow[] = [];
     const ct = compressTime;
 
     // Filter events by iteration for parallel tasks
-    // Use iterationIndex if available, otherwise parse from taskName (e.g. "write_story[2]" → 2)
     const activeEvents = isParallelIteration && selectedIteration != null
       ? taskEvents.filter(e => e.iterationIndex === selectedIteration)
       : taskEvents;
@@ -960,43 +948,54 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
       : latestEventTime;
     const cEnd = compressTime(taskEndTime);
 
-    // --- Line 1: Commander span ---
-    // Use first commander event as start, last as end
+    // --- Commander row ---
     const CMDR_EVENTS = new Set([
-      'commander_reasoning', 'commander_answer', 'commander_calling_tool', 'commander_tool_complete',
+      'commander_reasoning_started', 'commander_reasoning_completed', 'commander_answer', 'commander_calling_tool', 'commander_tool_complete',
       'iteration_reasoning', 'iteration_answer',
     ]);
     const cmdrEvents = activeEvents.filter(e => CMDR_EVENTS.has(e.eventType));
     const cmdrSessionId = cmdrEvents.find(e => e.sessionId)?.sessionId;
-    if (cmdrEvents.length > 0) {
-      const spanStart = ct(Math.min(...cmdrEvents.map(e => e.time)));
-      const spanEnd = ct(Math.max(...cmdrEvents.map(e => e.time)));
-      const breaks = resumeBreaks.filter(t => t > spanStart && t < spanEnd);
-      lines.push([{
-        id: cmdrSessionId || 'commander', label: 'commander',
-        start: spanStart, end: Math.max(spanEnd, cEnd),
-        category: 'commander', sessionId: cmdrSessionId,
-        breaks: breaks.length > 0 ? breaks : undefined,
-      }]);
-    }
 
-    // --- Line 2: Commander tool calls + agent spans ---
-    const line2: GanttSpan[] = [];
-
-    // Commander tool calls (excluding call_agent — those become agent spans)
+    // Commander tool calls (excluding call_agent)
     const cmdrToolPairs = pairToolEvents(activeEvents, 'commander_calling_tool', 'commander_tool_complete', taskEndTime);
+    const cmdrToolSpans: GanttSpan[] = [];
     for (const pair of cmdrToolPairs) {
       if (pair.toolName === 'call_agent') continue;
       const matchedTR = findToolResultForEvent(pair.toolCallId, pair.sessionId, pair.toolName, pair.start);
-      line2.push({
+      cmdrToolSpans.push({
         id: pair.id, label: pair.toolName,
         start: ct(pair.start), end: ct(pair.end),
         category: pair.toolName === 'dataset_next' ? 'dataset_next' : 'tool',
         toolResult: matchedTR,
       });
     }
+    cmdrToolSpans.sort((a, b) => a.start - b.start);
 
-    // Agent spans from agent_started / agent_completed events
+    if (cmdrEvents.length > 0) {
+      const spanStart = ct(Math.min(...cmdrEvents.map(e => e.time)));
+      const spanEnd = Math.max(ct(Math.max(...cmdrEvents.map(e => e.time))), cEnd);
+      const breaks = resumeBreaks.filter(t => t > spanStart && t < spanEnd);
+      // Convert break points to segments
+      let cmdrSegments: { start: number; end: number }[] | undefined;
+      if (breaks.length > 0) {
+        cmdrSegments = [];
+        let segStart = spanStart;
+        for (const b of breaks) {
+          cmdrSegments.push({ start: segStart, end: b });
+          segStart = b;
+        }
+        cmdrSegments.push({ start: segStart, end: spanEnd });
+      }
+      rows.push({
+        id: cmdrSessionId || 'commander', label: 'Commander',
+        start: spanStart, end: spanEnd,
+        category: 'commander', sessionId: cmdrSessionId,
+        segments: cmdrSegments,
+        children: cmdrToolSpans,
+      });
+    }
+
+    // --- Agent rows ---
     const stopTimes = allMissionEvents
       .filter(e => e.eventType === 'mission_stopped')
       .map(e => e.time)
@@ -1004,7 +1003,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     const agentStarts = activeEvents.filter(e => e.eventType === 'agent_started');
     const agentCompletes = [...activeEvents.filter(e => e.eventType === 'agent_completed')];
 
-    type AgentSegment = { agentName: string; startTime: number; endTime: number; completed: boolean; startId: string };
+    type AgentSegment = { agentName: string; sessionId: string; startTime: number; endTime: number; completed: boolean; startId: string };
     const segments: AgentSegment[] = [];
     for (const startEvt of agentStarts) {
       const agentName = String(startEvt.data.agentName || 'agent');
@@ -1018,6 +1017,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
       }
       segments.push({
         agentName,
+        sessionId: startEvt.sessionId || '',
         startTime: startEvt.time,
         endTime: interrupted ? nextStop! : (completeEvt ? completeEvt.time : taskEndTime),
         completed: !interrupted && !!completeEvt,
@@ -1025,76 +1025,81 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
       });
     }
 
-    // Merge consecutive interrupted segments across stop/resume gaps
-    const mergedAgentSpans: { agentName: string; start: number; end: number; breaks: number[]; id: string }[] = [];
-    let current: typeof mergedAgentSpans[0] | null = null;
+    // Group segments by sessionId — segments sharing a session go on the same row
+    const sessionMap = new Map<string, { agentName: string; sessionId: string; start: number; end: number; spans: { start: number; end: number }[]; id: string }>();
     let lastWasInterrupted = false;
+    let prevSessionId = '';
     for (const seg of segments) {
-      if (current && current.agentName === seg.agentName && lastWasInterrupted) {
-        const breakTime = ct(seg.startTime);
-        if (breakTime > current.start) current.breaks.push(breakTime);
-        current.end = ct(seg.endTime);
+      const sid = seg.sessionId;
+      const segStart = ct(seg.startTime);
+      const segEnd = ct(seg.endTime);
+      const existing = sid ? sessionMap.get(sid) : null;
+      if (existing) {
+        existing.spans.push({ start: segStart, end: segEnd });
+        existing.start = Math.min(existing.start, segStart);
+        existing.end = Math.max(existing.end, segEnd);
+      } else if (!sid && prevSessionId && lastWasInterrupted) {
+        const prev = sessionMap.get(prevSessionId);
+        if (prev) {
+          prev.spans.push({ start: segStart, end: segEnd });
+          prev.start = Math.min(prev.start, segStart);
+          prev.end = Math.max(prev.end, segEnd);
+        }
       } else {
-        if (current) mergedAgentSpans.push(current);
-        current = { agentName: seg.agentName, start: ct(seg.startTime), end: ct(seg.endTime), breaks: [], id: seg.startId };
+        const key = sid || `anon-${seg.startId}`;
+        sessionMap.set(key, { agentName: seg.agentName, sessionId: sid, start: segStart, end: segEnd, spans: [{ start: segStart, end: segEnd }], id: seg.startId });
       }
       lastWasInterrupted = !seg.completed;
+      if (sid) prevSessionId = sid;
     }
-    if (current) mergedAgentSpans.push(current);
+    const mergedAgentSpans = [...sessionMap.values()];
+
+    // Agent tool calls — matched to agents by sessionId from events
+    const agentToolPairs = pairToolEvents(activeEvents, 'agent_calling_tool', 'agent_tool_complete', taskEndTime);
 
     for (const span of mergedAgentSpans) {
-      line2.push({
+      const agentTools: GanttSpan[] = agentToolPairs
+        .filter(pair => span.sessionId && pair.sessionId === span.sessionId)
+        .map(pair => {
+          const matchedTR = findToolResultForEvent(pair.toolCallId, pair.sessionId, pair.toolName, pair.start);
+          return {
+            id: pair.id, label: pair.toolName,
+            start: ct(pair.start), end: ct(pair.end),
+            category: pair.toolName === 'dataset_next' ? 'dataset_next' as const : 'tool' as const,
+            toolResult: matchedTR,
+          };
+        });
+
+      agentTools.sort((a, b) => a.start - b.start);
+
+      rows.push({
         id: `agent-evt-${span.id}`, label: span.agentName,
         start: span.start, end: span.end,
-        category: 'agent' as const,
-        breaks: span.breaks.length > 0 ? span.breaks : undefined,
+        category: 'agent',
+        sessionId: span.sessionId || undefined,
+        segments: span.spans.length > 1 ? span.spans : undefined,
+        children: agentTools,
       });
     }
 
-    if (line2.length > 0) {
-      line2.sort((a, b) => a.start - b.start);
-      lines.push(line2);
-    }
-
-    // --- Lines 3+: Agent tool calls, one line per agent session ---
-    const agentToolPairs = pairToolEvents(activeEvents, 'agent_calling_tool', 'agent_tool_complete', taskEndTime);
-    // Group by sessionId
-    const bySession = new Map<string, typeof agentToolPairs>();
-    for (const pair of agentToolPairs) {
-      const key = pair.sessionId;
-      if (!bySession.has(key)) bySession.set(key, []);
-      bySession.get(key)!.push(pair);
-    }
-    for (const [, pairs] of bySession) {
-      const line: GanttSpan[] = pairs.map(pair => {
-        const matchedTR = findToolResultForEvent(pair.toolCallId, pair.sessionId, pair.toolName, pair.start);
-        return {
-          id: pair.id, label: pair.toolName,
-          start: ct(pair.start), end: ct(pair.end),
-          category: 'tool' as const,
-          toolResult: matchedTR,
-        };
-      });
-      line.sort((a, b) => a.start - b.start);
-      lines.push(line);
-    }
-
-    return lines;
+    return rows;
   }, [taskEvents, allMissionEvents, isParallelIteration, selectedIteration, latestEventTime, compressTime, resumeBreaks, pairToolEvents, findToolResultForEvent]);
 
-  // Gantt time range — derived entirely from ganttLines (event-driven)
+  // Gantt time range — derived from traceRows
   const { ganttStart, ganttDuration } = useMemo(() => {
     let earliest = Infinity;
     let latest = 0;
-    for (const line of ganttLines) {
-      for (const span of line) {
-        if (span.start < earliest) earliest = span.start;
-        if (span.end > latest) latest = span.end;
+    for (const row of traceRows) {
+      if (row.start < earliest) earliest = row.start;
+      if (row.end > latest) latest = row.end;
+      for (const child of row.children) {
+        if (child.start < earliest) earliest = child.start;
+        if (child.end > latest) latest = child.end;
       }
     }
     if (earliest === Infinity) return { ganttStart: 0, ganttDuration: 1 };
     return { ganttStart: earliest, ganttDuration: Math.max(latest - earliest, 1) };
-  }, [ganttLines]);
+  }, [traceRows]);
 
   // Events filtered by iteration (same logic as ganttLines uses)
   const activeEvents = useMemo(() => {
@@ -1102,61 +1107,57 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     return taskEvents.filter(e => e.iterationIndex === selectedIteration);
   }, [taskEvents, isParallelIteration, selectedIteration, ]);
 
-  // Reasoning ticks for flame graph: map spanId → array of { pct, time } within each session/agent span
-  const messageTicks = useMemo(() => {
-    const ticks = new Map<string, { pct: number; time: number }[]>();
-    const REASONING_EVENTS = new Set([
-      'commander_reasoning', 'agent_thinking',
-    ]);
+  // Reasoning ranges for flame graph: map rowId → array of { start, end } time ranges
+  // Built from explicit reasoning_started / reasoning_completed event pairs
+  const reasoningRanges = useMemo(() => {
+    const ranges = new Map<string, { start: number; end: number }[]>();
 
-    for (const line of ganttLines) {
-      for (const span of line) {
-        if (span.category !== 'commander' && span.category !== 'agent') continue;
-        const spanDur = span.end - span.start;
-        if (spanDur <= 0) continue;
+    for (const row of traceRows) {
+      const sessionId = row.sessionId;
+      if (!sessionId) continue;
+      const session = sessionMap.get(sessionId);
+      if (!session) continue;
 
-        // Find matching session for this span
-        let sessionId: string | undefined;
-        if (span.sessionId) {
-          sessionId = span.sessionId;
-        } else if (span.toolResult?.toolName === 'call_agent') {
-          const agentSession = findAgentSession(span.toolResult);
-          if (agentSession) sessionId = agentSession.id;
-        }
-        if (!sessionId) continue;
-        const session = sessionMap.get(sessionId);
-        if (!session) continue;
+      const isCmd = session.role === 'commander';
+      const startType = isCmd ? 'commander_reasoning_started' : 'agent_reasoning_started';
+      const endType = isCmd ? 'commander_reasoning_completed' : 'agent_reasoning_completed';
 
-        const isCmd = session.role === 'commander';
-        const spanTicks: { pct: number; time: number }[] = [];
-
-        for (const evt of activeEvents) {
-          if (!REASONING_EVENTS.has(evt.eventType)) continue;
+      // Get all events for this session, sorted by time
+      const sessionEvents = activeEvents
+        .filter(evt => {
           const ct = compressTime(evt.time);
-          if (ct < span.start || ct > span.end) continue;
-          // Commander spans only show commander_reasoning; agent spans only show agent_thinking
-          if (isCmd && evt.eventType !== 'commander_reasoning') continue;
-          if (!isCmd && (evt.eventType !== 'agent_thinking' || evt.data.agentName !== session.agentName)) continue;
+          if (ct < row.start || ct > row.end) return false;
+          if (evt.eventType !== startType && evt.eventType !== endType) return false;
+          if (isCmd) return evt.sessionId === sessionId || evt.eventType.startsWith('commander_');
+          return evt.sessionId === sessionId || (evt.data.agentName === session.agentName && evt.eventType.startsWith('agent_'));
+        })
+        .map(evt => ({ type: evt.eventType, time: compressTime(evt.time) }))
+        .sort((a, b) => a.time - b.time);
 
-          const pct = ((ct - span.start) / spanDur) * 100;
-          spanTicks.push({ pct, time: ct });
-        }
+      const rowRanges: { start: number; end: number }[] = [];
+      let reasoningStart: number | null = null;
 
-        if (spanTicks.length > 0) {
-          // Deduplicate ticks that are too close together (< 0.5% apart)
-          spanTicks.sort((a, b) => a.pct - b.pct);
-          const deduped = [spanTicks[0]];
-          for (let i = 1; i < spanTicks.length; i++) {
-            if (spanTicks[i].pct - deduped[deduped.length - 1].pct > 0.5) {
-              deduped.push(spanTicks[i]);
-            }
+      for (const evt of sessionEvents) {
+        if (evt.type === startType) {
+          if (reasoningStart === null) reasoningStart = evt.time;
+        } else if (evt.type === endType) {
+          if (reasoningStart !== null && evt.time > reasoningStart) {
+            rowRanges.push({ start: reasoningStart, end: evt.time });
           }
-          ticks.set(span.id, deduped);
+          reasoningStart = null;
         }
       }
+      // If still reasoning at end of row, close it
+      if (reasoningStart !== null && row.end > reasoningStart) {
+        rowRanges.push({ start: reasoningStart, end: row.end });
+      }
+
+      if (rowRanges.length > 0) {
+        ranges.set(row.id, rowRanges);
+      }
     }
-    return ticks;
-  }, [ganttLines, activeEvents, sessionMap, findAgentSession, compressTime]);
+    return ranges;
+  }, [traceRows, activeEvents, sessionMap, compressTime]);
 
   // State for scrolling to a specific activity event in the detail panel
   const [scrollToActivityTime, setScrollToActivityTime] = useState<number | null>(null);
@@ -1232,122 +1233,30 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     setScrollToActivityTime(null);
   }, [scrollToActivityTime, sessionDetailEvents]);
 
-  // Zoom/pan state: zoom=1 means full view, panOffset=0..1 is left edge fraction
-  const [zoom, setZoom] = useState(1);
-  const [panOffset, setPanOffset] = useState(0);
-  const ganttContainerRef = useRef<HTMLDivElement>(null);
-  const panDragRef = useRef<{ startX: number; startOffset: number; dragging: boolean; pointerId: number } | null>(null);
-
-  // Reset zoom when switching tasks/iterations
-  useEffect(() => {
-    setZoom(1);
-    setPanOffset(0);
-  }, [selectedTaskId, selectedIteration]);
-
-  const viewWidth = 1 / zoom; // fraction of total visible
-  const viewStart = panOffset; // fraction
-
-  // Zoom-aware percent: maps absolute time to percent within the visible window
+  // Simple percent: maps absolute time to percent of the full timeline
   const toPercent = useCallback((t: number) => {
-    const frac = (t - ganttStart) / ganttDuration; // 0..1
-    return ((frac - viewStart) / viewWidth) * 100;
-  }, [ganttStart, ganttDuration, viewStart, viewWidth]);
+    return ((t - ganttStart) / ganttDuration) * 100;
+  }, [ganttStart, ganttDuration]);
 
-  // Zoom ref to avoid stale closures in the native event listener
-  const zoomRef = useRef({ zoom, viewStart, viewWidth });
-  zoomRef.current = { zoom, viewStart, viewWidth };
-
-  // Wheel handler ref — persists across mounts so cleanup works correctly
-  const wheelHandlerRef = useRef<((e: WheelEvent) => void) | null>(null);
-
-  // Callback ref for gantt container — attaches wheel handler on mount, detaches on unmount
-  const ganttRefCallback = useCallback((el: HTMLDivElement | null) => {
-    // Clean up previous
-    if (ganttContainerRef.current && wheelHandlerRef.current) {
-      ganttContainerRef.current.removeEventListener('wheel', wheelHandlerRef.current);
-    }
-    ganttContainerRef.current = el;
-    if (!el) return;
-
-    const handler = (e: WheelEvent) => {
-      // Only zoom on pinch gesture (ctrlKey is set for trackpad pinch-to-zoom)
-      if (!e.ctrlKey) return;
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      const { zoom: z, viewStart: vs, viewWidth: vw } = zoomRef.current;
-      const cursorFrac = (e.clientX - rect.left) / rect.width;
-      const cursorPos = vs + cursorFrac * vw;
-      const zoomDelta = e.deltaY > 0 ? 0.97 : 1.03;
-      const newZoom = Math.max(1, Math.min(50, z * zoomDelta));
-      const newViewWidth = 1 / newZoom;
-      let newOffset = cursorPos - cursorFrac * newViewWidth;
-      newOffset = Math.max(0, Math.min(1 - newViewWidth, newOffset));
-      setZoom(newZoom);
-      setPanOffset(newOffset);
-    };
-    wheelHandlerRef.current = handler;
-    el.addEventListener('wheel', handler, { passive: false });
-  }, []);
-
-  // Pan via mouse drag (with movement threshold to preserve click interactions)
-  const PAN_THRESHOLD = 4; // pixels before a pointerdown becomes a drag
-  const handlePanStart = useCallback((e: React.PointerEvent) => {
-    if (zoom <= 1) return;
-    if (e.button !== 0) return;
-    panDragRef.current = { startX: e.clientX, startOffset: panOffset, dragging: false, pointerId: e.pointerId };
-  }, [zoom, panOffset]);
-
-  const handlePanMove = useCallback((e: React.PointerEvent) => {
-    if (!panDragRef.current || !ganttContainerRef.current) return;
-    const dx = e.clientX - panDragRef.current.startX;
-    if (!panDragRef.current.dragging) {
-      if (Math.abs(dx) < PAN_THRESHOLD) return;
-      // Exceeded threshold — start dragging
-      panDragRef.current.dragging = true;
-      (e.currentTarget as HTMLElement).setPointerCapture(panDragRef.current.pointerId);
-    }
-    const rect = ganttContainerRef.current.getBoundingClientRect();
-    const fracDx = dx / rect.width * viewWidth;
-    let newOffset = panDragRef.current.startOffset - fracDx;
-    newOffset = Math.max(0, Math.min(1 - viewWidth, newOffset));
-    setPanOffset(newOffset);
-  }, [viewWidth]);
-
-  const handlePanEnd = useCallback((e: React.PointerEvent) => {
-    const wasDragging = panDragRef.current?.dragging;
-    panDragRef.current = null;
-    if (wasDragging) {
-      // Prevent the click event that follows pointerup after a drag
-      const el = e.currentTarget as HTMLElement;
-      const suppress = (ce: Event) => { ce.stopPropagation(); el.removeEventListener('click', suppress, true); };
-      el.addEventListener('click', suppress, true);
-    }
-  }, []);
-
-  // Time axis ticks — computed for the visible window
-  // Nice intervals in seconds, from ms up to minutes
+  // Time axis ticks
   const NICE_INTERVALS = [
     0.01, 0.02, 0.05, 0.1, 0.2, 0.5,
     1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600,
   ];
-  const visibleDurationMs = ganttDuration * viewWidth;
   const ticks = useMemo(() => {
     if (ganttDuration <= 1) return [];
-    const visDurSec = visibleDurationMs / 1000;
-    const visStartSec = (panOffset * ganttDuration) / 1000;
-    // Pick the largest nice interval that gives us >= 5 ticks
+    const durSec = ganttDuration / 1000;
     let interval = NICE_INTERVALS[0];
     for (let i = NICE_INTERVALS.length - 1; i >= 0; i--) {
-      if (visDurSec / NICE_INTERVALS[i] >= 5) {
+      if (durSec / NICE_INTERVALS[i] >= 5) {
         interval = NICE_INTERVALS[i];
         break;
       }
     }
     const result: { pct: number; label: string }[] = [];
-    const firstTick = Math.ceil(visStartSec / interval) * interval;
-    for (let t = firstTick; t <= visStartSec + visDurSec; t += interval) {
-      const pct = ((t - visStartSec) / visDurSec) * 100;
-      if (pct < -1 || pct > 101) continue;
+    for (let t = interval; t <= durSec; t += interval) {
+      const pct = (t / durSec) * 100;
+      if (pct > 101) continue;
       let label: string;
       if (interval >= 60) {
         const m = Math.floor(t / 60);
@@ -1361,7 +1270,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
       result.push({ pct: Math.max(0, Math.min(100, pct)), label });
     }
     return result;
-  }, [ganttDuration, visibleDurationMs, panOffset]);
+  }, [ganttDuration]);
 
   const hasContent = allSessions.length > 0;
 
@@ -1421,7 +1330,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                 {isIterated && (
                   <TabsTrigger value="iterations" className="text-xs px-2 py-1">Iterations</TabsTrigger>
                 )}
-                <TabsTrigger value="flamegraph" className="text-xs px-2 py-1">Flame Graph</TabsTrigger>
+                <TabsTrigger value="flamegraph" className="text-xs px-2 py-1">Trace</TabsTrigger>
                 <TabsTrigger value="table" className="text-xs px-2 py-1">Table</TabsTrigger>
                 <TabsTrigger value="turns" className="text-xs px-2 py-1">Turns</TabsTrigger>
               </TabsList>
@@ -1775,7 +1684,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
               </div>
             </TabsContent>
 
-            {/* Flame Graph view */}
+            {/* Execution Trace view */}
             <TabsContent value="flamegraph" className="flex-1 relative min-h-0 m-0 flex flex-col">
               {isIterated && !isParallelIteration && (
                 <IterationBar
@@ -1794,172 +1703,178 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
               <div className="absolute inset-0 overflow-auto">
                 <div className="flex flex-col min-w-0">
                   {/* Time axis */}
-                  <div className="px-8">
-                    <div className="relative h-5 border-b border-border/50">
+                  <div style={{ marginLeft: 200 }} className="pr-4">
+                    <div className="relative h-6 border-b border-border/30">
                       {ticks.map((tick, i) => (
                         <div key={i} className="absolute top-0 h-full flex flex-col justify-end" style={{ left: `${tick.pct}%`, transform: 'translateX(-50%)' }}>
-                          <span className="text-[9px] text-muted-foreground/70 tabular-nums whitespace-nowrap">{tick.label}</span>
+                          <span className="text-[10px] text-muted-foreground/60 tabular-nums whitespace-nowrap pb-0.5">{tick.label}</span>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Gantt rows — hierarchical like Datadog trace view */}
+                  {/* Trace rows */}
                   <div
-                    ref={ganttRefCallback}
-                    className={cn('px-8 pb-3 relative', zoom > 1 && 'cursor-grab active:cursor-grabbing')}
-                    onPointerDown={handlePanStart}
-                    onPointerMove={handlePanMove}
-                    onPointerUp={handlePanEnd}
+                    className="relative"
                   >
-                    {ganttLines.map((spans, lineIdx) => (
-                      <div key={lineIdx} className="relative h-16 overflow-hidden">
-                        {/* Iteration highlight overlay (inside each row so overflow-hidden clips it) */}
-                        {iterationTimeRange && (() => {
-                          const rawLeft = toPercent(iterationTimeRange.start);
-                          const rawRight = toPercent(iterationTimeRange.end);
-                          const left = Math.max(0, rawLeft);
-                          const right = Math.min(100, rawRight);
-                          const width = right - left;
-                          if (width <= 0) return null;
-                          return (
+                    {traceRows.map(row => {
+                      const isExpanded = expandedTraceRows.has(row.id);
+                      const hasChildren = row.children.length > 0;
+                      const rowMs = row.end - row.start;
+                      const rowDurLabel = rowMs < 1000 ? `${Math.round(rowMs)}ms` : `${(rowMs / 1000).toFixed(1)}s`;
+                      const isRowSelected = (row.sessionId && selection?.type === 'session' && selection.sessionId === row.sessionId)
+                        || (row.category === 'agent' && selection?.type === 'session' && selection.agentName && row.label === selection.agentName);
+
+                      // Span positioning for this row
+                      const rowLeft = toPercent(row.start);
+                      const rowWidth = toPercent(row.end) - rowLeft;
+                      const clampedLeft = Math.max(0, rowLeft);
+                      const clampedWidth = Math.min(100 - clampedLeft, Math.max(0.3, rowLeft + rowWidth - clampedLeft));
+
+                      return (
+                        <div key={row.id}>
+                          {/* Main session row */}
+                          <div className={cn(
+                            'flex items-center h-9 border-b border-border/20 hover:bg-muted/30 transition-colors',
+                            isRowSelected && 'bg-muted/50',
+                          )}>
+                            {/* Left label area */}
+                            <div className="w-[200px] shrink-0 flex items-center gap-1.5 px-3 overflow-hidden">
+                              {hasChildren ? (
+                                <button
+                                  className="w-4 h-4 flex items-center justify-center rounded hover:bg-muted shrink-0"
+                                  onClick={() => setExpandedTraceRows(prev => {
+                                    const next = new Set(prev);
+                                    if (next.has(row.id)) next.delete(row.id); else next.add(row.id);
+                                    return next;
+                                  })}
+                                >
+                                  {isExpanded
+                                    ? <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                                    : <ChevronRight className="w-3 h-3 text-muted-foreground" />}
+                                </button>
+                              ) : <span className="w-4 shrink-0" />}
+                              <span className={cn('w-2 h-2 rounded-full shrink-0', SPAN_COLORS[row.category])} />
+                              <span className="text-xs font-medium truncate">{row.label}</span>
+                              <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 ml-auto">{rowDurLabel}</span>
+                            </div>
+                            {/* Timeline area */}
                             <div
-                              className="absolute top-0 bottom-0 border-x-2 border-amber-400 bg-amber-400/10 pointer-events-none z-[5]"
-                              style={{ left: `${left}%`, width: `${width}%` }}
-                            />
-                          );
-                        })()}
-                        {/* Gridlines */}
-                        {ticks.map((tick, i) => (
-                          <div key={i} className="absolute top-0 h-full w-px bg-border/20" style={{ left: `${tick.pct}%` }} />
-                        ))}
-                        {/* Spans */}
-                        {spans.map(span => {
-                          const left = toPercent(span.start);
-                          const width = toPercent(span.end) - left;
-                          // Skip spans entirely outside viewport
-                          if (left + width < -1 || left > 101) return null;
-                          const ms = span.end - span.start;
-                          const durLabel = ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
-                          const isSelected = (span.sessionId && selection?.type === 'session' && selection.sessionId === span.sessionId)
-                            || (span.toolResult && selection?.type === 'tool' && (selection.spanId ? selection.spanId === span.id : selection.toolResult.id === span.toolResult.id))
-                            || (span.category === 'agent' && selection?.type === 'session' && selection.agentName && span.label === selection.agentName);
-                          const clampedLeft = Math.max(0, left);
-                          const clampedWidth = Math.min(100 - clampedLeft, Math.max(0.3, left + width - clampedLeft));
-                          return (
-                            <div
-                              key={span.id}
-                              data-span
-                              className={cn(
-                                'absolute top-0 bottom-0 cursor-pointer transition-colors flex items-center overflow-hidden border-[0.5px]',
-                                SPAN_COLORS[span.category],
-                                isSelected ? 'border-2 border-black brightness-110' : 'border-white/80 hover:brightness-110',
-                              )}
-                              style={clampedLeft + clampedWidth >= 99.5
-                                ? { right: `${100 - clampedLeft - clampedWidth}%`, width: `${clampedWidth}%`, minWidth: '3px' }
-                                : { left: `${clampedLeft}%`, width: `${clampedWidth}%`, minWidth: '3px' }
-                              }
-                              title={`${span.label} (${durLabel})`}
+                              className="flex-1 relative h-full cursor-pointer pr-4"
                               onClick={() => {
-                                if (span.category === 'agent') {
-                                  // Agent spans built from events — find the agent session by name
+                                if (row.category === 'agent') {
                                   const clickSessions = isParallelIteration && selectedIteration != null ? sessions : allSessions;
-                                  const agentSession = clickSessions.find(s => s.role !== 'commander' && s.agentName === span.label);
-                                  if (agentSession) setSelection({ type: 'session', sessionId: agentSession.id, agentName: span.label });
+                                  const agentSession = clickSessions.find(s => s.role !== 'commander' && s.agentName === row.label);
+                                  if (agentSession) setSelection({ type: 'session', sessionId: agentSession.id, agentName: row.label });
+                                } else if (row.sessionId) {
+                                  setSelection({ type: 'session', sessionId: row.sessionId });
                                 }
-                                else if (span.sessionId) setSelection({ type: 'session', sessionId: span.sessionId });
-                                else if (span.toolResult) setSelection({ type: 'tool', toolResult: span.toolResult, spanId: span.id });
                               }}
                             >
-                              <span className="text-[10px] text-white font-medium pl-1.5 truncate pointer-events-none whitespace-nowrap">
-                                {span.label}
-                              </span>
-                              {clampedWidth > 12 && (
-                                <span className="text-[9px] text-white/70 ml-1 pr-1.5 shrink-0 pointer-events-none">
-                                  {durLabel}
-                                </span>
-                              )}
-                              {/* Break markers (lightning bolt) for stop→resume gaps */}
-                              {span.breaks?.map((breakTime, bi) => {
-                                const breakPct = ((toPercent(breakTime) - clampedLeft) / clampedWidth) * 100;
-                                if (breakPct < 0 || breakPct > 100) return null;
+                              {/* Gridlines */}
+                              {ticks.map((tick, i) => (
+                                <div key={i} className="absolute top-0 h-full w-px bg-border/15" style={{ left: `${tick.pct}%` }} />
+                              ))}
+                              {/* Session span bars — split into segments if stop/resume gaps exist */}
+                              {(row.segments ?? [{ start: row.start, end: row.end }]).map((seg, si) => {
+                                const segLeft = toPercent(seg.start);
+                                const segWidth = toPercent(seg.end) - segLeft;
+                                const sLeft = Math.max(0, segLeft);
+                                const sWidth = Math.min(100 - sLeft, Math.max(0.3, segLeft + segWidth - sLeft));
                                 return (
-                                  <div
-                                    key={`break-${bi}`}
-                                    className="absolute top-0 h-full pointer-events-none z-20 flex items-center justify-center"
-                                    style={{ left: `${breakPct}%`, transform: 'translateX(-50%)' }}
-                                    title="Resumed after stop"
-                                  >
-                                    {/* Vertical gap line */}
-                                    <div className="absolute top-0 h-full w-[2px] bg-black/40" />
-                                    {/* Lightning bolt */}
-                                    <svg viewBox="0 0 12 20" className="w-3 h-5 relative z-10 drop-shadow-md" fill="none">
-                                      <path d="M7 0L2 9h3.5L4 20l7-12H7.5L10 0z" fill="#facc15" stroke="#000" strokeWidth="0.5" />
-                                    </svg>
+                                  <div key={`seg-${si}`} className="absolute top-1.5 bottom-1.5 flex items-center overflow-hidden" style={{
+                                    left: `${sLeft}%`, width: `${sWidth}%`, minWidth: '4px',
+                                    backgroundColor: SPAN_COLORS_HEX[row.category],
+                                    borderRadius: '4px',
+                                  }}>
+                                    {si === 0 && (
+                                      <span className="text-[10px] text-white font-medium pl-2 truncate pointer-events-none whitespace-nowrap">
+                                        {row.label}
+                                      </span>
+                                    )}
+                                    {si === 0 && clampedWidth > 10 && (
+                                      <span className="text-[9px] text-white/70 ml-1.5 pr-2 shrink-0 pointer-events-none">{rowDurLabel}</span>
+                                    )}
                                   </div>
                                 );
                               })}
-                              {/* Reasoning tick marks */}
-                              {messageTicks.get(span.id)?.map((tick, ti) => {
-                                // Adjust tick position for clamped span bounds
-                                const absPos = left + tick.pct / 100 * width;
-                                const clampedPct = ((absPos - clampedLeft) / clampedWidth) * 100;
-                                if (clampedPct < -1 || clampedPct > 101) return null;
+                              {/* Reasoning ranges — lighter bars within the span */}
+                              {reasoningRanges.get(row.id)?.map((range, ri) => {
+                                const rLeft = toPercent(range.start);
+                                const rWidth = toPercent(range.end) - rLeft;
+                                if (rLeft > 101 || rLeft + rWidth < -1) return null;
                                 return (
-                                <div
-                                  key={ti}
-                                  className="absolute top-0 h-full w-[3px] -ml-[1px] bg-white/25 hover:bg-white/60 cursor-pointer z-10"
-                                  style={{ left: `${clampedPct}%` }}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const sessionId = span.sessionId ?? (() => {
-                                      if (span.toolResult?.toolName === 'call_agent') {
-                                        return findAgentSession(span.toolResult)?.id;
+                                  <div
+                                    key={`r-${ri}`}
+                                    className="absolute top-1.5 bottom-1.5 bg-white/20 hover:bg-white/30 cursor-pointer z-10 rounded-sm"
+                                    style={{ left: `${Math.max(0, rLeft)}%`, width: `${Math.max(0.2, rWidth)}%` }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (row.sessionId) {
+                                        setSelection({ type: 'session', sessionId: row.sessionId });
+                                        setScrollToActivityTime(range.start);
                                       }
-                                      return undefined;
-                                    })();
-                                    if (sessionId) {
-                                      setSelection({ type: 'session', sessionId });
-                                      setScrollToActivityTime(tick.time);
-                                    }
-                                  }}
-                                />
+                                    }}
+                                  />
                                 );
                               })}
                             </div>
-                          );
-                        })}
-                      </div>
-                    ))}
+                          </div>
+
+                          {/* Expanded child tool call rows */}
+                          {isExpanded && row.children.map(child => {
+                            const childMs = child.end - child.start;
+                            const childDurLabel = childMs < 1000 ? `${Math.round(childMs)}ms` : `${(childMs / 1000).toFixed(1)}s`;
+                            const childLeft = toPercent(child.start);
+                            const childWidth = toPercent(child.end) - childLeft;
+                            if (childLeft + childWidth < -1 || childLeft > 101) return null;
+                            const cLeft = Math.max(0, childLeft);
+                            const cWidth = Math.min(100 - cLeft, Math.max(0.3, childLeft + childWidth - cLeft));
+                            const isChildSelected = child.toolResult && selection?.type === 'tool' && (selection.spanId ? selection.spanId === child.id : selection.toolResult.id === child.toolResult.id);
+
+                            return (
+                              <div key={child.id} className={cn(
+                                'flex items-center h-8 border-b border-border/10 hover:bg-muted/20 transition-colors',
+                                isChildSelected && 'bg-muted/40',
+                              )}>
+                                {/* Left label area — indented */}
+                                <div className="w-[200px] shrink-0 flex items-center gap-1.5 pl-10 pr-3 overflow-hidden">
+                                  <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', SPAN_COLORS[child.category])} />
+                                  <span className="text-[11px] text-muted-foreground font-mono truncate">{child.label}()</span>
+                                  <span className="text-[10px] text-muted-foreground/70 tabular-nums shrink-0 ml-auto">{childDurLabel}</span>
+                                </div>
+                                {/* Timeline area */}
+                                <div
+                                  className="flex-1 relative h-full cursor-pointer pr-4"
+                                  onClick={() => {
+                                    if (child.toolResult) setSelection({ type: 'tool', toolResult: child.toolResult, spanId: child.id });
+                                  }}
+                                >
+                                  {/* Gridlines */}
+                                  {ticks.map((tick, i) => (
+                                    <div key={i} className="absolute top-0 h-full w-px bg-border/10" style={{ left: `${tick.pct}%` }} />
+                                  ))}
+                                  {/* Tool span bar */}
+                                  <div className="absolute top-1.5 bottom-1.5 flex items-center overflow-hidden" style={{
+                                    left: `${cLeft}%`, width: `${cWidth}%`, minWidth: '4px',
+                                    backgroundColor: SPAN_COLORS_HEX[child.category],
+                                    borderRadius: '3px',
+                                    opacity: 0.85,
+                                  }}>
+                                    <span className="text-[9px] text-white/90 font-medium pl-1.5 truncate pointer-events-none whitespace-nowrap">
+                                      {child.label}()
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
-              {/* Minimap — pinned to bottom-left of visible gantt area */}
-              {zoom > 1 && (
-                <div className="absolute bottom-2 left-6 bg-background/90 border rounded p-1.5 shadow-sm z-10">
-                  <div className="relative" style={{ width: 160, height: ganttLines.length * 8 + 2 }}>
-                    {ganttLines.map((spans, lineIdx) => (
-                      <div key={lineIdx} className="relative" style={{ height: 8 }}>
-                        {spans.map(span => {
-                          const l = ((span.start - ganttStart) / ganttDuration) * 100;
-                          const w = ((span.end - span.start) / ganttDuration) * 100;
-                          return (
-                            <div
-                              key={span.id}
-                              className={cn('absolute top-0.5 bottom-0.5', SPAN_COLORS[span.category])}
-                              style={{ left: `${Math.max(0, l)}%`, width: `${Math.max(0.5, w)}%` }}
-                            />
-                          );
-                        })}
-                      </div>
-                    ))}
-                    <div
-                      className="absolute inset-y-0 border border-foreground/70 bg-foreground/10 rounded-[1px]"
-                      style={{ left: `${viewStart * 100}%`, width: `${viewWidth * 100}%` }}
-                    />
-                  </div>
-                </div>
-              )}
               </div>
               </>)}
             </TabsContent>
@@ -1991,143 +1906,89 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                     </tr>
                   </thead>
                   <tbody>
-                    {(() => {
-                      // Build hierarchical table rows from ganttLines (event-driven)
-                      // Line 0 = commander (depth 0), Line 1 = commander tools + agents (depth 1), Lines 2+ = agent tools (depth 2)
-                      type TableRow = { id: string; parentId: string | null; depth: number; hasChildren: boolean; type: string; typeColor: string; name: string; startMs: number; durMs: number; sessionId?: string; toolResultId?: string; onClick: () => void };
-                      const rows: TableRow[] = [];
+                    {traceRows.map(row => {
+                      const isCollapsed = collapsedRows.has(row.id);
+                      const hasChildren = row.children.length > 0;
+                      const offsetMs = row.start - ganttStart;
+                      const offsetLabel = offsetMs < 1000 ? `+${Math.round(offsetMs)}ms` : `+${(offsetMs / 1000).toFixed(1)}s`;
+                      const durMs = row.end - row.start;
+                      const durLabel = durMs <= 0 ? '<1ms' : durMs < 1000 ? `${Math.round(durMs)}ms` : `${(durMs / 1000).toFixed(1)}s`;
+                      const isRowSelected = (row.sessionId && selection?.type === 'session' && selection.sessionId === row.sessionId)
+                        || (row.category === 'agent' && selection?.type === 'session' && selection.agentName && row.label === selection.agentName);
 
-                      if (ganttLines.length === 0) return null;
-
-                      // Line 0: Commander
-                      const cmdrLine = ganttLines[0];
-                      const cmdrSpan = cmdrLine?.[0];
-                      const cmdrRowId = cmdrSpan ? `gantt-${cmdrSpan.id}` : 'commander';
-                      if (cmdrSpan) {
-                        const hasChildren = (ganttLines[1]?.length ?? 0) > 0;
-                        rows.push({
-                          id: cmdrRowId, parentId: null, depth: 0, hasChildren,
-                          type: 'Commander', typeColor: 'bg-purple-500', name: cmdrSpan.label,
-                          startMs: cmdrSpan.start, durMs: cmdrSpan.end - cmdrSpan.start,
-                          sessionId: cmdrSpan.sessionId,
-                          onClick: () => { if (cmdrSpan.sessionId) setSelection({ type: 'session', sessionId: cmdrSpan.sessionId }); },
-                        });
-                      }
-
-                      // Line 1: Commander tools + agent spans
-                      const line1 = ganttLines[1] ?? [];
-                      // Map agent span id → whether it has children (tool lines 2+)
-                      const agentHasChildren = new Map<string, boolean>();
-
-                      // Lines 2+: agent tool lines — figure out which agent they belong to
-                      // Each agent tool line's spans share a sessionId; match to agent span by checking if agent's time range overlaps
-                      type AgentToolLine = { parentAgentId: string | null; spans: GanttSpan[] };
-                      const agentToolLines: AgentToolLine[] = [];
-                      for (let li = 2; li < ganttLines.length; li++) {
-                        const lineSpans = ganttLines[li];
-                        if (lineSpans.length === 0) continue;
-                        // Find which agent span in line1 contains these tool calls (by time overlap)
-                        const firstTool = lineSpans[0];
-                        const parentAgent = line1.find(s =>
-                          s.category === 'agent' && firstTool.start >= s.start && firstTool.start <= s.end
-                        );
-                        const parentId = parentAgent ? `gantt-${parentAgent.id}` : null;
-                        if (parentId) agentHasChildren.set(parentId, true);
-                        agentToolLines.push({ parentAgentId: parentId, spans: lineSpans });
-                      }
-
-                      for (const span of [...line1].sort((a, b) => a.start - b.start)) {
-                        const spanRowId = `gantt-${span.id}`;
-                        const isAgent = span.category === 'agent';
-                        const isDatasetNext = span.category === 'dataset_next';
-                        rows.push({
-                          id: spanRowId, parentId: cmdrRowId, depth: 1,
-                          hasChildren: isAgent ? (agentHasChildren.get(spanRowId) ?? false) : false,
-                          type: isAgent ? 'Agent' : isDatasetNext ? 'Iterator' : 'Tool',
-                          typeColor: isAgent ? 'bg-blue-500' : isDatasetNext ? 'bg-amber-500' : 'bg-teal-500',
-                          name: span.label, startMs: span.start, durMs: span.end - span.start,
-                          sessionId: span.sessionId, toolResultId: span.toolResult?.id,
-                          onClick: () => {
-                            if (span.toolResult) { setSelection({ type: 'tool', toolResult: span.toolResult, spanId: span.id }); return; }
-                            if (span.sessionId) { setSelection({ type: 'session', sessionId: span.sessionId }); }
-                          },
-                        });
-                      }
-
-                      // Lines 2+: Agent tool calls
-                      for (const atl of agentToolLines) {
-                        for (const span of atl.spans) {
-                          rows.push({
-                            id: `gantt-${span.id}`, parentId: atl.parentAgentId, depth: 2, hasChildren: false,
-                            type: 'Tool', typeColor: 'bg-teal-500',
-                            name: span.label, startMs: span.start, durMs: span.end - span.start,
-                            toolResultId: span.toolResult?.id,
-                            onClick: () => {
-                              if (span.toolResult) setSelection({ type: 'tool', toolResult: span.toolResult, spanId: span.id });
-                            },
-                          });
-                        }
-                      }
-
-                      // Build set of all ancestors that are collapsed (to hide descendants)
-                      const hiddenParents = new Set<string>();
-                      for (const row of rows) {
-                        if (row.parentId && (collapsedRows.has(row.parentId) || hiddenParents.has(row.parentId))) {
-                          hiddenParents.add(row.id);
-                        }
-                      }
-
-                      return rows
-                        .filter(row => !row.parentId || (!collapsedRows.has(row.parentId) && !hiddenParents.has(row.parentId)))
-                        .map(row => {
-                          const offsetMs = row.startMs - ganttStart;
-                          const offsetLabel = offsetMs < 1000 ? `+${offsetMs}ms` : `+${(offsetMs / 1000).toFixed(1)}s`;
-                          const durLabel = row.durMs <= 0 ? '<1ms' : row.durMs < 1000 ? `${row.durMs}ms` : `${(row.durMs / 1000).toFixed(1)}s`;
-                          const isSelected =
-                            (selection?.type === 'session' && row.sessionId === selection.sessionId)
-                            || (selection?.type === 'tool' && row.toolResultId === selection.toolResult.id);
-                          const isCollapsed = collapsedRows.has(row.id);
-
-                          return (
-                            <tr
-                              key={row.id}
-                              className={cn(
-                                'border-b border-border/30 cursor-pointer hover:bg-muted/50 transition-colors',
-                                isSelected && 'bg-muted',
-                              )}
-                              onClick={row.onClick}
-                            >
-                              <td className="px-3 py-1.5" style={{ paddingLeft: `${12 + row.depth * 20}px` }}>
-                                {row.hasChildren ? (
-                                  <button
-                                    className="inline-flex items-center justify-center w-4 h-4 mr-1 -ml-1 hover:bg-muted rounded"
-                                    onClick={e => {
-                                      e.stopPropagation();
-                                      setCollapsedRows(prev => {
-                                        const next = new Set(prev);
-                                        if (next.has(row.id)) next.delete(row.id);
-                                        else next.add(row.id);
-                                        return next;
-                                      });
-                                    }}
-                                  >
-                                    {isCollapsed
-                                      ? <ChevronRight className="w-3 h-3 text-muted-foreground" />
-                                      : <ChevronDown className="w-3 h-3 text-muted-foreground" />}
-                                  </button>
-                                ) : (
-                                  <span className="inline-block w-4 mr-1" />
+                      return (
+                        <Fragment key={row.id}>
+                          <tr
+                            className={cn(
+                              'border-b border-border/30 cursor-pointer hover:bg-muted/50 transition-colors',
+                              isRowSelected && 'bg-muted',
+                            )}
+                            onClick={() => {
+                              if (row.category === 'agent') {
+                                const clickSessions = isParallelIteration && selectedIteration != null ? sessions : allSessions;
+                                const agentSession = clickSessions.find(s => s.role !== 'commander' && s.agentName === row.label);
+                                if (agentSession) setSelection({ type: 'session', sessionId: agentSession.id, agentName: row.label });
+                              } else if (row.sessionId) {
+                                setSelection({ type: 'session', sessionId: row.sessionId });
+                              }
+                            }}
+                          >
+                            <td className="px-3 py-1.5" style={{ paddingLeft: '12px' }}>
+                              {hasChildren ? (
+                                <button
+                                  className="inline-flex items-center justify-center w-4 h-4 mr-1 -ml-1 hover:bg-muted rounded"
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    setCollapsedRows(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(row.id)) next.delete(row.id); else next.add(row.id);
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  {isCollapsed
+                                    ? <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                                    : <ChevronDown className="w-3 h-3 text-muted-foreground" />}
+                                </button>
+                              ) : <span className="inline-block w-4 mr-1" />}
+                              <span className={cn('inline-block w-2 h-2 rounded-full mr-1.5', SPAN_COLORS[row.category])} />
+                              {row.category === 'commander' ? 'Commander' : 'Agent'}
+                            </td>
+                            <td className="px-3 py-1.5 font-mono">{row.label}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{offsetLabel}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums">{durLabel}</td>
+                          </tr>
+                          {!isCollapsed && row.children.map(child => {
+                            const cOffsetMs = child.start - ganttStart;
+                            const cOffsetLabel = cOffsetMs < 1000 ? `+${Math.round(cOffsetMs)}ms` : `+${(cOffsetMs / 1000).toFixed(1)}s`;
+                            const cDurMs = child.end - child.start;
+                            const cDurLabel = cDurMs <= 0 ? '<1ms' : cDurMs < 1000 ? `${Math.round(cDurMs)}ms` : `${(cDurMs / 1000).toFixed(1)}s`;
+                            const isChildSelected = child.toolResult && selection?.type === 'tool' && (selection.spanId ? selection.spanId === child.id : selection.toolResult.id === child.toolResult.id);
+                            return (
+                              <tr
+                                key={child.id}
+                                className={cn(
+                                  'border-b border-border/20 cursor-pointer hover:bg-muted/50 transition-colors',
+                                  isChildSelected && 'bg-muted',
                                 )}
-                                <span className={cn('inline-block w-2 h-2 rounded-full mr-1.5', row.typeColor)} />
-                                {row.type}
-                              </td>
-                              <td className="px-3 py-1.5 font-mono">{row.name}</td>
-                              <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{offsetLabel}</td>
-                              <td className="px-3 py-1.5 text-right tabular-nums">{durLabel}</td>
-                            </tr>
-                          );
-                        });
-                    })()}
+                                onClick={() => {
+                                  if (child.toolResult) setSelection({ type: 'tool', toolResult: child.toolResult, spanId: child.id });
+                                }}
+                              >
+                                <td className="px-3 py-1.5" style={{ paddingLeft: '44px' }}>
+                                  <span className="inline-block w-4 mr-1" />
+                                  <span className={cn('inline-block w-2 h-2 rounded-full mr-1.5', SPAN_COLORS[child.category])} />
+                                  Tool
+                                </td>
+                                <td className="px-3 py-1.5 font-mono">{child.label}</td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{cOffsetLabel}</td>
+                                <td className="px-3 py-1.5 text-right tabular-nums">{cDurLabel}</td>
+                              </tr>
+                            );
+                          })}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2322,11 +2183,11 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                 <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{selectedTaskConfig.objective}</p>
               </div>
             )}
-            {selectedTaskConfig.output && selectedTaskConfig.output.length > 0 && (
+            {(selectedTaskConfig as any).output && (selectedTaskConfig as any).output.length > 0 && (
               <div>
                 <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Output Schema</span>
                 <div className="mt-1 space-y-1">
-                  {selectedTaskConfig.output.map(f => (
+                  {(selectedTaskConfig as any).output.map((f: any) => (
                     <div key={f.name} className="flex items-center gap-2 text-xs">
                       <span className="font-medium">{f.name}</span>
                       <Badge variant="outline" className="text-[10px] px-1 py-0">{f.type}</Badge>
@@ -2396,7 +2257,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                   sessionDetailEvents.map((evt, i) => {
                     const refCb = (el: HTMLElement | null) => { if (el) activityRefs.current.set(i, el as HTMLDivElement); };
                     const isHighlighted = highlightedActivityIdx === i;
-                    if (evt.eventType === 'agent_thinking' || evt.eventType === 'commander_reasoning') {
+                    if (evt.eventType === 'agent_reasoning_completed' || evt.eventType === 'commander_reasoning_completed') {
                       return (
                         <details key={i} ref={refCb as React.Ref<HTMLDetailsElement>} className={cn("group rounded transition-shadow", isHighlighted && "ring-2 ring-primary/50")}>
                           <summary className="text-[10px] text-violet-500 cursor-pointer font-medium">Thinking...</summary>
