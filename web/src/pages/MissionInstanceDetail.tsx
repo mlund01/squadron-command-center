@@ -32,6 +32,7 @@ import { ZoomControls } from '@/components/zoom-controls';
 import type { TaskInfo, MissionEvent, MissionTaskRecord, ToolResultDTO, TaskOutputInfo, SubtaskInfo, DatasetItemInfo } from '@/api/types';
 import { RouterEdge } from '@/components/RouterEdge';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
+import { ImageCarousel, extractImages } from '@/components/ImageCarousel';
 
 
 const NODE_WIDTH = 260;
@@ -707,7 +708,18 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
   };
 
   const [selectedIteration, setSelectedIteration] = useState<number | null>(null);
-  const [selection, setSelection] = useState<PanelSelection>(null);
+  const [selectionStack, setSelectionStack] = useState<PanelSelection[]>([]);
+  const selection = selectionStack.length > 0 ? selectionStack[selectionStack.length - 1] : null;
+  const setSelection = useCallback((sel: PanelSelection) => {
+    // Direct selection (from trace/table) replaces the entire stack
+    setSelectionStack(sel ? [sel] : []);
+  }, []);
+  const pushSelection = useCallback((sel: PanelSelection) => {
+    if (sel) setSelectionStack(prev => [...prev, sel]);
+  }, []);
+  const popSelection = useCallback(() => {
+    setSelectionStack(prev => prev.length > 1 ? prev.slice(0, -1) : []);
+  }, []);
   const [traceView, setTraceView] = useState<'detail' | 'subtasks' | 'output' | 'iterations' | 'flamegraph' | 'table' | 'turns' | 'events'>('detail');
   const [collapsedRows, setCollapsedRows] = useState<Set<string>>(new Set());
   const [rawOutput, setRawOutput] = useState(false);
@@ -1214,7 +1226,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
   type SessionItem =
     | { type: 'instruction'; content: string }
     | { type: 'reasoning'; content: string; duration: string }
-    | { type: 'tool'; toolName: string; input: string; result: string; duration: string }
+    | { type: 'tool'; toolName: string; input: string; result: string; duration: string; toolCallId?: string }
     | { type: 'answer'; content: string }
     | { type: 'ask_commander'; content: string }
     | { type: 'commander_response'; content: string }
@@ -1266,6 +1278,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
           input: start?.input || '',
           result: String(evt.data.result || evt.data.output || ''),
           duration,
+          toolCallId,
         });
         if (start) pendingTools.delete(toolCallId);
       } else if (evt.eventType === 'agent_answer' || evt.eventType === 'commander_answer') {
@@ -2345,7 +2358,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}
-                <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[10px]" onClick={() => setSelection(null)}>Close</Button>
+                <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[10px]" onClick={() => selectionStack.length > 1 ? popSelection() : setSelection(null)}>Close</Button>
               </div>
             </div>
             {selection.type === 'session' && (() => {
@@ -2439,14 +2452,42 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                                     </pre>
                                   </div>
                                 )}
-                                {item.result && (
-                                  <div>
-                                    <span className="text-[10px] text-muted-foreground/60 font-medium uppercase tracking-wider">Result</span>
-                                    <pre className="text-[10px] text-muted-foreground bg-muted/40 rounded p-2 mt-0.5 overflow-x-auto max-h-32 overflow-y-auto font-mono leading-relaxed">
-                                      {item.result}
-                                    </pre>
-                                  </div>
-                                )}
+                                {item.result && (() => {
+                                  let { images, cleanText } = extractImages(item.result);
+                                  // Hydrate images from tool_results if event data only has placeholders
+                                  if (images.length === 0 && item.result.includes('[image]') && item.toolCallId) {
+                                    const tr = allToolResults.find(t => t.toolCallId === item.toolCallId);
+                                    if (tr?.output) {
+                                      images = extractImages(tr.output).images;
+                                    }
+                                  }
+                                  return (
+                                    <div>
+                                      <span className="text-[10px] text-muted-foreground/60 font-medium uppercase tracking-wider">Result</span>
+                                      {cleanText && (
+                                        <pre className="text-[10px] text-muted-foreground bg-muted/40 rounded p-2 mt-0.5 overflow-x-auto max-h-32 overflow-y-auto font-mono leading-relaxed">
+                                          {cleanText}
+                                        </pre>
+                                      )}
+                                      <ImageCarousel images={images} />
+                                    </div>
+                                  );
+                                })()}
+                                {item.toolCallId && (() => {
+                                  const tr = findToolResultForEvent(item.toolCallId, selectedSessionId || '', item.toolName, 0);
+                                  if (!tr) return null;
+                                  return (
+                                    <button
+                                      className="text-[10px] text-teal-400 hover:text-teal-300 mt-1"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        pushSelection({ type: 'tool', toolResult: tr });
+                                      }}
+                                    >
+                                      View full details &rarr;
+                                    </button>
+                                  );
+                                })()}
                               </div>
                             </details>
                           )}
@@ -2522,14 +2563,20 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                       </pre>
                     </div>
                   )}
-                  {tr.output && (
-                    <div>
-                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Output</span>
-                      <pre className="text-[10px] bg-muted/50 rounded p-2 mt-1 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">
-                        {tr.output}
-                      </pre>
-                    </div>
-                  )}
+                  {tr.output && (() => {
+                    const { images, cleanText } = extractImages(tr.output);
+                    return (
+                      <div>
+                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Output</span>
+                        {cleanText && (
+                          <pre className="text-[10px] bg-muted/50 rounded p-2 mt-1 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">
+                            {cleanText}
+                          </pre>
+                        )}
+                        <ImageCarousel images={images} />
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}
@@ -2543,6 +2590,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
       instanceId={instanceId}
       modal={sessionModal}
       onClose={() => setSessionModal(null)}
+      toolResults={allToolResults}
     />
     </>
   );
@@ -3134,10 +3182,12 @@ function SessionMessagesModal({
   instanceId,
   modal,
   onClose,
+  toolResults,
 }: {
   instanceId: string;
   modal: { type: 'messages' | 'system'; sessionId: string } | null;
   onClose: () => void;
+  toolResults?: ToolResultDTO[];
 }) {
   const { data, isLoading } = useQuery({
     queryKey: ['chatMessages', instanceId, modal?.sessionId],
@@ -3180,7 +3230,34 @@ function SessionMessagesModal({
                   </span>
                 )}
               </div>
-              <CollapsiblePre content={msg.content} />
+              {(() => {
+                // For user messages with [image] placeholders, hydrate images from tool results
+                const { images: directImages } = extractImages(msg.content);
+                let hydratedImages = directImages;
+                if (directImages.length === 0 && msg.role === 'user' && msg.content.includes('[image]') && toolResults) {
+                  // Find the tool result that corresponds to this observation
+                  // Match by finding a tool result whose output contains image data URLs
+                  const msgTime = msg.createdAt ? new Date(msg.createdAt).getTime() : 0;
+                  for (const tr of toolResults) {
+                    if (tr.sessionId !== modal?.sessionId) continue;
+                    const trTime = new Date(tr.finishedAt).getTime();
+                    // Tool result should be just before this user message
+                    if (msgTime > 0 && trTime > 0 && Math.abs(trTime - msgTime) < 5000) {
+                      const { images: trImages } = extractImages(tr.output || '');
+                      if (trImages.length > 0) {
+                        hydratedImages = trImages;
+                        break;
+                      }
+                    }
+                  }
+                }
+                return (
+                  <>
+                    <CollapsiblePre content={msg.content} />
+                    {hydratedImages.length > 0 && <ImageCarousel images={hydratedImages} />}
+                  </>
+                );
+              })()}
             </div>
           ))}
         </div>
