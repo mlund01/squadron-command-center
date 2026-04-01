@@ -14,7 +14,7 @@ import {
 } from '@xyflow/react';
 import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
-import { ChevronsDown, ChevronsUp, ChevronDown, Repeat, ChevronLeft, ChevronRight, HelpCircle, Square, RotateCcw, MoreHorizontal } from 'lucide-react';
+import { ChevronsDown, ChevronsUp, ChevronDown, Repeat, ChevronLeft, ChevronRight, HelpCircle, Square, RotateCcw, MoreHorizontal, ShieldCheck } from 'lucide-react';
 
 import { getInstance, getMissionDetail, getMissionEvents, getTaskDetail, getRunDatasets, getDatasetItems, stopMission, resumeMission, getChatMessages } from '@/api/client';
 import { subscribeMissionEvents } from '@/api/sse';
@@ -3102,13 +3102,13 @@ export function MissionInstanceDetail() {
                       try {
                         const values = JSON.parse(mission.inputsJson) as Record<string, string>;
                         // Get input definitions from config snapshot for descriptions
-                        let defs: Record<string, { description?: string; type?: string }> = {};
+                        let defs: Record<string, { description?: string; type?: string; protected?: boolean }> = {};
                         if (mission.configJson) {
                           try {
                             const config = JSON.parse(mission.configJson);
                             if (Array.isArray(config.inputs)) {
                               for (const inp of config.inputs) {
-                                defs[inp.name] = { description: inp.description, type: inp.type };
+                                defs[inp.name] = { description: inp.description, type: inp.type, protected: inp.protected };
                               }
                             }
                           } catch { /* ignore */ }
@@ -3119,6 +3119,12 @@ export function MissionInstanceDetail() {
                               <span className="font-medium text-sm">{k}</span>
                               {defs[k]?.type && (
                                 <Badge variant="outline" className="text-[10px] px-1.5 py-0">{defs[k].type}</Badge>
+                              )}
+                              {defs[k]?.protected && (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-1.5 py-0 font-medium">
+                                  <ShieldCheck className="size-3" />
+                                  protected
+                                </span>
                               )}
                             </div>
                             {defs[k]?.description && (

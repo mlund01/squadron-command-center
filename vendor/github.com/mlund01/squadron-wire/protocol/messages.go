@@ -99,6 +99,7 @@ type MissionInputInfo struct {
 	Description string              `json:"description,omitempty"`
 	Type        string              `json:"type,omitempty"`
 	Required    bool                `json:"required"`
+	Protected   bool                `json:"protected,omitempty"`
 	Items       *MissionInputInfo   `json:"items,omitempty"`
 	Properties  []MissionInputInfo  `json:"properties,omitempty"`
 }

@@ -83,6 +83,7 @@ export interface MissionInputInfo {
   description?: string;
   type?: string;
   required: boolean;
+  protected?: boolean;
   items?: MissionInputInfo;
   properties?: MissionInputInfo[];
 }

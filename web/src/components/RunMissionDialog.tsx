@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { MissionInfo, MissionInputInfo } from '@/api/types';
 
@@ -383,10 +384,16 @@ export function RunMissionDialog({ instanceId, mission, open, onOpenChange }: Ru
               const err = fieldErrors[inp.name];
               return (
                 <div key={inp.name}>
-                  <label className="block text-sm font-medium mb-1">
+                  <label className="flex items-center gap-1.5 text-sm font-medium mb-1">
                     {inp.name}
-                    {inp.required && <span className="text-destructive ml-1">*</span>}
-                    <span className="text-[10px] text-muted-foreground ml-2">{typeLabel(inp)}</span>
+                    {inp.required && <span className="text-destructive">*</span>}
+                    <span className="text-[10px] text-muted-foreground">{typeLabel(inp)}</span>
+                    {inp.protected && (
+                      <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-1.5 py-0 font-medium">
+                        <ShieldCheck className="size-3" />
+                        protected
+                      </span>
+                    )}
                   </label>
                   {inp.description && (
                     <p className="text-xs text-muted-foreground mb-1">{inp.description}</p>

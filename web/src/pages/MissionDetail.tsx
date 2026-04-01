@@ -14,7 +14,7 @@ import {
 } from '@xyflow/react';
 import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
-import { ChevronsDown, ChevronsUp, Repeat, Clock, Webhook, ChevronLeft, ChevronRight, Copy, Check, Eye, EyeOff } from 'lucide-react';
+import { ChevronsDown, ChevronsUp, Repeat, Clock, Webhook, ChevronLeft, ChevronRight, Copy, Check, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 
 import { getInstance, getMissionHistory, runMission, getServerInfo } from '@/api/client';
 import { Button } from '@/components/ui/button';
@@ -758,6 +758,12 @@ export function MissionDetail() {
                           )}
                           {inp.required && (
                             <Badge variant="destructive" className="text-[10px] px-1.5 py-0">required</Badge>
+                          )}
+                          {inp.protected && (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-1.5 py-0 font-medium">
+                              <ShieldCheck className="size-3" />
+                              protected
+                            </span>
                           )}
                         </div>
                         {inp.description && (
