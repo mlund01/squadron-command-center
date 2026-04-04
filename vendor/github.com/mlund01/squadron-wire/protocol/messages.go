@@ -48,6 +48,7 @@ type AgentInfo struct {
 	Role        string   `json:"role,omitempty"`
 	Model       string   `json:"model"`
 	Tools       []string `json:"tools,omitempty"`
+	Mission     string   `json:"mission,omitempty"`
 }
 
 type MissionInfo struct {

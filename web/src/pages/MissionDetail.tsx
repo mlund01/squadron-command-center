@@ -487,9 +487,11 @@ function AgentsTabContent({
             >
               <div className="flex items-center gap-1.5">
                 <span className="truncate">{agent.name}</span>
-                <Badge variant="secondary" className="text-[10px] px-1 py-0 shrink-0">
-                  {agent.model}
-                </Badge>
+                {agent.mission && (
+                  <Badge variant="outline" className="text-[10px] px-1 py-0 shrink-0">
+                    scoped
+                  </Badge>
+                )}
               </div>
             </button>
           ))}
@@ -503,6 +505,13 @@ function AgentsTabContent({
               <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
                 {selectedAgent.model}
               </Badge>
+              {selectedAgent.mission ? (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                  {selectedAgent.mission}
+                </Badge>
+              ) : (
+                <span className="text-[10px] text-muted-foreground">Global</span>
+              )}
             </div>
 
             {selectedAgent.role && (

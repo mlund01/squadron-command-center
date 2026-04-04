@@ -34,6 +34,7 @@ export interface AgentInfo {
   role?: string;
   model: string;
   tools?: string[];
+  mission?: string;
 }
 
 export interface MissionInfo {

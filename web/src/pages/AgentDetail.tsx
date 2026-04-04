@@ -1129,6 +1129,9 @@ export function AgentDetail() {
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold">{agent.name}</h1>
               <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{agent.model}</Badge>
+              {agent.mission && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0">{agent.mission}</Badge>
+              )}
             </div>
             {agent.role && (
               <p className="text-sm text-muted-foreground mt-0.5 line-clamp-1">{agent.role}</p>

@@ -38,6 +38,7 @@ export function AgentsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
+                <TableHead className="w-[120px]">Scope</TableHead>
                 <TableHead className="w-[100px]">Model</TableHead>
                 <TableHead className="w-[80px]">Tools</TableHead>
               </TableRow>
@@ -53,6 +54,13 @@ export function AgentsPage() {
                     <div className="font-medium">{a.name}</div>
                     {a.role && (
                       <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{a.role}</div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {a.mission ? (
+                      <Badge variant="outline" className="text-xs">{a.mission}</Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">Global</span>
                     )}
                   </TableCell>
                   <TableCell>
