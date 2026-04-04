@@ -49,7 +49,7 @@ export function useResizablePanel(opts?: UseResizablePanelOptions) {
   }, [MIN_PANEL_HEIGHT, hasExplicitDefault]);
 
   // Store a cleanup function from the callback ref
-  const cleanupRef = useRef<(() => void) | undefined>();
+  const cleanupRef = useRef<(() => void) | undefined>(undefined);
   const wrappedCallbackRef = useCallback((node: HTMLDivElement | null) => {
     cleanupRef.current?.();
     cleanupRef.current = containerCallbackRef(node) as (() => void) | undefined;
