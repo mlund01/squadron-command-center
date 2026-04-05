@@ -19,7 +19,16 @@ export interface InstanceConfig {
   missions: MissionInfo[];
   plugins: PluginInfo[];
   variables: VariableInfo[];
+  skills?: SkillInfo[];
   sharedFolders?: SharedFolderInfo[];
+}
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  instructions: string;
+  tools?: string[];
+  agent?: string;
 }
 
 export interface ModelInfo {

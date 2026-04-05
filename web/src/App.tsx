@@ -15,6 +15,7 @@ import { CostsPage } from './pages/CostsPage'
 import { FileBrowserPage } from './pages/FileBrowserPage'
 import { FileViewerPage } from './pages/FileViewerPage'
 import { VariablesPage } from './pages/VariablesPage'
+import { SkillsPage } from './pages/SkillsPage'
 
 function App() {
   return (
@@ -27,6 +28,7 @@ function App() {
         <Route path="missions" element={<MissionsPage />} />
         <Route path="agents" element={<AgentsPage />} />
         <Route path="agents/:name" element={<AgentDetail />} />
+        <Route path="skills" element={<SkillsPage />} />
         <Route path="tools" element={<PluginsPage />} />
         <Route path="history" element={<MissionHistory />} />
         <Route path="missions/:name" element={<MissionDetail />} />

@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Rocket, Bot, Puzzle, RefreshCw, History, FileCode, FolderOpen, KeyRound, AlertTriangle, DollarSign } from 'lucide-react';
+import { Rocket, Bot, Puzzle, RefreshCw, History, FileCode, FolderOpen, KeyRound, AlertTriangle, DollarSign, Sparkles } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
@@ -31,6 +31,7 @@ const staticNavItems = [
   { label: 'Missions', path: 'missions', icon: Rocket },
   { label: 'History', path: 'history', icon: History },
   { label: 'Agents', path: 'agents', icon: Bot },
+  { label: 'Skills', path: 'skills', icon: Sparkles },
   { label: 'Tools', path: 'tools', icon: Puzzle },
   { label: 'Costs', path: 'costs', icon: DollarSign },
   { label: 'Variables', path: 'variables', icon: KeyRound },
@@ -195,11 +196,12 @@ export function AppSidebar() {
   );
 }
 
-function getNavCount(path: string, config?: { missions?: unknown[]; agents?: unknown[]; plugins?: unknown[]; variables?: unknown[]; sharedFolders?: unknown[] }): number | undefined {
+function getNavCount(path: string, config?: { missions?: unknown[]; agents?: unknown[]; plugins?: unknown[]; variables?: unknown[]; skills?: unknown[]; sharedFolders?: unknown[] }): number | undefined {
   if (!config) return undefined;
   switch (path) {
     case 'missions': return config.missions?.length;
     case 'agents': return config.agents?.length;
+    case 'skills': return config.skills?.length;
     case 'tools': return config.plugins?.length;
     case 'variables': return config.variables?.length;
     case 'files': return config.sharedFolders?.length;
