@@ -16,6 +16,7 @@ import { FileBrowserPage } from './pages/FileBrowserPage'
 import { FileViewerPage } from './pages/FileViewerPage'
 import { VariablesPage } from './pages/VariablesPage'
 import { SkillsPage } from './pages/SkillsPage'
+import { SkillDetail } from './pages/SkillDetail'
 
 function App() {
   return (
@@ -29,6 +30,7 @@ function App() {
         <Route path="agents" element={<AgentsPage />} />
         <Route path="agents/:name" element={<AgentDetail />} />
         <Route path="skills" element={<SkillsPage />} />
+        <Route path="skills/:name" element={<SkillDetail />} />
         <Route path="tools" element={<PluginsPage />} />
         <Route path="history" element={<MissionHistory />} />
         <Route path="missions/:name" element={<MissionDetail />} />

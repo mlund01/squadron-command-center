@@ -43,6 +43,7 @@ export interface AgentInfo {
   role?: string;
   model: string;
   tools?: string[];
+  skills?: string[];
   mission?: string;
 }
 

@@ -1,16 +1,67 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { getInstance } from '@/api/client';
-import { Badge } from '@/components/ui/badge';
-import { MarkdownPreview } from '@/components/MarkdownPreview';
-import { cn } from '@/lib/utils';
-import type { SkillInfo } from '@/api/types';
+import { EntityCard } from '@/components/entity-card';
+import { PageStats } from '@/components/page-stats';
+import type { MiniNode, MiniEdge } from '@/components/mini-graph';
+import type { SkillInfo, AgentInfo, PluginInfo } from '@/api/types';
+
+function buildSkillMiniGraph(skill: SkillInfo, allAgents: AgentInfo[], allPlugins: PluginInfo[]): { nodes: MiniNode[]; edges: MiniEdge[] } {
+  const nodes: MiniNode[] = [];
+  const edges: MiniEdge[] = [];
+
+  // Agents on the left
+  const agents = allAgents.filter((a) => a.skills?.includes(skill.name));
+  for (const a of agents) {
+    nodes.push({ id: `a:${a.name}`, color: 'violet', size: 'sm' });
+    edges.push({ source: `a:${a.name}`, target: 'skill' });
+  }
+
+  // Skill in center
+  nodes.push({ id: 'skill', color: 'amber', size: 'md' });
+
+  // Plugins/tools on the right
+  const seen = new Set<string>();
+  for (const ref of skill.tools ?? []) {
+    const parts = ref.split('.');
+    if (parts.length < 2) continue;
+    const ns = (parts[0] === 'builtins' || parts[0] === 'plugins') ? parts[1] : parts[0];
+    const toolName = parts.length >= 3 ? parts[2] : null;
+
+    if (!seen.has(ns)) {
+      seen.add(ns);
+      nodes.push({ id: `p:${ns}`, color: 'blue', size: 'sm' });
+      edges.push({ source: 'skill', target: `p:${ns}` });
+    }
+
+    if (toolName && toolName !== 'all') {
+      const toolId = `t:${ns}:${toolName}`;
+      if (!seen.has(toolId)) {
+        seen.add(toolId);
+        nodes.push({ id: toolId, color: 'slate', size: 'sm' });
+        edges.push({ source: `p:${ns}`, target: toolId });
+      }
+    } else if (toolName === 'all') {
+      const plugin = allPlugins.find(p => p.name === ns);
+      for (const t of plugin?.tools ?? []) {
+        const tName = typeof t === 'string' ? t : t.name;
+        const toolId = `t:${ns}:${tName}`;
+        if (!seen.has(toolId)) {
+          seen.add(toolId);
+          nodes.push({ id: toolId, color: 'slate', size: 'sm' });
+          edges.push({ source: `p:${ns}`, target: toolId });
+        }
+      }
+    }
+  }
+
+  return { nodes, edges };
+}
 
 export function SkillsPage() {
   const { id } = useParams<{ id: string }>();
-  const [selected, setSelected] = useState<SkillInfo | null>(null);
-
+  const navigate = useNavigate();
   const { data: instance, isLoading } = useQuery({
     queryKey: ['instance', id],
     queryFn: () => getInstance(id!),
@@ -19,97 +70,63 @@ export function SkillsPage() {
   });
 
   const skills = useMemo(() => {
-    const raw = instance?.config.skills ?? [];
-    return [...raw].sort((a, b) => a.name.localeCompare(b.name));
+    return [...(instance?.config.skills ?? [])].sort((a, b) => a.name.localeCompare(b.name));
   }, [instance?.config.skills]);
 
-  useEffect(() => {
-    if (!selected && skills.length) setSelected(skills[0]);
-  }, [skills, selected]);
+  const allAgents = instance?.config.agents ?? [];
+  const allPlugins = instance?.config.plugins ?? [];
+
+  const stats = useMemo(() => {
+    const global = skills.filter(s => !s.agent).length;
+    const scoped = skills.filter(s => s.agent).length;
+    const withTools = skills.filter(s => s.tools && s.tools.length > 0).length;
+    return [
+      { label: 'Total Skills', value: skills.length },
+      { label: 'Global', value: global },
+      { label: 'Agent-Scoped', value: scoped },
+      { label: 'With Tools', value: withTools },
+    ];
+  }, [skills]);
 
   if (isLoading) return <div className="p-8 text-muted-foreground">Loading...</div>;
   if (!instance) return <div className="p-8 text-muted-foreground">Instance not found</div>;
 
-  if (skills.length === 0) {
-    return (
-      <div className="p-8">
-        <h1 className="text-2xl font-bold mb-6">Skills</h1>
-        <p className="text-muted-foreground">No skills configured.</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex h-full">
-      <div className="w-64 shrink-0 border-r overflow-y-auto">
-        <div className="p-3 border-b">
-          <h2 className="text-sm font-semibold text-muted-foreground">Skills</h2>
-        </div>
-        <div className="py-1">
-          {skills.map((s) => {
-            const key = `${s.agent ?? 'global'}-${s.name}`;
-            const isActive = selected?.name === s.name && selected?.agent === s.agent;
-            return (
-              <button
-                key={key}
-                onClick={() => setSelected(s)}
-                className={cn(
-                  'w-full text-left px-3 py-2 text-sm hover:bg-muted/50 transition-colors',
-                  isActive && 'bg-muted font-medium',
-                )}
-              >
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate">{s.name}</span>
-                  {s.agent && (
-                    <Badge variant="outline" className="text-[10px] px-1 py-0 shrink-0">
-                      {s.agent}
-                    </Badge>
-                  )}
-                </div>
-                {s.description && (
-                  <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{s.description}</div>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+    <div className="p-8 max-w-6xl mx-auto">
+      <h1 className="text-2xl font-bold mb-6">Skills</h1>
 
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {selected ? (
-          <>
-            <div className="p-4 border-b shrink-0">
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-semibold">{selected.name}</h2>
-                {selected.agent ? (
-                  <Badge variant="outline" className="text-[10px] px-1.5 py-0">{selected.agent}</Badge>
-                ) : (
-                  <span className="text-xs text-muted-foreground">Global</span>
-                )}
-              </div>
-              {selected.description && (
-                <p className="text-sm text-muted-foreground mt-1">{selected.description}</p>
-              )}
-              {selected.tools && selected.tools.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {selected.tools.map((t) => (
-                    <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="flex-1 overflow-auto bg-muted/30 p-8">
-              <div className="max-w-4xl bg-background rounded-lg border shadow-sm">
-                <MarkdownPreview content={selected.instructions} />
-              </div>
-            </div>
-          </>
-        ) : (
-          <div className="flex items-center justify-center h-full text-muted-foreground">
-            Select a skill to view its instructions
+      {skills.length === 0 ? (
+        <p className="text-muted-foreground">No skills configured.</p>
+      ) : (
+        <>
+          <PageStats stats={stats} />
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {skills.map((s) => {
+              const graph = buildSkillMiniGraph(s, allAgents, allPlugins);
+              const badges: { label: string; variant?: 'default' | 'secondary' | 'outline' }[] = [];
+              if (s.agent) {
+                badges.push({ label: s.agent, variant: 'outline' });
+              } else {
+                badges.push({ label: 'Global', variant: 'secondary' });
+              }
+              if (s.tools && s.tools.length > 0) {
+                badges.push({ label: `${s.tools.length} tools`, variant: 'secondary' });
+              }
+              return (
+                <EntityCard
+                  key={`${s.agent ?? 'global'}-${s.name}`}
+                  name={s.name}
+                  description={s.description}
+                  variant="skill"
+                  badges={badges}
+                  graph={graph}
+                  onClick={() => navigate(`/instances/${id}/skills/${s.name}`)}
+                />
+              );
+            })}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }

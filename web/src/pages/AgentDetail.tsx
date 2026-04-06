@@ -24,7 +24,8 @@ import { cn } from '@/lib/utils';
 import { StatusBadge, formatTime } from '@/lib/mission-utils';
 import { useResizablePanel } from '@/hooks/use-resizable-panel';
 import { ZoomControls } from '@/components/zoom-controls';
-import type { AgentInfo, MissionInfo, PluginInfo, ToolInfo, ChatSessionInfo, ChatEvent } from '@/api/types';
+import { NodeChip } from '@/components/node-chip';
+import type { AgentInfo, MissionInfo, PluginInfo, SkillInfo, ToolInfo, ChatSessionInfo, ChatEvent } from '@/api/types';
 
 /* ── Chat types & component (preserved) ── */
 
@@ -252,6 +253,8 @@ const AGENT_NODE_WIDTH = 300;
 const AGENT_NODE_HEIGHT = 120;
 const MISSION_NODE_WIDTH = 220;
 const MISSION_NODE_HEIGHT = 80;
+const SKILL_NODE_WIDTH = 220;
+const SKILL_NODE_HEIGHT = 70;
 const PLUGIN_NODE_WIDTH = 220;
 const PLUGIN_NODE_HEIGHT = 80;
 const TOOL_NODE_WIDTH = 180;
@@ -271,6 +274,7 @@ function AgentNode({ data, selected }: { data: { agent: AgentInfo }; selected?: 
       <div className="flex items-center gap-2 mb-1">
         <span className="font-bold text-base">{data.agent.name}</span>
         <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{data.agent.model}</Badge>
+        <NodeChip variant="agent" className="ml-auto" />
       </div>
       {data.agent.role && (
         <p className="text-xs text-muted-foreground line-clamp-2">{data.agent.role}</p>
@@ -288,6 +292,7 @@ function MissionNode({ data, selected }: { data: { mission: MissionInfo }; selec
     )}>
       <div className="flex items-center gap-2 mb-0.5">
         <span className="font-semibold text-sm">{data.mission.name}</span>
+        <NodeChip variant="mission" className="ml-auto" />
       </div>
       {data.mission.tasks && (
         <p className="text-xs text-muted-foreground">
@@ -308,9 +313,7 @@ function PluginNode({ data, selected }: { data: { plugin: PluginInfo; agentToolC
       <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />
       <div className="flex items-center gap-2 mb-0.5">
         <span className="font-semibold text-sm">{data.plugin.name}</span>
-        {data.plugin.builtin && (
-          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">builtin</Badge>
-        )}
+        <NodeChip variant={data.plugin.builtin ? 'builtin' : 'plugin'} className="ml-auto" />
       </div>
       <p className="text-xs text-muted-foreground">
         {data.agentToolCount} {data.agentToolCount === 1 ? 'tool' : 'tools'}
@@ -327,7 +330,29 @@ function ToolNode({ data, selected }: { data: { toolName: string; pluginName: st
       selected ? 'bg-muted border-2 border-foreground' : 'bg-card border border-border',
     )}>
       <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-1.5 !h-1.5" />
-      <span className="text-xs font-mono truncate block">{bareToolName(data.toolName)}</span>
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-mono truncate">{bareToolName(data.toolName)}</span>
+        <NodeChip variant="tool" className="ml-auto" />
+      </div>
+    </div>
+  );
+}
+
+function SkillNode({ data, selected }: { data: { name: string; description?: string }; selected?: boolean }) {
+  return (
+    <div className={cn(
+      'rounded-lg p-3 cursor-pointer transition-all w-[220px]',
+      selected ? 'bg-muted border-2 border-foreground shadow-sm' : 'bg-card border-2 border-border shadow-sm',
+    )}>
+      <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />
+      <div className="flex items-center gap-2 mb-0.5">
+        <span className="font-semibold text-sm">{data.name}</span>
+        <NodeChip variant="skill" className="ml-auto" />
+      </div>
+      {data.description && (
+        <p className="text-xs text-muted-foreground line-clamp-2">{data.description}</p>
+      )}
+      <Handle type="source" position={Position.Right} className="!bg-muted-foreground/50 !w-2 !h-2" />
     </div>
   );
 }
@@ -335,6 +360,7 @@ function ToolNode({ data, selected }: { data: { toolName: string; pluginName: st
 const nodeTypes: NodeTypes = {
   agent: AgentNode,
   mission: MissionNode,
+  skill: SkillNode,
   plugin: PluginNode,
   tool: ToolNode,
 };
@@ -344,9 +370,11 @@ const nodeTypes: NodeTypes = {
 interface AgentGraphData {
   agentInfo: AgentInfo;
   missions: MissionInfo[];
+  skills: SkillInfo[];
   plugins: PluginInfo[];
   toolToPlugin: Map<string, string>;
   agentToolsByPlugin: Map<string, string[]>;
+  skillToolsByPlugin: Map<string, Map<string, string[]>>; // skillName -> pluginName -> toolNames
 }
 
 function layoutAgentGraph(data: AgentGraphData): { nodes: Node[]; edges: Edge[] } {
@@ -383,34 +411,87 @@ function layoutAgentGraph(data: AgentGraphData): { nodes: Node[]; edges: Edge[] 
     });
   }
 
-  // Plugin nodes (right of agent) + Tool nodes (right of plugins)
+  // Direct plugin nodes (right of agent) — tools assigned directly to agent
   for (const plugin of data.plugins) {
-    const pId = `plugin:${plugin.name}`;
     const agentTools = data.agentToolsByPlugin.get(plugin.name) ?? [];
+    if (agentTools.length === 0) continue;
 
-    g.setNode(pId, { width: PLUGIN_NODE_WIDTH, height: PLUGIN_NODE_HEIGHT });
+    const pId = `plugin:${plugin.name}`;
+    if (!g.hasNode(pId)) {
+      g.setNode(pId, { width: PLUGIN_NODE_WIDTH, height: PLUGIN_NODE_HEIGHT });
+      nodeMeta.push({
+        id: pId,
+        type: 'plugin',
+        data: { plugin, agentToolCount: agentTools.length },
+        width: PLUGIN_NODE_WIDTH,
+        height: PLUGIN_NODE_HEIGHT,
+      });
+    }
     g.setEdge(agentId, pId);
     edges.push({ id: `${agentId}->${pId}`, source: agentId, target: pId });
-    nodeMeta.push({
-      id: pId,
-      type: 'plugin',
-      data: { plugin, agentToolCount: agentTools.length },
-      width: PLUGIN_NODE_WIDTH,
-      height: PLUGIN_NODE_HEIGHT,
-    });
 
     for (const toolName of agentTools) {
       const tId = `tool:${toolName}`;
-      g.setNode(tId, { width: TOOL_NODE_WIDTH, height: TOOL_NODE_HEIGHT });
+      if (!g.hasNode(tId)) {
+        g.setNode(tId, { width: TOOL_NODE_WIDTH, height: TOOL_NODE_HEIGHT });
+        nodeMeta.push({
+          id: tId,
+          type: 'tool',
+          data: { toolName, pluginName: plugin.name },
+          width: TOOL_NODE_WIDTH,
+          height: TOOL_NODE_HEIGHT,
+        });
+      }
       g.setEdge(pId, tId);
       edges.push({ id: `${pId}->${tId}`, source: pId, target: tId });
-      nodeMeta.push({
-        id: tId,
-        type: 'tool',
-        data: { toolName, pluginName: plugin.name },
-        width: TOOL_NODE_WIDTH,
-        height: TOOL_NODE_HEIGHT,
-      });
+    }
+  }
+
+  // Skill nodes (right of agent) with their own plugin/tool chains
+  for (const skill of data.skills) {
+    const sId = `skill:${skill.name}`;
+    g.setNode(sId, { width: SKILL_NODE_WIDTH, height: SKILL_NODE_HEIGHT });
+    g.setEdge(agentId, sId);
+    edges.push({ id: `${agentId}->${sId}`, source: agentId, target: sId });
+    nodeMeta.push({
+      id: sId,
+      type: 'skill',
+      data: { name: skill.name, description: skill.description },
+      width: SKILL_NODE_WIDTH,
+      height: SKILL_NODE_HEIGHT,
+    });
+
+    // Skill's plugin/tool nodes
+    const skillPlugins = data.skillToolsByPlugin.get(skill.name);
+    if (skillPlugins) {
+      for (const [pluginName, toolNames] of skillPlugins) {
+        const plugin = data.plugins.find(p => p.name === pluginName);
+        const spId = `skill-plugin:${skill.name}:${pluginName}`;
+        g.setNode(spId, { width: PLUGIN_NODE_WIDTH, height: PLUGIN_NODE_HEIGHT });
+        g.setEdge(sId, spId);
+        edges.push({ id: `${sId}->${spId}`, source: sId, target: spId });
+        nodeMeta.push({
+          id: spId,
+          type: 'plugin',
+          data: { plugin: plugin ?? { name: pluginName, path: '', tools: [] }, agentToolCount: toolNames.length },
+          width: PLUGIN_NODE_WIDTH,
+          height: PLUGIN_NODE_HEIGHT,
+        });
+
+        for (const toolName of toolNames) {
+          const stId = `skill-tool:${skill.name}:${pluginName}:${toolName}`;
+          g.setNode(stId, { width: TOOL_NODE_WIDTH, height: TOOL_NODE_HEIGHT });
+          g.setEdge(spId, stId);
+          edges.push({ id: `${spId}->${stId}`, source: spId, target: stId });
+          nodeMeta.push({
+            id: stId,
+            type: 'tool',
+            data: { toolName: `plugins.${pluginName}.${toolName}`, pluginName },
+            width: TOOL_NODE_WIDTH,
+            height: TOOL_NODE_HEIGHT,
+          });
+        }
+      }
     }
   }
 
@@ -477,6 +558,87 @@ function GeneralTabContent({ agent }: { agent: AgentInfo }) {
               ))}
             </div>
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SkillsTabContent({
+  skills,
+  selectedSkill,
+  onSelectSkill,
+}: {
+  skills: SkillInfo[];
+  selectedSkill: SkillInfo | null;
+  onSelectSkill: (s: SkillInfo) => void;
+}) {
+  if (!skills.length) {
+    return <p className="text-sm text-muted-foreground p-4">This agent has no skills.</p>;
+  }
+  return (
+    <div className="flex h-full">
+      <div className="w-56 shrink-0 border-r overflow-y-auto">
+        <div className="py-1">
+          {skills.map((s) => (
+            <button
+              key={s.name}
+              onClick={() => onSelectSkill(s)}
+              className={cn(
+                'w-full text-left px-3 py-2 text-sm hover:bg-muted/50 transition-colors',
+                selectedSkill?.name === s.name && 'bg-muted font-medium',
+              )}
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="truncate">{s.name}</span>
+                {s.tools && s.tools.length > 0 && (
+                  <Badge variant="secondary" className="text-[10px] px-1 py-0 shrink-0">
+                    {s.tools.length}
+                  </Badge>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4">
+        {selectedSkill ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold text-sm">{selectedSkill.name}</h3>
+              {selectedSkill.agent ? (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0">{selectedSkill.agent}</Badge>
+              ) : (
+                <span className="text-xs text-muted-foreground">Global</span>
+              )}
+            </div>
+
+            {selectedSkill.description && (
+              <div>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                  Description
+                </span>
+                <p className="text-xs text-muted-foreground mt-1">{selectedSkill.description}</p>
+              </div>
+            )}
+
+            {selectedSkill.tools && selectedSkill.tools.length > 0 && (
+              <div>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                  Tools
+                </span>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {selectedSkill.tools.map((t) => (
+                    <Badge key={t} variant="outline" className="text-[10px] px-1.5 py-0">
+                      {t}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Select a skill</p>
         )}
       </div>
     </div>
@@ -925,6 +1087,7 @@ export function AgentDetail() {
   // Tab + selection state
   const [activeTab, setActiveTab] = useState('general');
   const [selectedMission, setSelectedMission] = useState<MissionInfo | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
   const [selectedPlugin, setSelectedPlugin] = useState<PluginInfo | null>(null);
   const [selectedChat, setSelectedChat] = useState<ChatSessionInfo | null>(null);
 
@@ -964,39 +1127,78 @@ export function AgentDetail() {
   // Derived data
   const agent = instance?.config.agents?.find((a) => a.name === name);
 
-  const { missions, plugins, toolToPlugin, agentToolsByPlugin } = useMemo(() => {
+  const { missions, skills, plugins, toolToPlugin, agentToolsByPlugin, skillToolsByPlugin } = useMemo(() => {
     const allPlugins = instance?.config.plugins ?? [];
+    const allSkills = instance?.config.skills ?? [];
     const agentTools = agent?.tools ?? [];
 
-    // Agent tools use "plugins.<namespace>.<tool>" format
-    // Plugin tools use bare names. Parse to match them.
+    // Agent tools use "plugins.<namespace>.<tool>" or "builtins.<namespace>.<tool>" format
     const tToP = new Map<string, string>(); // agent tool name -> plugin name
     const byPlugin = new Map<string, string[]>(); // plugin name -> [agent tool full names]
 
+    const parseToolRef = (t: string) => {
+      const match = t.match(/^(?:plugins|builtins)\.([^.]+)\.(.+)$/);
+      if (match) return { pluginName: match[1], toolName: match[2] };
+      return null;
+    };
+
     for (const t of agentTools) {
-      const match = t.match(/^plugins\.([^.]+)\.(.+)$/);
-      if (match) {
-        const [, pluginName] = match;
-        tToP.set(t, pluginName);
-        const existing = byPlugin.get(pluginName) ?? [];
+      const parsed = parseToolRef(t);
+      if (parsed) {
+        tToP.set(t, parsed.pluginName);
+        const existing = byPlugin.get(parsed.pluginName) ?? [];
         existing.push(t);
-        byPlugin.set(pluginName, existing);
+        byPlugin.set(parsed.pluginName, existing);
       }
     }
 
-    const relevantPlugins = allPlugins.filter((p) => byPlugin.has(p.name));
+    // Find skills for this agent
+    const agentSkills = allSkills.filter((s) => agent?.skills?.includes(s.name));
+
+    // Parse skill tool refs into plugin groups per skill
+    const skillByPlugin = new Map<string, Map<string, string[]>>(); // skillName -> pluginName -> toolNames
+    for (const skill of agentSkills) {
+      const pluginMap = new Map<string, string[]>();
+      for (const t of skill.tools ?? []) {
+        const parsed = parseToolRef(t);
+        if (parsed) {
+          if (parsed.toolName === 'all') {
+            const plugin = allPlugins.find(p => p.name === parsed.pluginName);
+            if (plugin?.tools) {
+              const names = pluginMap.get(parsed.pluginName) ?? [];
+              for (const pt of plugin.tools) names.push(pt.name);
+              pluginMap.set(parsed.pluginName, names);
+            }
+          } else {
+            const names = pluginMap.get(parsed.pluginName) ?? [];
+            names.push(parsed.toolName);
+            pluginMap.set(parsed.pluginName, names);
+          }
+        }
+      }
+      if (pluginMap.size > 0) {
+        skillByPlugin.set(skill.name, pluginMap);
+      }
+    }
+
+    // Include plugins referenced by skills in the relevant set
+    const allRelevantPluginNames = new Set(byPlugin.keys());
+    for (const [, pluginMap] of skillByPlugin) {
+      for (const pName of pluginMap.keys()) allRelevantPluginNames.add(pName);
+    }
+    const relevantPlugins = allPlugins.filter((p) => allRelevantPluginNames.has(p.name));
 
     const relevantMissions = (instance?.config.missions ?? []).filter(
       (m) => m.agents?.includes(name!)
     );
 
-    return { missions: relevantMissions, plugins: relevantPlugins, toolToPlugin: tToP, agentToolsByPlugin: byPlugin };
-  }, [instance?.config, agent?.tools, name]);
+    return { missions: relevantMissions, skills: agentSkills, plugins: relevantPlugins, toolToPlugin: tToP, agentToolsByPlugin: byPlugin, skillToolsByPlugin: skillByPlugin };
+  }, [instance?.config, agent?.tools, agent?.skills, name]);
 
   const { nodes, edges } = useMemo(() => {
     if (!agent) return { nodes: [], edges: [] };
-    return layoutAgentGraph({ agentInfo: agent, missions, plugins, toolToPlugin, agentToolsByPlugin });
-  }, [agent, missions, plugins, toolToPlugin, agentToolsByPlugin]);
+    return layoutAgentGraph({ agentInfo: agent, missions, skills, plugins, toolToPlugin, agentToolsByPlugin, skillToolsByPlugin });
+  }, [agent, missions, skills, plugins, toolToPlugin, agentToolsByPlugin, skillToolsByPlugin]);
 
   const nodesWithSelection = useMemo(() => {
     return nodes.map((n) => {
@@ -1005,6 +1207,14 @@ export function AgentDetail() {
         isSelected = true;
       } else if (activeTab === 'missions' && n.id === `mission:${selectedMission?.name}`) {
         isSelected = true;
+      } else if (activeTab === 'skills') {
+        if (n.id === `skill:${selectedSkill?.name}`) {
+          isSelected = true;
+        }
+        // Highlight skill's plugin/tool nodes
+        if (selectedSkill && (n.id.startsWith(`skill-plugin:${selectedSkill.name}:`) || n.id.startsWith(`skill-tool:${selectedSkill.name}:`))) {
+          isSelected = true;
+        }
       } else if (activeTab === 'plugins') {
         if (n.id === `plugin:${selectedPlugin?.name}`) {
           isSelected = true;
@@ -1015,12 +1225,16 @@ export function AgentDetail() {
       }
       return { ...n, selected: isSelected };
     });
-  }, [nodes, activeTab, name, selectedMission?.name, selectedPlugin?.name]);
+  }, [nodes, activeTab, name, selectedMission?.name, selectedSkill?.name, selectedPlugin?.name]);
 
   // Auto-select first items
   useEffect(() => {
     if (!selectedMission && missions.length) setSelectedMission(missions[0]);
   }, [missions, selectedMission]);
+
+  useEffect(() => {
+    if (!selectedSkill && skills.length) setSelectedSkill(skills[0]);
+  }, [skills, selectedSkill]);
 
   useEffect(() => {
     if (!selectedPlugin && plugins.length) setSelectedPlugin(plugins[0]);
@@ -1044,6 +1258,25 @@ export function AgentDetail() {
         }
         break;
       }
+      case 'skill': {
+        const s = skills.find((s) => s.name === nodeName);
+        if (s) {
+          setSelectedSkill(s);
+          setActiveTab('skills');
+        }
+        break;
+      }
+      case 'skill-plugin':
+      case 'skill-tool': {
+        // Extract skill name from "skill-plugin:skillName:pluginName" or "skill-tool:skillName:..."
+        const skillName = nodeName.split(':')[0];
+        const s = skills.find((s) => s.name === skillName);
+        if (s) {
+          setSelectedSkill(s);
+          setActiveTab('skills');
+        }
+        break;
+      }
       case 'plugin': {
         const p = plugins.find((p) => p.name === nodeName);
         if (p) {
@@ -1062,7 +1295,7 @@ export function AgentDetail() {
         break;
       }
     }
-  }, [missions, plugins, toolToPlugin]);
+  }, [missions, skills, plugins, toolToPlugin]);
 
   // Chat handlers
   const handleNewChat = () => {
@@ -1194,8 +1427,16 @@ export function AgentDetail() {
                   {missions.length}
                 </Badge>
               </TabsTrigger>
+              <TabsTrigger value="skills">
+                Skills
+                {skills.length > 0 && (
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 ml-0.5">
+                    {skills.length}
+                  </Badge>
+                )}
+              </TabsTrigger>
               <TabsTrigger value="plugins">
-                Plugins
+                Tools
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0 ml-0.5">
                   {plugins.length}
                 </Badge>
@@ -1227,6 +1468,13 @@ export function AgentDetail() {
                 selectedMission={selectedMission}
                 onSelectMission={setSelectedMission}
                 instanceId={id!}
+              />
+            </TabsContent>
+            <TabsContent value="skills" className="h-full m-0">
+              <SkillsTabContent
+                skills={skills}
+                selectedSkill={selectedSkill}
+                onSelectSkill={setSelectedSkill}
               />
             </TabsContent>
             <TabsContent value="plugins" className="h-full m-0">

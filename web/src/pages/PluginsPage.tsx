@@ -23,7 +23,7 @@ export function PluginsPage() {
   const hasFolders = config.sharedFolders && config.sharedFolders.length > 0;
 
   return (
-    <div className="p-8 max-w-5xl">
+    <div className="p-8 w-full max-w-5xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">Tools</h1>
 
       {(!config.plugins || config.plugins.length === 0) ? (

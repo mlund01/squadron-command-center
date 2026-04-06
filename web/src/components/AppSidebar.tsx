@@ -88,6 +88,8 @@ export function AppSidebar() {
     ? 'history'
     : location.pathname.includes('/files')
     ? 'files'
+    : location.pathname.includes('/skills/')
+    ? 'skills'
     : activePath;
 
   return (
