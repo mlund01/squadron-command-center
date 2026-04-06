@@ -14,9 +14,9 @@ import { EntityCard } from '@/components/entity-card';
 import { PageStats } from '@/components/page-stats';
 import { RunMissionDialog } from '@/components/RunMissionDialog';
 import type { MiniNode, MiniEdge } from '@/components/mini-graph';
-import type { MissionInfo, AgentInfo } from '@/api/types';
+import type { MissionInfo } from '@/api/types';
 
-function buildMissionMiniGraph(mission: MissionInfo, allAgents: AgentInfo[]): { nodes: MiniNode[]; edges: MiniEdge[] } {
+function buildMissionMiniGraph(mission: MissionInfo): { nodes: MiniNode[]; edges: MiniEdge[] } {
   const nodes: MiniNode[] = [];
   const edges: MiniEdge[] = [];
 
@@ -56,8 +56,6 @@ export function MissionsPage() {
   });
 
   const missions = instance?.config.missions ?? [];
-  const allAgents = instance?.config.agents ?? [];
-
   const stats = useMemo(() => {
     const totalTasks = missions.reduce((sum, m) => sum + (m.tasks?.length ?? 0), 0);
     const withSchedules = missions.filter(m => m.schedules && m.schedules.length > 0).length;
@@ -99,7 +97,7 @@ export function MissionsPage() {
           <PageStats stats={stats} />
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {missions.map((m) => {
-              const graph = buildMissionMiniGraph(m, allAgents);
+              const graph = buildMissionMiniGraph(m);
               const badges: { label: string; variant?: 'default' | 'secondary' | 'outline' }[] = [
                 { label: `${m.tasks?.length ?? 0} tasks`, variant: 'secondary' },
               ];
