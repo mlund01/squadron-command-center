@@ -25,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { useResizablePanel } from '@/hooks/use-resizable-panel';
 import { ZoomControls } from '@/components/zoom-controls';
+import { NodeChip } from '@/components/node-chip';
 import { RunMissionDialog } from '@/components/RunMissionDialog';
 import type { TaskInfo, AgentInfo, DatasetInfo, MissionInfo, ScheduleInfo, TriggerInfo } from '@/api/types';
 import { RouterEdge } from '@/components/RouterEdge';
@@ -71,7 +72,7 @@ function TaskNode({ data, selected }: { data: TaskInfo & { hasIncoming?: boolean
                 <span>iterated</span>
               </div>
             )}
-            <span className="text-[9px] font-semibold uppercase tracking-wider px-1 py-0 rounded border border-purple-500/40 text-purple-500">Task</span>
+            <NodeChip variant="task" />
           </div>
         </div>
         {data.objective && (
@@ -93,7 +94,7 @@ function MissionRouteNode({ data }: { data: Record<string, unknown> }) {
         <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />
         <div className="flex items-start justify-between gap-2">
           <span className="font-semibold text-sm">{missionName}</span>
-          <span className="text-[9px] font-semibold uppercase tracking-wider px-1 py-0 rounded border border-teal-500/40 text-teal-500 shrink-0">Mission</span>
+          <NodeChip variant="mission" className="shrink-0" />
         </div>
       </div>
     </div>

@@ -33,7 +33,16 @@ type InstanceConfig struct {
 	Missions  []MissionInfo  `json:"missions"`
 	Plugins   []PluginInfo   `json:"plugins"`
 	Variables    []VariableInfo    `json:"variables"`
+	Skills       []SkillInfo       `json:"skills,omitempty"`
 	SharedFolders []SharedFolderInfo `json:"sharedFolders,omitempty"`
+}
+
+type SkillInfo struct {
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	Instructions string   `json:"instructions"`
+	Tools        []string `json:"tools,omitempty"`
+	Agent        string   `json:"agent,omitempty"`
 }
 
 type ModelInfo struct {
@@ -48,6 +57,7 @@ type AgentInfo struct {
 	Role        string   `json:"role,omitempty"`
 	Model       string   `json:"model"`
 	Tools       []string `json:"tools,omitempty"`
+	Skills      []string `json:"skills,omitempty"`
 	Mission     string   `json:"mission,omitempty"`
 }
 
