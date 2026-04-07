@@ -19,25 +19,35 @@ import type { MissionInfo } from '@/api/types';
 function buildMissionMiniGraph(mission: MissionInfo): { nodes: MiniNode[]; edges: MiniEdge[] } {
   const nodes: MiniNode[] = [];
   const edges: MiniEdge[] = [];
+  const tasks = mission.tasks ?? [];
 
-  // Mission in center
-  nodes.push({ id: 'mission', color: 'teal', size: 'md' });
+  if (tasks.length === 0) return { nodes, edges };
 
-  // Agents on the left
-  for (const aName of mission.agents ?? []) {
-    nodes.push({ id: `a:${aName}`, color: 'violet', size: 'sm' });
-    edges.push({ source: `a:${aName}`, target: 'mission' });
-  }
-
-  // Tasks on the right
-  for (const t of mission.tasks ?? []) {
-    nodes.push({ id: `t:${t.name}`, color: 'purple', size: 'sm' });
-    edges.push({ source: 'mission', target: `t:${t.name}` });
-
-    // Task dependencies
+  // Build the task DAG — same structure as the mission detail canvas
+  const hasDeps = new Set<string>();
+  for (const t of tasks) {
     for (const dep of t.dependsOn ?? []) {
+      hasDeps.add(t.name);
       edges.push({ source: `t:${dep}`, target: `t:${t.name}` });
     }
+    // send_to edges
+    for (const target of t.sendTo ?? []) {
+      edges.push({ source: `t:${t.name}`, target: `t:${target}` });
+    }
+    // router edges
+    if (t.router?.routes) {
+      for (const route of t.router.routes) {
+        edges.push({ source: `t:${t.name}`, target: `t:${route.target}` });
+      }
+    }
+  }
+
+  for (const t of tasks) {
+    // Root tasks (no incoming deps) get a slightly larger node
+    const isRoot = !hasDeps.has(t.name) && !tasks.some(other =>
+      other.sendTo?.includes(t.name) || other.router?.routes?.some(r => r.target === t.name)
+    );
+    nodes.push({ id: `t:${t.name}`, color: 'purple', size: isRoot ? 'md' : 'sm' });
   }
 
   return { nodes, edges };
