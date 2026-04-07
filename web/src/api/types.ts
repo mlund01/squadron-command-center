@@ -249,6 +249,7 @@ export interface MissionTaskRecord {
   startedAt?: string;
   finishedAt?: string;
   outputJson?: string;
+  summary?: string;
   error?: string;
 }
 

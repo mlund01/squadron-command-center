@@ -935,7 +935,14 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     completeType: string,
     fallbackEnd: number,
   ) => {
-    const calls = events.filter(e => e.eventType === callingType);
+    // Deduplicate calls by toolCallId — keep the last (most complete) event
+    const callsRaw = events.filter(e => e.eventType === callingType);
+    const callsByTcId = new Map<string, typeof callsRaw[0]>();
+    for (const c of callsRaw) {
+      const tcId = String(c.data.toolCallId || c.id);
+      callsByTcId.set(tcId, c);
+    }
+    const calls = [...callsByTcId.values()];
     const completions = [...events.filter(e => e.eventType === completeType)];
     const pairs: { id: string; toolCallId: string; toolName: string; start: number; end: number; sessionId: string }[] = [];
     for (const call of calls) {
@@ -1059,9 +1066,12 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     const segments: AgentSegment[] = [];
     for (const startEvt of agentStarts) {
       const agentName = String(startEvt.data.agentName || 'agent');
+      const taskName = String(startEvt.data.taskName || '');
       const nextStop = stopTimes.find(t => t > startEvt.time);
       const completeEvt = agentCompletes.find(e =>
-        String(e.data.agentName || '') === agentName && e.time >= startEvt.time
+        String(e.data.agentName || '') === agentName &&
+        String(e.data.taskName || '') === taskName &&
+        e.time >= startEvt.time
       );
       const interrupted = nextStop != null && (!completeEvt || nextStop < completeEvt.time);
       if (!interrupted && completeEvt) {
@@ -1480,6 +1490,14 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                         <div>
                           <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Objective{isIterated && selectedIteration != null ? ` (Iteration ${selectedIteration + 1})` : ''}</div>
                           <div className="text-xs whitespace-pre-wrap bg-muted/50 rounded px-3 py-2">{objective}</div>
+                        </div>
+                      )}
+
+                      {/* Summary */}
+                      {selectedTask.summary && (
+                        <div>
+                          <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Summary</div>
+                          <div className="text-xs whitespace-pre-wrap bg-muted/50 rounded px-3 py-2">{selectedTask.summary}</div>
                         </div>
                       )}
 

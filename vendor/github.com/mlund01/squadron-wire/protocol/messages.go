@@ -381,6 +381,7 @@ type MissionTaskInfo struct {
 	StartedAt  *string `json:"startedAt,omitempty"`
 	FinishedAt *string `json:"finishedAt,omitempty"`
 	OutputJSON *string `json:"outputJson,omitempty"`
+	Summary    *string `json:"summary,omitempty"`
 	Error      *string `json:"error,omitempty"`
 }
 
