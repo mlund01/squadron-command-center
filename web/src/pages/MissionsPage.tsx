@@ -37,17 +37,22 @@ function buildMissionMiniGraph(mission: MissionInfo): { nodes: MiniNode[]; edges
     // router edges
     if (t.router?.routes) {
       for (const route of t.router.routes) {
-        edges.push({ source: `t:${t.name}`, target: `t:${route.target}` });
+        if (route.isMission) {
+          // Cross-mission route — add a mission node
+          const mId = `m:${route.target}`;
+          if (!nodes.some(n => n.id === mId)) {
+            nodes.push({ id: mId, color: 'teal', size: 'sm' });
+          }
+          edges.push({ source: `t:${t.name}`, target: mId });
+        } else {
+          edges.push({ source: `t:${t.name}`, target: `t:${route.target}` });
+        }
       }
     }
   }
 
   for (const t of tasks) {
-    // Root tasks (no incoming deps) get a slightly larger node
-    const isRoot = !hasDeps.has(t.name) && !tasks.some(other =>
-      other.sendTo?.includes(t.name) || other.router?.routes?.some(r => r.target === t.name)
-    );
-    nodes.push({ id: `t:${t.name}`, color: 'purple', size: isRoot ? 'md' : 'sm' });
+    nodes.push({ id: `t:${t.name}`, color: 'purple', size: 'sm', stacked: !!t.iterator });
   }
 
   return { nodes, edges };
