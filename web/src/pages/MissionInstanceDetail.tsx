@@ -759,6 +759,13 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     refetchInterval: isRunning ? 2000 : false,
   });
 
+  // Session messages for system prompts in detail timeline
+  const { data: sessionMessagesData } = useQuery({
+    queryKey: ['chatMessages', instanceId, selectedSessionId],
+    queryFn: () => getChatMessages(instanceId, selectedSessionId!),
+    enabled: !!selectedSessionId,
+  });
+
   // Events for gantt + detail
   const { data: missionEventsData } = useQuery({
     queryKey: ['missionEvents', instanceId, missionId],
@@ -1246,6 +1253,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
   // Build structured session items: reasoning, tool call+result pairs, answers
   type SessionItem =
     | { type: 'instruction'; content: string }
+    | { type: 'system_prompt'; content: string; index: number }
     | { type: 'reasoning'; content: string; duration: string }
     | { type: 'tool'; toolName: string; input: string; result: string; duration: string; toolCallId?: string }
     | { type: 'answer'; content: string }
@@ -1257,6 +1265,12 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     const items: SessionItem[] = [];
     const pendingTools = new Map<string, { toolName: string; input: string; time: number }>();
     let reasoningStartTime: number | null = null;
+
+    // Inject system prompts from session messages
+    const systemMsgs = (sessionMessagesData?.messages ?? []).filter(m => m.role === 'system');
+    for (let idx = 0; idx < systemMsgs.length; idx++) {
+      items.push({ type: 'system_prompt', content: systemMsgs[idx].content, index: idx + 1 });
+    }
 
     // For commander sessions, inject the task objective as the first item
     if (selectedSessionId) {
@@ -1326,7 +1340,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
       items.push({ type: 'tool', toolName: pending.toolName, input: pending.input, result: '', duration: '' });
     }
     return items;
-  }, [sessionDetailEvents, selectedSessionId, allSessions, taskDetail]);
+  }, [sessionDetailEvents, selectedSessionId, allSessions, taskDetail, sessionMessagesData]);
 
 
 
@@ -1430,7 +1444,6 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                 )}
                 <TabsTrigger value="flamegraph" className="text-xs px-2 py-1">Trace</TabsTrigger>
                 <TabsTrigger value="table" className="text-xs px-2 py-1">Table</TabsTrigger>
-                <TabsTrigger value="system-prompts" className="text-xs px-2 py-1">System</TabsTrigger>
                 <TabsTrigger value="turns" className="text-xs px-2 py-1">Costs</TabsTrigger>
                 <TabsTrigger value="events" className="text-xs px-2 py-1">Events</TabsTrigger>
               </TabsList>
@@ -2364,16 +2377,6 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
             </TabsContent>
 
             {/* System prompts */}
-            <TabsContent value="system-prompts" className="flex-1 relative min-h-0 m-0">
-              <div className="absolute inset-0 overflow-y-auto">
-                {commanderSessionId ? (
-                  <SessionMessagesInline instanceId={instanceId} sessionId={commanderSessionId} filter="system" toolResults={allToolResults} />
-                ) : (
-                  <p className="text-xs text-muted-foreground p-4">No session data available.</p>
-                )}
-              </div>
-            </TabsContent>
-
             {/* Events view — task-filtered event log */}
             <TabsContent value="events" className="flex-1 relative min-h-0 m-0">
               <div className="flex-1 relative min-h-0 h-full">
@@ -2475,23 +2478,6 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                 {selection.type === 'session' ? 'Session Detail' : 'Tool Call Detail'}
               </span>
               <div className="flex items-center gap-1">
-                {selection.type === 'session' && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm" className="h-5 w-5 p-0">
-                        <MoreHorizontal className="size-3.5" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="text-xs">
-                      <DropdownMenuItem onClick={() => setSessionModal({ type: 'system', sessionId: selection.sessionId })}>
-                        View System Prompts
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setSessionModal({ type: 'messages', sessionId: selection.sessionId })}>
-                        View Raw Messages
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
                 <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[10px]" onClick={() => selectionStack.length > 1 ? popSelection() : setSelection(null)}>Close</Button>
               </div>
             </div>
@@ -2533,6 +2519,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                   {sessionItems.map((item, i) => {
                     const isLast = i === sessionItems.length - 1;
                     const dotColor =
+                      item.type === 'system_prompt' ? 'bg-amber-400' :
                       item.type === 'instruction' ? 'bg-purple-400' :
                       item.type === 'reasoning' ? 'bg-blue-400' :
                       item.type === 'tool' ? 'bg-teal-400' :
@@ -2553,6 +2540,20 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
 
                         {/* Content */}
                         <div className="flex-1 min-w-0 pb-3">
+                          {item.type === 'system_prompt' && (
+                            <details className="group">
+                              <summary className="text-[11px] text-muted-foreground cursor-pointer font-medium flex items-center gap-1.5 select-none">
+                                System Prompt
+                                <svg className="size-3 text-muted-foreground/40 transition-transform group-open:rotate-90 shrink-0" viewBox="0 0 16 16" fill="currentColor"><path d="M6 3l5 5-5 5V3z"/></svg>
+                              </summary>
+                              <div className="mt-1.5 text-[11px] text-muted-foreground leading-relaxed">
+                                <MarkdownPreview content={item.content.split('\n').slice(0, 30).join('\n')} className="p-0 text-[11px]" />
+                                {item.content.split('\n').length > 30 && (
+                                  <p className="text-[10px] text-muted-foreground/60 mt-1 italic">{item.content.split('\n').length - 30} additional lines...</p>
+                                )}
+                              </div>
+                            </details>
+                          )}
                           {item.type === 'instruction' && (
                             <p className="text-[11px] text-purple-400 italic leading-relaxed line-clamp-3">
                               {item.content}
