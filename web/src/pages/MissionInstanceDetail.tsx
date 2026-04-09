@@ -33,6 +33,7 @@ import { ZoomControls } from '@/components/zoom-controls';
 import type { TaskInfo, MissionEvent, MissionTaskRecord, ToolResultDTO, TaskOutputInfo, SubtaskInfo, DatasetItemInfo } from '@/api/types';
 import { RouterEdge } from '@/components/RouterEdge';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
+import { NodeChip } from '@/components/node-chip';
 import { ImageCarousel, extractImages } from '@/components/ImageCarousel';
 
 
@@ -722,6 +723,8 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     setSelectionStack(prev => prev.length > 1 ? prev.slice(0, -1) : []);
   }, []);
   const [traceView, setTraceView] = useState<'detail' | 'subtasks' | 'output' | 'iterations' | 'flamegraph' | 'table' | 'turns' | 'events'>('detail');
+  const [traceLabelWidth, setTraceLabelWidth] = useState(200);
+  const traceDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const [collapsedRows, setCollapsedRows] = useState<Set<string>>(new Set());
   const [rawOutput, setRawOutput] = useState(false);
   const [expandedTraceRows, setExpandedTraceRows] = useState<Set<string>>(new Set());
@@ -754,6 +757,13 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     queryFn: () => getTaskDetail(instanceId, selectedTaskId!),
     enabled: !!selectedTaskId,
     refetchInterval: isRunning ? 2000 : false,
+  });
+
+  // Session messages for system prompts in detail timeline
+  const { data: sessionMessagesData } = useQuery({
+    queryKey: ['chatMessages', instanceId, selectedSessionId],
+    queryFn: () => getChatMessages(instanceId, selectedSessionId!),
+    enabled: !!selectedSessionId,
   });
 
   // Events for gantt + detail
@@ -810,6 +820,12 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     if (!isParallelIteration || selectedIteration == null) return allSessions;
     return allSessions.filter(s => s.iterationIndex === selectedIteration);
   }, [allSessions, isParallelIteration, selectedIteration]);
+
+  // Commander session for system prompts / raw messages tabs
+  const commanderSessionId = useMemo(() => {
+    const cmdr = sessions.find(s => s.role === 'commander');
+    return cmdr?.id ?? null;
+  }, [sessions]);
 
   // Tool results from API, filtered by iteration
   const allToolResults = taskDetail?.toolResults ?? [];
@@ -935,7 +951,14 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     completeType: string,
     fallbackEnd: number,
   ) => {
-    const calls = events.filter(e => e.eventType === callingType);
+    // Deduplicate calls by toolCallId — keep the last (most complete) event
+    const callsRaw = events.filter(e => e.eventType === callingType);
+    const callsByTcId = new Map<string, typeof callsRaw[0]>();
+    for (const c of callsRaw) {
+      const tcId = String(c.data.toolCallId || c.id);
+      callsByTcId.set(tcId, c);
+    }
+    const calls = [...callsByTcId.values()];
     const completions = [...events.filter(e => e.eventType === completeType)];
     const pairs: { id: string; toolCallId: string; toolName: string; start: number; end: number; sessionId: string }[] = [];
     for (const call of calls) {
@@ -1059,9 +1082,12 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     const segments: AgentSegment[] = [];
     for (const startEvt of agentStarts) {
       const agentName = String(startEvt.data.agentName || 'agent');
+      const taskName = String(startEvt.data.taskName || '');
       const nextStop = stopTimes.find(t => t > startEvt.time);
       const completeEvt = agentCompletes.find(e =>
-        String(e.data.agentName || '') === agentName && e.time >= startEvt.time
+        String(e.data.agentName || '') === agentName &&
+        String(e.data.taskName || '') === taskName &&
+        e.time >= startEvt.time
       );
       const interrupted = nextStop != null && (!completeEvt || nextStop < completeEvt.time);
       if (!interrupted && completeEvt) {
@@ -1227,6 +1253,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
   // Build structured session items: reasoning, tool call+result pairs, answers
   type SessionItem =
     | { type: 'instruction'; content: string }
+    | { type: 'system_prompt'; content: string; index: number }
     | { type: 'reasoning'; content: string; duration: string }
     | { type: 'tool'; toolName: string; input: string; result: string; duration: string; toolCallId?: string }
     | { type: 'answer'; content: string }
@@ -1238,6 +1265,12 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     const items: SessionItem[] = [];
     const pendingTools = new Map<string, { toolName: string; input: string; time: number }>();
     let reasoningStartTime: number | null = null;
+
+    // Inject system prompts from session messages
+    const systemMsgs = (sessionMessagesData?.messages ?? []).filter(m => m.role === 'system');
+    for (let idx = 0; idx < systemMsgs.length; idx++) {
+      items.push({ type: 'system_prompt', content: systemMsgs[idx].content, index: idx + 1 });
+    }
 
     // For commander sessions, inject the task objective as the first item
     if (selectedSessionId) {
@@ -1307,7 +1340,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
       items.push({ type: 'tool', toolName: pending.toolName, input: pending.input, result: '', duration: '' });
     }
     return items;
-  }, [sessionDetailEvents, selectedSessionId, allSessions, taskDetail]);
+  }, [sessionDetailEvents, selectedSessionId, allSessions, taskDetail, sessionMessagesData]);
 
 
 
@@ -1480,6 +1513,14 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                         <div>
                           <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Objective{isIterated && selectedIteration != null ? ` (Iteration ${selectedIteration + 1})` : ''}</div>
                           <div className="text-xs whitespace-pre-wrap bg-muted/50 rounded px-3 py-2">{objective}</div>
+                        </div>
+                      )}
+
+                      {/* Summary */}
+                      {selectedTask.summary && (
+                        <div>
+                          <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Summary</div>
+                          <div className="text-xs whitespace-pre-wrap bg-muted/50 rounded px-3 py-2">{selectedTask.summary}</div>
                         </div>
                       )}
 
@@ -1799,7 +1840,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
               <div className="absolute inset-0 overflow-auto">
                 <div className="flex flex-col min-w-0">
                   {/* Time axis */}
-                  <div style={{ marginLeft: 200 }} className="pr-4">
+                  <div style={{ marginLeft: traceLabelWidth }} className="pr-4">
                     <div className="relative h-6 border-b border-border/30">
                       {ticks.map((tick, i) => (
                         <div key={i} className="absolute top-0 h-full flex flex-col justify-end" style={{ left: `${tick.pct}%`, transform: 'translateX(-50%)' }}>
@@ -1845,7 +1886,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                             isRowSelected && 'bg-muted/50',
                           )}>
                             {/* Left label area */}
-                            <div className="w-[200px] shrink-0 flex items-center gap-1.5 px-3 overflow-hidden">
+                            <div className="shrink-0 flex items-center gap-1.5 px-3 overflow-hidden relative" style={{ width: traceLabelWidth }}>
                               {hasChildren ? (
                                 <button
                                   className="w-4 h-4 flex items-center justify-center rounded hover:bg-muted shrink-0"
@@ -1863,6 +1904,22 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                               <span className={cn('w-2 h-2 rounded-full shrink-0', SPAN_COLORS[row.category])} />
                               <span className="text-xs font-medium truncate">{row.label}</span>
                               <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 ml-auto">{rowDurLabel}</span>
+                              {/* Drag handle */}
+                              <div
+                                className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 z-10"
+                                onPointerDown={(e) => {
+                                  e.preventDefault();
+                                  traceDragRef.current = { startX: e.clientX, startWidth: traceLabelWidth };
+                                  const el = e.currentTarget;
+                                  el.setPointerCapture(e.pointerId);
+                                }}
+                                onPointerMove={(e) => {
+                                  if (!traceDragRef.current) return;
+                                  const delta = e.clientX - traceDragRef.current.startX;
+                                  setTraceLabelWidth(Math.max(120, Math.min(400, traceDragRef.current.startWidth + delta)));
+                                }}
+                                onPointerUp={() => { traceDragRef.current = null; }}
+                              />
                             </div>
                             {/* Timeline area */}
                             <div
@@ -1968,13 +2025,27 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                                   anySelected && 'bg-muted/40',
                                 )}>
                                   {/* Left label area — indented */}
-                                  <div className="w-[200px] shrink-0 flex items-center gap-1.5 pl-10 pr-3 overflow-hidden">
+                                  <div className="shrink-0 flex items-center gap-1.5 pl-10 pr-3 overflow-hidden relative" style={{ width: traceLabelWidth }}>
                                     <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', SPAN_COLORS[category])} />
                                     <span className="text-[11px] text-muted-foreground font-mono truncate">{toolName}()</span>
                                     {spans.length > 1 && (
                                       <span className="text-[9px] text-muted-foreground/50 shrink-0">&times;{spans.length}</span>
                                     )}
                                     <span className="text-[10px] text-muted-foreground/70 tabular-nums shrink-0 ml-auto">{groupDurLabel}</span>
+                                    <div
+                                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 z-10"
+                                      onPointerDown={(e) => {
+                                        e.preventDefault();
+                                        traceDragRef.current = { startX: e.clientX, startWidth: traceLabelWidth };
+                                        e.currentTarget.setPointerCapture(e.pointerId);
+                                      }}
+                                      onPointerMove={(e) => {
+                                        if (!traceDragRef.current) return;
+                                        const delta = e.clientX - traceDragRef.current.startX;
+                                        setTraceLabelWidth(Math.max(120, Math.min(400, traceDragRef.current.startWidth + delta)));
+                                      }}
+                                      onPointerUp={() => { traceDragRef.current = null; }}
+                                    />
                                   </div>
                                   {/* Timeline area */}
                                   <div className="flex-1 relative h-full cursor-pointer overflow-hidden">
@@ -2305,6 +2376,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
               })()}
             </TabsContent>
 
+            {/* System prompts */}
             {/* Events view — task-filtered event log */}
             <TabsContent value="events" className="flex-1 relative min-h-0 m-0">
               <div className="flex-1 relative min-h-0 h-full">
@@ -2406,23 +2478,6 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                 {selection.type === 'session' ? 'Session Detail' : 'Tool Call Detail'}
               </span>
               <div className="flex items-center gap-1">
-                {selection.type === 'session' && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm" className="h-5 w-5 p-0">
-                        <MoreHorizontal className="size-3.5" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="text-xs">
-                      <DropdownMenuItem onClick={() => setSessionModal({ type: 'system', sessionId: selection.sessionId })}>
-                        View System Prompts
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setSessionModal({ type: 'messages', sessionId: selection.sessionId })}>
-                        View Raw Messages
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
                 <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[10px]" onClick={() => selectionStack.length > 1 ? popSelection() : setSelection(null)}>Close</Button>
               </div>
             </div>
@@ -2464,6 +2519,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                   {sessionItems.map((item, i) => {
                     const isLast = i === sessionItems.length - 1;
                     const dotColor =
+                      item.type === 'system_prompt' ? 'bg-amber-400' :
                       item.type === 'instruction' ? 'bg-purple-400' :
                       item.type === 'reasoning' ? 'bg-blue-400' :
                       item.type === 'tool' ? 'bg-teal-400' :
@@ -2484,6 +2540,20 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
 
                         {/* Content */}
                         <div className="flex-1 min-w-0 pb-3">
+                          {item.type === 'system_prompt' && (
+                            <details className="group">
+                              <summary className="text-[11px] text-muted-foreground cursor-pointer font-medium flex items-center gap-1.5 select-none">
+                                System Prompt
+                                <svg className="size-3 text-muted-foreground/40 transition-transform group-open:rotate-90 shrink-0" viewBox="0 0 16 16" fill="currentColor"><path d="M6 3l5 5-5 5V3z"/></svg>
+                              </summary>
+                              <div className="mt-1.5 text-[11px] text-muted-foreground leading-relaxed">
+                                <MarkdownPreview content={item.content.split('\n').slice(0, 30).join('\n')} className="p-0 text-[11px]" />
+                                {item.content.split('\n').length > 30 && (
+                                  <p className="text-[10px] text-muted-foreground/60 mt-1 italic">{item.content.split('\n').length - 30} additional lines...</p>
+                                )}
+                              </div>
+                            </details>
+                          )}
                           {item.type === 'instruction' && (
                             <p className="text-[11px] text-purple-400 italic leading-relaxed line-clamp-3">
                               {item.content}
@@ -3338,6 +3408,185 @@ export function MissionInstanceDetail() {
         </Tabs>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Session Messages Inline (for tabs)
+// ---------------------------------------------------------------------------
+
+interface MessagePart {
+  type: 'text' | 'tool_use';
+  content: string;
+  toolName?: string;
+  toolInput?: string;
+}
+
+function parseMessageParts(content: string): MessagePart[] {
+  const parts: MessagePart[] = [];
+  const regex = /\[tool_use: (\w+)\(([^]*?)\)\]/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: 'text', content: content.slice(lastIndex, match.index) });
+    }
+    parts.push({
+      type: 'tool_use',
+      content: match[0],
+      toolName: match[1],
+      toolInput: match[2] || undefined,
+    });
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < content.length) {
+    parts.push({ type: 'text', content: content.slice(lastIndex) });
+  }
+  return parts;
+}
+
+function formatToolInput(input: string): string {
+  try {
+    return JSON.stringify(JSON.parse(input), null, 2);
+  } catch {
+    return input;
+  }
+}
+
+function ToolCallBlock({ name, input }: { name: string; input?: string }) {
+  const [open, setOpen] = useState(false);
+  const formatted = input ? formatToolInput(input) : null;
+  const isSmall = formatted && formatted.length < 60 && !formatted.includes('\n');
+
+  return (
+    <div className="rounded bg-muted/50 border border-border/50 text-xs">
+      <button
+        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-muted/80 transition-colors"
+        onClick={() => formatted && setOpen(!open)}
+      >
+        <NodeChip variant="tool" label="tool call" />
+        <span className="text-xs font-mono font-medium">{name}</span>
+        {isSmall && <span className="text-muted-foreground font-mono truncate">{formatted}</span>}
+        {formatted && !isSmall && (
+          <span className="ml-auto text-[10px] text-muted-foreground">{open ? '▲' : '▼'}</span>
+        )}
+      </button>
+      {open && formatted && !isSmall && (
+        <pre className="px-2.5 py-2 border-t border-border/30 font-mono text-[10px] text-muted-foreground whitespace-pre-wrap break-all">{formatted}</pre>
+      )}
+    </div>
+  );
+}
+
+function SessionMessagesInline({
+  instanceId,
+  sessionId,
+  filter,
+}: {
+  instanceId: string;
+  sessionId: string;
+  filter: 'system' | 'messages';
+  toolResults?: ToolResultDTO[];
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['chatMessages', instanceId, sessionId],
+    queryFn: () => getChatMessages(instanceId, sessionId),
+    enabled: !!sessionId,
+  });
+  const [expandedMsg, setExpandedMsg] = useState<{ role: string; content: string } | null>(null);
+
+  const messages = data?.messages ?? [];
+  const filtered = filter === 'system'
+    ? messages.filter(m => m.role === 'system')
+    : messages.filter(m => m.role !== 'system');
+
+  const roleBorder = (role: string) =>
+    role === 'system' ? 'border-l-purple-400' :
+    role === 'assistant' ? 'border-l-emerald-400' :
+    role === 'user' ? 'border-l-sky-400' :
+    role === 'tool_result' ? 'border-l-orange-400' : 'border-l-muted-foreground';
+
+  const roleLabel = (role: string) =>
+    role === 'system' ? 'text-purple-400' :
+    role === 'assistant' ? 'text-emerald-400' :
+    role === 'user' ? 'text-sky-400' :
+    role === 'tool_result' ? 'text-orange-400' : 'text-muted-foreground';
+
+  const MAX_LINES = 30;
+
+  if (isLoading) return <p className="text-xs text-muted-foreground p-4">Loading...</p>;
+  if (filtered.length === 0) return <p className="text-xs text-muted-foreground p-4">No {filter === 'system' ? 'system prompts' : 'messages'} found.</p>;
+
+  return (
+    <>
+      <div className="px-4 py-2 space-y-3">
+        {filtered.map((msg, i) => {
+          // Split content into text parts and tool_use parts
+          const parts = parseMessageParts(msg.content);
+          const fullText = parts.filter(p => p.type === 'text').map(p => p.content).join('\n');
+          const lines = fullText.split('\n');
+          const isLong = lines.length > MAX_LINES;
+          const truncatedText = isLong ? lines.slice(0, MAX_LINES).join('\n') : fullText;
+          const toolCalls = parts.filter(p => p.type === 'tool_use');
+
+          return (
+            <div key={i} className={cn(
+              'border border-border/50 bg-muted/20 border-l-2',
+              roleBorder(msg.role),
+            )}>
+              <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/30">
+                <span className={cn('text-[10px] font-semibold uppercase tracking-wider', roleLabel(msg.role))}>
+                  {filter === 'system' ? `System Prompt ${i + 1}` : msg.role}
+                </span>
+                {msg.createdAt && (
+                  <span className="text-[10px] text-muted-foreground/50 tabular-nums">
+                    {new Date(msg.createdAt).toLocaleTimeString()}
+                  </span>
+                )}
+                {isLong && (
+                  <button
+                    className="ml-auto text-[10px] font-medium text-primary-foreground bg-primary hover:bg-primary/90 transition-colors px-2 py-0.5 rounded"
+                    onClick={() => setExpandedMsg({ role: msg.role, content: msg.content })}
+                  >
+                    Show more
+                  </button>
+                )}
+              </div>
+              {truncatedText.trim() && (
+                <div className="px-3 py-2">
+                  <MarkdownPreview content={truncatedText} className="p-0 text-xs" />
+                  {isLong && (
+                    <p className="text-[10px] text-muted-foreground/60 mt-2 italic">{lines.length - MAX_LINES} additional lines...</p>
+                  )}
+                </div>
+              )}
+              {toolCalls.length > 0 && (
+                <div className={cn('px-3 py-2 space-y-1.5', truncatedText.trim() && 'border-t border-border/30')}>
+                  {toolCalls.map((tc, j) => (
+                    <ToolCallBlock key={j} name={tc.toolName ?? ''} input={tc.toolInput} />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <Dialog open={!!expandedMsg} onOpenChange={(open) => { if (!open) setExpandedMsg(null); }}>
+        <DialogContent className="sm:max-w-4xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-sm">
+              <span className={cn('uppercase tracking-wider', roleLabel(expandedMsg?.role ?? ''))}>
+                {expandedMsg?.role}
+              </span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="overflow-y-auto flex-1 min-h-0">
+            <MarkdownPreview content={expandedMsg?.content ?? ''} className="text-sm" />
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

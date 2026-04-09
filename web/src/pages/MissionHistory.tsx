@@ -43,7 +43,7 @@ export function MissionHistory() {
   }, [history]);
 
   return (
-    <div className="p-8 w-full max-w-5xl mx-auto">
+    <div className="p-8 w-full max-w-6xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">Mission History</h1>
 
       {!instance?.connected && (

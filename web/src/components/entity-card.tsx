@@ -25,9 +25,9 @@ export function EntityCard({ name, description, variant, badges, graph, action, 
         className,
       )}
     >
-      {/* Mini graph preview — fills top of card edge-to-edge */}
+      {/* Mini graph preview */}
       {graph && graph.nodes.length > 0 && (
-        <div className="bg-muted/40 border-b border-border/50">
+        <div className="bg-gradient-to-b from-muted/60 to-muted/20 border-b border-border/50">
           <MiniGraph nodes={graph.nodes} edges={graph.edges} width={300} height={100} className="w-full" />
         </div>
       )}
