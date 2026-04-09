@@ -14,7 +14,7 @@ import {
 } from '@xyflow/react';
 import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
-import { ChevronsDown, ChevronsUp, ChevronDown, Repeat, ChevronLeft, ChevronRight, HelpCircle, Square, RotateCcw, MoreHorizontal, ShieldCheck } from 'lucide-react';
+import { ChevronsDown, ChevronsUp, ChevronDown, Repeat, ChevronLeft, ChevronRight, HelpCircle, Square, RotateCcw, ShieldCheck } from 'lucide-react';
 
 import { getInstance, getMissionDetail, getMissionEvents, getTaskDetail, getRunDatasets, getDatasetItems, stopMission, resumeMission, getChatMessages } from '@/api/client';
 import { subscribeMissionEvents } from '@/api/sse';
@@ -23,7 +23,6 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 import { StatusBadge, formatTime, formatDuration } from '@/lib/mission-utils';
@@ -33,7 +32,6 @@ import { ZoomControls } from '@/components/zoom-controls';
 import type { TaskInfo, MissionEvent, MissionTaskRecord, ToolResultDTO, TaskOutputInfo, SubtaskInfo, DatasetItemInfo } from '@/api/types';
 import { RouterEdge } from '@/components/RouterEdge';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
-import { NodeChip } from '@/components/node-chip';
 import { ImageCarousel, extractImages } from '@/components/ImageCarousel';
 
 
@@ -820,12 +818,6 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     if (!isParallelIteration || selectedIteration == null) return allSessions;
     return allSessions.filter(s => s.iterationIndex === selectedIteration);
   }, [allSessions, isParallelIteration, selectedIteration]);
-
-  // Commander session for system prompts / raw messages tabs
-  const commanderSessionId = useMemo(() => {
-    const cmdr = sessions.find(s => s.role === 'commander');
-    return cmdr?.id ?? null;
-  }, [sessions]);
 
   // Tool results from API, filtered by iteration
   const allToolResults = taskDetail?.toolResults ?? [];
@@ -3412,184 +3404,6 @@ export function MissionInstanceDetail() {
 }
 
 // ---------------------------------------------------------------------------
-// Session Messages Inline (for tabs)
-// ---------------------------------------------------------------------------
-
-interface MessagePart {
-  type: 'text' | 'tool_use';
-  content: string;
-  toolName?: string;
-  toolInput?: string;
-}
-
-function parseMessageParts(content: string): MessagePart[] {
-  const parts: MessagePart[] = [];
-  const regex = /\[tool_use: (\w+)\(([^]*?)\)\]/g;
-  let lastIndex = 0;
-  let match;
-
-  while ((match = regex.exec(content)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push({ type: 'text', content: content.slice(lastIndex, match.index) });
-    }
-    parts.push({
-      type: 'tool_use',
-      content: match[0],
-      toolName: match[1],
-      toolInput: match[2] || undefined,
-    });
-    lastIndex = regex.lastIndex;
-  }
-  if (lastIndex < content.length) {
-    parts.push({ type: 'text', content: content.slice(lastIndex) });
-  }
-  return parts;
-}
-
-function formatToolInput(input: string): string {
-  try {
-    return JSON.stringify(JSON.parse(input), null, 2);
-  } catch {
-    return input;
-  }
-}
-
-function ToolCallBlock({ name, input }: { name: string; input?: string }) {
-  const [open, setOpen] = useState(false);
-  const formatted = input ? formatToolInput(input) : null;
-  const isSmall = formatted && formatted.length < 60 && !formatted.includes('\n');
-
-  return (
-    <div className="rounded bg-muted/50 border border-border/50 text-xs">
-      <button
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-muted/80 transition-colors"
-        onClick={() => formatted && setOpen(!open)}
-      >
-        <NodeChip variant="tool" label="tool call" />
-        <span className="text-xs font-mono font-medium">{name}</span>
-        {isSmall && <span className="text-muted-foreground font-mono truncate">{formatted}</span>}
-        {formatted && !isSmall && (
-          <span className="ml-auto text-[10px] text-muted-foreground">{open ? '▲' : '▼'}</span>
-        )}
-      </button>
-      {open && formatted && !isSmall && (
-        <pre className="px-2.5 py-2 border-t border-border/30 font-mono text-[10px] text-muted-foreground whitespace-pre-wrap break-all">{formatted}</pre>
-      )}
-    </div>
-  );
-}
-
-function SessionMessagesInline({
-  instanceId,
-  sessionId,
-  filter,
-}: {
-  instanceId: string;
-  sessionId: string;
-  filter: 'system' | 'messages';
-  toolResults?: ToolResultDTO[];
-}) {
-  const { data, isLoading } = useQuery({
-    queryKey: ['chatMessages', instanceId, sessionId],
-    queryFn: () => getChatMessages(instanceId, sessionId),
-    enabled: !!sessionId,
-  });
-  const [expandedMsg, setExpandedMsg] = useState<{ role: string; content: string } | null>(null);
-
-  const messages = data?.messages ?? [];
-  const filtered = filter === 'system'
-    ? messages.filter(m => m.role === 'system')
-    : messages.filter(m => m.role !== 'system');
-
-  const roleBorder = (role: string) =>
-    role === 'system' ? 'border-l-purple-400' :
-    role === 'assistant' ? 'border-l-emerald-400' :
-    role === 'user' ? 'border-l-sky-400' :
-    role === 'tool_result' ? 'border-l-orange-400' : 'border-l-muted-foreground';
-
-  const roleLabel = (role: string) =>
-    role === 'system' ? 'text-purple-400' :
-    role === 'assistant' ? 'text-emerald-400' :
-    role === 'user' ? 'text-sky-400' :
-    role === 'tool_result' ? 'text-orange-400' : 'text-muted-foreground';
-
-  const MAX_LINES = 30;
-
-  if (isLoading) return <p className="text-xs text-muted-foreground p-4">Loading...</p>;
-  if (filtered.length === 0) return <p className="text-xs text-muted-foreground p-4">No {filter === 'system' ? 'system prompts' : 'messages'} found.</p>;
-
-  return (
-    <>
-      <div className="px-4 py-2 space-y-3">
-        {filtered.map((msg, i) => {
-          // Split content into text parts and tool_use parts
-          const parts = parseMessageParts(msg.content);
-          const fullText = parts.filter(p => p.type === 'text').map(p => p.content).join('\n');
-          const lines = fullText.split('\n');
-          const isLong = lines.length > MAX_LINES;
-          const truncatedText = isLong ? lines.slice(0, MAX_LINES).join('\n') : fullText;
-          const toolCalls = parts.filter(p => p.type === 'tool_use');
-
-          return (
-            <div key={i} className={cn(
-              'border border-border/50 bg-muted/20 border-l-2',
-              roleBorder(msg.role),
-            )}>
-              <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/30">
-                <span className={cn('text-[10px] font-semibold uppercase tracking-wider', roleLabel(msg.role))}>
-                  {filter === 'system' ? `System Prompt ${i + 1}` : msg.role}
-                </span>
-                {msg.createdAt && (
-                  <span className="text-[10px] text-muted-foreground/50 tabular-nums">
-                    {new Date(msg.createdAt).toLocaleTimeString()}
-                  </span>
-                )}
-                {isLong && (
-                  <button
-                    className="ml-auto text-[10px] font-medium text-primary-foreground bg-primary hover:bg-primary/90 transition-colors px-2 py-0.5 rounded"
-                    onClick={() => setExpandedMsg({ role: msg.role, content: msg.content })}
-                  >
-                    Show more
-                  </button>
-                )}
-              </div>
-              {truncatedText.trim() && (
-                <div className="px-3 py-2">
-                  <MarkdownPreview content={truncatedText} className="p-0 text-xs" />
-                  {isLong && (
-                    <p className="text-[10px] text-muted-foreground/60 mt-2 italic">{lines.length - MAX_LINES} additional lines...</p>
-                  )}
-                </div>
-              )}
-              {toolCalls.length > 0 && (
-                <div className={cn('px-3 py-2 space-y-1.5', truncatedText.trim() && 'border-t border-border/30')}>
-                  {toolCalls.map((tc, j) => (
-                    <ToolCallBlock key={j} name={tc.toolName ?? ''} input={tc.toolInput} />
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <Dialog open={!!expandedMsg} onOpenChange={(open) => { if (!open) setExpandedMsg(null); }}>
-        <DialogContent className="sm:max-w-4xl max-h-[80vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="text-sm">
-              <span className={cn('uppercase tracking-wider', roleLabel(expandedMsg?.role ?? ''))}>
-                {expandedMsg?.role}
-              </span>
-            </DialogTitle>
-          </DialogHeader>
-          <div className="overflow-y-auto flex-1 min-h-0">
-            <MarkdownPreview content={expandedMsg?.content ?? ''} className="text-sm" />
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Session Messages / System Prompts Modal
 // ---------------------------------------------------------------------------
