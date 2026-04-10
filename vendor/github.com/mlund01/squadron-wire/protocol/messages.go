@@ -150,6 +150,7 @@ type PluginInfo struct {
 	Path    string     `json:"path"`
 	Version string     `json:"version,omitempty"`
 	Builtin bool       `json:"builtin,omitempty"`
+	Kind    string     `json:"kind,omitempty"` // "builtin", "plugin", or "mcp"
 	Tools   []ToolInfo `json:"tools,omitempty"`
 }
 

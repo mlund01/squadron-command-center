@@ -723,6 +723,17 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
   const [traceView, setTraceView] = useState<'detail' | 'subtasks' | 'output' | 'iterations' | 'flamegraph' | 'table' | 'turns' | 'events'>('detail');
   const [traceLabelWidth, setTraceLabelWidth] = useState(200);
   const traceDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const traceTimelineRef = useRef<HTMLDivElement | null>(null);
+  const [traceTimelineWidth, setTraceTimelineWidth] = useState(0);
+  useEffect(() => {
+    const el = traceTimelineRef.current;
+    if (!el) return;
+    const measure = () => setTraceTimelineWidth(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const [collapsedRows, setCollapsedRows] = useState<Set<string>>(new Set());
   const [rawOutput, setRawOutput] = useState(false);
   const [expandedTraceRows, setExpandedTraceRows] = useState<Set<string>>(new Set());
@@ -1854,6 +1865,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
 
                   {/* Trace rows */}
                   <div
+                    ref={traceTimelineRef}
                     className="relative"
                   >
                     {traceRows.map(row => {
@@ -1943,20 +1955,20 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                                 const sLeft = Math.max(0, segLeft);
                                 const sWidth = Math.min(100 - sLeft, Math.max(0.3, segLeft + segWidth - sLeft));
                                 return (
-                                  <div key={`seg-${si}`} className="absolute top-1.5 bottom-1.5 overflow-hidden" style={{
-                                    left: `${sLeft}%`, width: `${sWidth}%`, minWidth: '4px',
-                                    backgroundColor: SPAN_COLORS_HEX[row.category],
-                                    borderRadius: '4px',
-                                  }}>
-                                    <div className="relative flex items-center h-full">
-                                      {si === 0 && (
-                                        <span className="text-[10px] text-white font-medium pl-2 truncate pointer-events-none whitespace-nowrap relative z-10">
-                                          {row.label}
-                                        </span>
-                                      )}
-                                      {si === 0 && clampedWidth > 10 && (
-                                        <span className="text-[9px] text-white/70 ml-1.5 pr-2 shrink-0 pointer-events-none relative z-10">{rowDurLabel}</span>
-                                      )}
+                                  <div
+                                    key={`seg-${si}`}
+                                    className={cn(
+                                      'absolute top-1.5 bottom-1.5 overflow-hidden',
+                                      isRowSelected && 'outline outline-2 outline-foreground',
+                                    )}
+                                    style={{
+                                      left: `${sLeft}%`, width: `${sWidth}%`, minWidth: '4px',
+                                      backgroundColor: SPAN_COLORS_HEX[row.category],
+                                      borderRadius: '3px',
+                                      outlineOffset: '-2px',
+                                    }}
+                                  >
+                                    <div className="relative flex items-center h-full overflow-hidden" style={{ borderRadius: '3px' }}>
                                       {/* Reasoning ranges inside span */}
                                       {si === 0 && reasoningRanges.get(row.id)?.map((range, ri) => {
                                         const spanStart = row.segments?.[0]?.start ?? row.start;
@@ -1968,15 +1980,10 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                                         if (pctLeft > 100 || pctLeft + pctWidth < 0) return null;
                                         const cLeft = Math.max(0, pctLeft);
                                         const cWidth = Math.min(100 - cLeft, Math.max(0.5, pctWidth));
-                                        const isAtStart = cLeft <= 0.5;
-                                        const isAtEnd = cLeft + cWidth >= 99.5;
-                                        const radius = isAtStart && isAtEnd ? 'rounded' :
-                                          isAtStart ? 'rounded-l' :
-                                          isAtEnd ? 'rounded-r' : '';
                                         return (
                                           <div
                                             key={`r-${ri}`}
-                                            className={cn('absolute top-0 bottom-0 bg-blue-300/20 cursor-pointer', radius)}
+                                            className="absolute top-0 bottom-0 bg-blue-300/20 cursor-pointer"
                                             style={{ left: `${cLeft}%`, width: `${cWidth}%` }}
                                             onClick={(e) => {
                                               e.stopPropagation();
@@ -2003,7 +2010,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                               if (group) group.push(child);
                               else grouped.set(child.label, [child]);
                             }
-                            return [...grouped.entries()].map(([toolName, spans]) => {
+                            return [...grouped.entries()].map(([toolName, spans], groupIdx) => {
                               const totalMs = spans.reduce((sum, s) => sum + (s.end - s.start), 0);
                               const groupDurLabel = totalMs < 1000 ? `${Math.round(totalMs)}ms` : `${(totalMs / 1000).toFixed(3)}s`;
                               const anySelected = spans.some(child =>
@@ -2011,13 +2018,60 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                               );
                               const category = spans[0].category;
 
+                              // Pixel-space lane assignment: each span occupies a pixel range
+                              // (start..end clamped to a 4px minimum) inside the timeline column.
+                              // Sweep spans in start order and assign each to the lowest lane
+                              // whose previous occupant has cleared. This catches collisions
+                              // caused by the min-width clamp on sub-millisecond bars.
+                              const SPAN_MIN_PX = 4;
+                              const PIXEL_GAP = 1; // require ≥1px gap before reusing a lane
+                              const timelinePx = Math.max(0, traceTimelineWidth - traceLabelWidth);
+                              const sortedSpans = [...spans].sort((a, b) => a.start - b.start);
+                              const spanLane = new Map<string, number>();
+                              const laneEndsPx: number[] = [];
+                              for (const s of sortedSpans) {
+                                const leftPct = toPercent(s.start);
+                                const rightPct = toPercent(s.end);
+                                const leftPx = (leftPct / 100) * timelinePx;
+                                const rawRightPx = (rightPct / 100) * timelinePx;
+                                const rightPx = Math.max(rawRightPx, leftPx + SPAN_MIN_PX);
+                                let assigned = -1;
+                                for (let li = 0; li < laneEndsPx.length; li++) {
+                                  if (laneEndsPx[li] + PIXEL_GAP <= leftPx) {
+                                    assigned = li;
+                                    break;
+                                  }
+                                }
+                                if (assigned === -1) {
+                                  assigned = laneEndsPx.length;
+                                  laneEndsPx.push(rightPx);
+                                } else {
+                                  laneEndsPx[assigned] = rightPx;
+                                }
+                                spanLane.set(s.id, assigned);
+                              }
+                              const laneCount = Math.max(1, laneEndsPx.length);
+                              const SINGLE_LANE_HEIGHT = 32;
+                              const LANE_HEIGHT = 14;
+                              const LANE_GAP = 2;
+                              const LANE_PADDING = 6;
+                              const rowHeight = laneCount === 1
+                                ? SINGLE_LANE_HEIGHT
+                                : LANE_PADDING * 2 + laneCount * LANE_HEIGHT + (laneCount - 1) * LANE_GAP;
+
                               return (
-                                <div key={toolName} className={cn(
-                                  'flex items-center h-8 border-b border-border/10 hover:bg-muted/20 transition-colors',
-                                  anySelected && 'bg-muted/40',
-                                )}>
+                                <div
+                                  key={toolName}
+                                  className={cn(
+                                    'flex items-center border-b border-border/40',
+                                    groupIdx % 2 === 1
+                                      ? 'bg-muted dark:bg-muted/80'
+                                      : 'bg-background',
+                                  )}
+                                  style={{ height: rowHeight }}
+                                >
                                   {/* Left label area — indented */}
-                                  <div className="shrink-0 flex items-center gap-1.5 pl-10 pr-3 overflow-hidden relative" style={{ width: traceLabelWidth }}>
+                                  <div className="shrink-0 flex items-center gap-1.5 pl-10 pr-3 overflow-hidden relative h-full" style={{ width: traceLabelWidth }}>
                                     <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', SPAN_COLORS[category])} />
                                     <span className="text-[11px] text-muted-foreground font-mono truncate">{toolName}()</span>
                                     {spans.length > 1 && (
@@ -2040,7 +2094,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                                     />
                                   </div>
                                   {/* Timeline area */}
-                                  <div className="flex-1 relative h-full cursor-pointer overflow-hidden">
+                                  <div className="flex-1 relative h-full overflow-hidden">
                                     {/* Gridlines */}
                                     {ticks.map((tick, i) => (
                                       <div key={i} className="absolute top-0 h-full w-px bg-border/10" style={{ left: `${tick.pct}%` }} />
@@ -2051,7 +2105,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                                       if (pct < 0 || pct > 100) return null;
                                       return <div key={`brk-${i}`} className="absolute top-0 h-full w-px bg-orange-400/50 z-20" style={{ left: `${pct}%` }} />;
                                     })}
-                                    {/* Tool span bars — one per call */}
+                                    {/* Tool span bars — one per call, stacked into pixel-space lanes when colliding */}
                                     {spans.map(child => {
                                       const childLeft = toPercent(child.start);
                                       const childWidth = toPercent(child.end) - childLeft;
@@ -2061,29 +2115,35 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                                       const isThisSelected = child.toolResult && selection?.type === 'tool' && (selection.spanId ? selection.spanId === child.id : selection.toolResult.id === child.toolResult.id);
                                       const spanMs = child.end - child.start;
                                       const spanDur = spanMs < 1000 ? `${Math.round(spanMs)}ms` : `${(spanMs / 1000).toFixed(3)}s`;
+                                      const lane = spanLane.get(child.id) ?? 0;
+                                      const singleLane = laneCount === 1;
+                                      const spanHeight = singleLane ? 20 : LANE_HEIGHT;
+                                      const spanTop = singleLane
+                                        ? (SINGLE_LANE_HEIGHT - 20) / 2
+                                        : LANE_PADDING + lane * (LANE_HEIGHT + LANE_GAP);
                                       return (
                                         <div
                                           key={child.id}
-                                          className="absolute top-1.5 bottom-1.5 flex items-center overflow-hidden"
+                                          className={cn(
+                                            'absolute flex items-center overflow-hidden cursor-pointer hover:brightness-125',
+                                            isThisSelected && 'outline outline-2 outline-foreground',
+                                          )}
                                           title={`${child.label}() — ${spanDur}`}
                                           style={{
                                             left: `${cLeft}%`, width: `${cWidth}%`, minWidth: '4px',
+                                            top: spanTop,
+                                            height: spanHeight,
                                             backgroundColor: SPAN_COLORS_HEX[child.category],
                                             borderRadius: '3px',
                                             opacity: isThisSelected ? 1 : 0.85,
-                                            outline: isThisSelected ? '2px solid white' : 'none',
-                                            outlineOffset: '-1px',
+                                            outlineOffset: '-2px',
                                             zIndex: isThisSelected ? 10 : 1,
                                           }}
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             if (child.toolResult) setSelection({ type: 'tool', toolResult: child.toolResult, spanId: child.id });
                                           }}
-                                        >
-                                          <span className="text-[9px] text-white/90 font-medium pl-1.5 truncate pointer-events-none whitespace-nowrap">
-                                            {child.label}()
-                                          </span>
-                                        </div>
+                                        />
                                       );
                                     })}
                                   </div>

@@ -30,10 +30,11 @@ const (
 	EventIterationAnswer    MissionEventType = "iteration_answer"
 
 	// Commander events
-	EventCommanderReasoning   MissionEventType = "commander_reasoning"
-	EventCommanderAnswer      MissionEventType = "commander_answer"
-	EventCommanderCallingTool MissionEventType = "commander_calling_tool"
-	EventCommanderToolComplete MissionEventType = "commander_tool_complete"
+	EventCommanderReasoningStarted   MissionEventType = "commander_reasoning_started"
+	EventCommanderReasoningCompleted MissionEventType = "commander_reasoning_completed"
+	EventCommanderAnswer             MissionEventType = "commander_answer"
+	EventCommanderCallingTool        MissionEventType = "commander_calling_tool"
+	EventCommanderToolComplete       MissionEventType = "commander_tool_complete"
 
 	// Compaction events
 	EventCompaction MissionEventType = "compaction"
@@ -42,12 +43,15 @@ const (
 	EventSessionTurn MissionEventType = "session_turn"
 
 	// Agent events
-	EventAgentStarted      MissionEventType = "agent_started"
-	EventAgentCompleted    MissionEventType = "agent_completed"
-	EventAgentThinking     MissionEventType = "agent_thinking"
-	EventAgentCallingTool  MissionEventType = "agent_calling_tool"
-	EventAgentToolComplete MissionEventType = "agent_tool_complete"
-	EventAgentAnswer       MissionEventType = "agent_answer"
+	EventAgentStarted              MissionEventType = "agent_started"
+	EventAgentCompleted            MissionEventType = "agent_completed"
+	EventAgentReasoningStarted     MissionEventType = "agent_reasoning_started"
+	EventAgentReasoningCompleted   MissionEventType = "agent_reasoning_completed"
+	EventAgentCallingTool          MissionEventType = "agent_calling_tool"
+	EventAgentToolComplete         MissionEventType = "agent_tool_complete"
+	EventAgentAnswer               MissionEventType = "agent_answer"
+	EventAgentAskCommander         MissionEventType = "agent_ask_commander"
+	EventAgentCommanderResponse    MissionEventType = "agent_commander_response"
 	EventRouteChosen       MissionEventType = "route_chosen"
 
 	// Schedule/trigger events
@@ -155,7 +159,11 @@ type IterationAnswerData struct {
 
 // Commander events
 
-type CommanderReasoningData struct {
+type CommanderReasoningStartedData struct {
+	TaskName string `json:"taskName"`
+}
+
+type CommanderReasoningCompletedData struct {
 	TaskName string `json:"taskName"`
 	Content  string `json:"content"`
 }
@@ -205,7 +213,7 @@ type SessionTurnData struct {
 	SystemMessages           int     `json:"systemMessages"`
 	PayloadBytes             int     `json:"payloadBytes"`
 	TurnDurationMs           int64   `json:"turnDurationMs"`
-	Cost                     float64 `json:"cost,omitempty"`
+	Cost                     float64 `json:"cost,omitempty"`     // Total cost for this turn in USD
 	InputCost                float64 `json:"inputCost,omitempty"`
 	OutputCost               float64 `json:"outputCost,omitempty"`
 	CacheReadCost            float64 `json:"cacheReadCost,omitempty"`
@@ -215,8 +223,9 @@ type SessionTurnData struct {
 // Agent events
 
 type AgentStartedData struct {
-	TaskName  string `json:"taskName"`
-	AgentName string `json:"agentName"`
+	TaskName    string `json:"taskName"`
+	AgentName   string `json:"agentName"`
+	Instruction string `json:"instruction,omitempty"`
 }
 
 type AgentCompletedData struct {
@@ -224,7 +233,12 @@ type AgentCompletedData struct {
 	AgentName string `json:"agentName"`
 }
 
-type AgentThinkingData struct {
+type AgentReasoningStartedData struct {
+	TaskName  string `json:"taskName"`
+	AgentName string `json:"agentName"`
+}
+
+type AgentReasoningCompletedData struct {
 	TaskName  string `json:"taskName"`
 	AgentName string `json:"agentName"`
 	Content   string `json:"content"`
@@ -247,6 +261,18 @@ type AgentToolCompleteData struct {
 }
 
 type AgentAnswerData struct {
+	TaskName  string `json:"taskName"`
+	AgentName string `json:"agentName"`
+	Content   string `json:"content"`
+}
+
+type AgentAskCommanderData struct {
+	TaskName  string `json:"taskName"`
+	AgentName string `json:"agentName"`
+	Content   string `json:"content"`
+}
+
+type AgentCommanderResponseData struct {
 	TaskName  string `json:"taskName"`
 	AgentName string `json:"agentName"`
 	Content   string `json:"content"`

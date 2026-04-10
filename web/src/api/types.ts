@@ -133,6 +133,7 @@ export interface PluginInfo {
   path: string;
   version?: string;
   builtin?: boolean;
+  kind?: 'builtin' | 'plugin' | 'mcp';
   tools?: ToolInfo[];
 }
 
