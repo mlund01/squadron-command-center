@@ -1876,12 +1876,6 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                       const isRowSelected = (row.sessionId && selection?.type === 'session' && selection.sessionId === row.sessionId)
                         || (row.category === 'agent' && selection?.type === 'session' && selection.agentName && row.label === selection.agentName);
 
-                      // Span positioning for this row
-                      const rowLeft = toPercent(row.start);
-                      const rowWidth = toPercent(row.end) - rowLeft;
-                      const clampedLeft = Math.max(0, rowLeft);
-                      const clampedWidth = Math.min(100 - clampedLeft, Math.max(0.3, rowLeft + rowWidth - clampedLeft));
-
                       return (
                         <div key={row.id}>
                           {/* Main session row */}
@@ -2013,9 +2007,6 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                             return [...grouped.entries()].map(([toolName, spans], groupIdx) => {
                               const totalMs = spans.reduce((sum, s) => sum + (s.end - s.start), 0);
                               const groupDurLabel = totalMs < 1000 ? `${Math.round(totalMs)}ms` : `${(totalMs / 1000).toFixed(3)}s`;
-                              const anySelected = spans.some(child =>
-                                child.toolResult && selection?.type === 'tool' && (selection.spanId ? selection.spanId === child.id : selection.toolResult.id === child.toolResult.id)
-                              );
                               const category = spans[0].category;
 
                               // Pixel-space lane assignment: each span occupies a pixel range
