@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { listInstances, reloadConfig } from '@/api/client';
+import { listInstances, reloadConfig, getCurrentUser, logout } from '@/api/client';
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,
@@ -23,7 +24,7 @@ import {
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Rocket, Bot, Puzzle, RefreshCw, History, FileCode, FolderOpen, KeyRound, AlertTriangle, DollarSign, Sparkles } from 'lucide-react';
+import { Rocket, Bot, Puzzle, RefreshCw, History, FileCode, FolderOpen, KeyRound, AlertTriangle, DollarSign, Sparkles, LogOut } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
@@ -65,6 +66,14 @@ export function AppSidebar() {
     queryKey: ['instances'],
     queryFn: listInstances,
     refetchInterval: 5000,
+  });
+
+  // Current user — null when auth is disabled (endpoint 404s) or unauthenticated.
+  // Loaded once per mount; no refetch interval since identity doesn't change.
+  const { data: currentUser } = useQuery({
+    queryKey: ['auth', 'me'],
+    queryFn: getCurrentUser,
+    staleTime: Infinity,
   });
 
   const connectedInstances = instances?.filter((i) => i.connected) ?? [];
@@ -194,6 +203,32 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
       </SidebarContent>
+
+      {currentUser && (
+        <SidebarFooter className="p-3 border-t">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-medium truncate" title={currentUser.name || currentUser.email}>
+                {currentUser.name || currentUser.email}
+              </div>
+              {currentUser.name && (
+                <div className="text-xs text-muted-foreground truncate" title={currentUser.email}>
+                  {currentUser.email}
+                </div>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 flex-shrink-0"
+              onClick={() => logout()}
+              title="Log out"
+            >
+              <LogOut className="h-4 w-4" />
+            </Button>
+          </div>
+        </SidebarFooter>
+      )}
     </Sidebar>
   );
 }

@@ -1,9 +1,0 @@
-# github.com/google/uuid v1.6.0
-## explicit
-github.com/google/uuid
-# github.com/gorilla/websocket v1.5.3
-## explicit; go 1.12
-github.com/gorilla/websocket
-# github.com/mlund01/squadron-wire v0.0.40
-## explicit; go 1.25.4
-github.com/mlund01/squadron-wire/protocol

@@ -4,11 +4,42 @@ const BASE_URL = '/api';
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, init);
+  if (res.status === 401) {
+    // Session missing or expired. Full-page redirect so the backend's /auth/login
+    // handler can run (it builds the IdP URL and sets the pending-state cookie).
+    const next = window.location.pathname + window.location.search;
+    window.location.href = '/auth/login?next=' + encodeURIComponent(next);
+    throw new Error('unauthorized');
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `HTTP ${res.status}`);
   }
   return res.json();
+}
+
+export interface CurrentUser {
+  email: string;
+  name: string;
+  sub: string;
+}
+
+// getCurrentUser returns the logged-in user, or null when auth is disabled
+// (endpoint 404s) or the session is missing/invalid (401). Does not redirect.
+export async function getCurrentUser(): Promise<CurrentUser | null> {
+  try {
+    const res = await fetch('/auth/me');
+    if (!res.ok) return null;
+    return (await res.json()) as CurrentUser;
+  } catch {
+    return null;
+  }
+}
+
+export async function logout(): Promise<void> {
+  // /auth/logout is a GET on the backend — it clears the session cookie and
+  // redirects through the IdP's end-session endpoint back to /.
+  window.location.href = '/auth/logout';
 }
 
 export async function getServerInfo(): Promise<{ baseUrl: string }> {
