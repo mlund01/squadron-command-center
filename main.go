@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -9,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"commander/internal/auth"
 	"commander/internal/keepalive"
 	"commander/internal/server"
 )
@@ -43,7 +45,21 @@ func main() {
 		ka = keepalive.New(*keepAliveSecs)
 	}
 
-	srv, err := server.New(*addr, webFS, !*disableConfigEdit, ka)
+	// Load optional OAuth/OIDC config from env. Nil means auth is disabled.
+	authCfg, err := auth.LoadFromEnv()
+	if err != nil {
+		log.Fatalf("OAuth config: %v", err)
+	}
+	var authProv *auth.Provider
+	if authCfg != nil {
+		authProv, err = auth.NewProvider(context.Background(), authCfg)
+		if err != nil {
+			log.Fatalf("OIDC discovery failed: %v", err)
+		}
+		log.Printf("OAuth enabled (issuer=%s)", authCfg.IssuerURL)
+	}
+
+	srv, err := server.New(*addr, webFS, !*disableConfigEdit, ka, authProv)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}

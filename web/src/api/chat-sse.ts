@@ -39,12 +39,19 @@ export function subscribeChatEvents(
     es.addEventListener(type, handleEvent);
   }
 
-  es.onerror = () => {
+  es.onerror = async () => {
     if (es.readyState === EventSource.CLOSED) {
       onComplete();
     } else {
-      onError('Connection lost');
       es.close();
+      // EventSource doesn't expose HTTP status — probe the session to detect 401.
+      const res = await fetch('/auth/me').catch(() => null);
+      if (res && res.status === 401) {
+        const next = window.location.pathname + window.location.search;
+        window.location.href = '/auth/login?next=' + encodeURIComponent(next);
+        return;
+      }
+      onError('Connection lost');
     }
   };
 

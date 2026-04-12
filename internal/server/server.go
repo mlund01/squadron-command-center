@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"commander/internal/api"
+	"commander/internal/auth"
 	"commander/internal/hub"
 	"commander/internal/keepalive"
 )
@@ -23,24 +24,35 @@ type Server struct {
 // New creates a new Server listening on the given address.
 // webFS should be an fs.FS pointing at the web/dist directory.
 // ka is an optional KeepAlive for managed lifecycle (nil to disable).
-func New(addr string, webFS fs.FS, allowConfigEdit bool, ka *keepalive.KeepAlive) (*Server, error) {
+// authProv is an optional OIDC auth provider; when non-nil, all non-/ws
+// traffic is gated behind a login cookie.
+func New(addr string, webFS fs.FS, allowConfigEdit bool, ka *keepalive.KeepAlive, authProv *auth.Provider) (*Server, error) {
 	h := hub.New(allowConfigEdit)
-	mux := http.NewServeMux()
 
-	// WebSocket endpoint for squadron instances
-	mux.HandleFunc("/ws", h.ServeWS)
-
-	// REST API routes
-	api.RegisterRoutes(mux, h, ka)
-
-	// Serve React frontend with SPA fallback
+	// Inner mux: API + SPA + (if enabled) auth endpoints. This is what gets
+	// wrapped by the auth middleware.
+	innerMux := http.NewServeMux()
+	api.RegisterRoutes(innerMux, h, ka)
 	fileServer := http.FileServer(http.FS(webFS))
-	mux.HandleFunc("/", spaFallback(webFS, fileServer))
+	innerMux.HandleFunc("/", spaFallback(webFS, fileServer))
+
+	var protectedHandler http.Handler = innerMux
+	if authProv != nil {
+		authProv.RegisterRoutes(innerMux)
+		protectedHandler = authProv.Middleware(innerMux)
+	}
+
+	// Outer mux: routes /ws directly to the hub (bypassing auth — it's
+	// machine-to-machine for squadron instances) and forwards everything
+	// else to the (optionally protected) inner mux.
+	outerMux := http.NewServeMux()
+	outerMux.HandleFunc("/ws", h.ServeWS)
+	outerMux.Handle("/", protectedHandler)
 
 	return &Server{
 		httpServer: &http.Server{
 			Addr:    addr,
-			Handler: mux,
+			Handler: outerMux,
 		},
 		hub: h,
 	}, nil
