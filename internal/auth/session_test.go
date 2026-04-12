@@ -2,86 +2,110 @@ package auth
 
 import (
 	"strings"
-	"testing"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var testSecret = []byte("0123456789abcdef0123456789abcdef")
 
-func TestSessionRoundTrip(t *testing.T) {
-	s := Session{
-		Sub:     "user-42",
-		Email:   "alice@example.com",
-		Name:    "Alice",
-		Expires: time.Now().Add(1 * time.Hour).Unix(),
-	}
-	enc, err := encodeSession(s, testSecret)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	got, err := decodeSession(enc, testSecret)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got.Sub != s.Sub || got.Email != s.Email || got.Name != s.Name {
-		t.Errorf("decoded session mismatch: got %+v want %+v", got, s)
-	}
-}
+var _ = Describe("Session", func() {
+	Describe("encodeSession / decodeSession", func() {
+		It("round-trips a valid session", func() {
+			s := Session{
+				Sub:     "user-42",
+				Email:   "alice@example.com",
+				Name:    "Alice",
+				Expires: time.Now().Add(time.Hour).Unix(),
+			}
+			enc, err := encodeSession(s, testSecret)
+			Expect(err).NotTo(HaveOccurred())
 
-func TestSessionTamperedPayloadFailsHMAC(t *testing.T) {
-	s := Session{Email: "a@b.c", Expires: time.Now().Add(time.Hour).Unix()}
-	enc, err := encodeSession(s, testSecret)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	// Flip a byte in the payload portion (before the dot).
-	dot := strings.IndexByte(enc, '.')
-	if dot < 2 {
-		t.Fatalf("unexpected encoded format")
-	}
-	tampered := enc[:dot-1] + flipASCII(enc[dot-1:dot]) + enc[dot:]
-	if _, err := decodeSession(tampered, testSecret); err == nil {
-		t.Errorf("expected error for tampered payload, got nil")
-	}
-}
+			got, err := decodeSession(enc, testSecret)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Sub).To(Equal(s.Sub))
+			Expect(got.Email).To(Equal(s.Email))
+			Expect(got.Name).To(Equal(s.Name))
+		})
 
-func TestSessionWrongSecretFails(t *testing.T) {
-	s := Session{Email: "a@b.c", Expires: time.Now().Add(time.Hour).Unix()}
-	enc, err := encodeSession(s, testSecret)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	otherSecret := []byte("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
-	if _, err := decodeSession(enc, otherSecret); err == nil {
-		t.Errorf("expected error for wrong secret, got nil")
-	}
-}
+		It("rejects a tampered payload", func() {
+			s := Session{Email: "a@b.c", Expires: time.Now().Add(time.Hour).Unix()}
+			enc, err := encodeSession(s, testSecret)
+			Expect(err).NotTo(HaveOccurred())
 
-func TestSessionExpiredRejected(t *testing.T) {
-	s := Session{Email: "a@b.c", Expires: time.Now().Add(-1 * time.Minute).Unix()}
-	enc, err := encodeSession(s, testSecret)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	if _, err := decodeSession(enc, testSecret); err == nil {
-		t.Errorf("expected error for expired session, got nil")
-	}
-}
+			dot := strings.IndexByte(enc, '.')
+			Expect(dot).To(BeNumerically(">=", 2))
 
-func TestSessionInvalidFormat(t *testing.T) {
-	cases := []string{
-		"",
-		"no-dot-separator",
-		".",
-		"onlypayload.",
-		".onlysig",
-	}
-	for _, c := range cases {
-		if _, err := decodeSession(c, testSecret); err == nil {
-			t.Errorf("expected error for %q, got nil", c)
-		}
-	}
-}
+			// Flip a character in the payload
+			tampered := enc[:dot-1] + flipASCII(enc[dot-1:dot]) + enc[dot:]
+			_, err = decodeSession(tampered, testSecret)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("rejects a wrong secret", func() {
+			s := Session{Email: "a@b.c", Expires: time.Now().Add(time.Hour).Unix()}
+			enc, err := encodeSession(s, testSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			other := []byte("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+			_, err = decodeSession(enc, other)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("rejects an expired session", func() {
+			s := Session{Email: "a@b.c", Expires: time.Now().Add(-time.Minute).Unix()}
+			enc, err := encodeSession(s, testSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = decodeSession(enc, testSecret)
+			Expect(err).To(MatchError(ContainSubstring("expired")))
+		})
+
+		DescribeTable("rejects invalid formats",
+			func(value string) {
+				_, err := decodeSession(value, testSecret)
+				Expect(err).To(HaveOccurred())
+			},
+			Entry("empty string", ""),
+			Entry("no dot separator", "no-dot-separator"),
+			Entry("just a dot", "."),
+			Entry("payload only", "onlypayload."),
+			Entry("signature only", ".onlysig"),
+		)
+	})
+
+	Describe("encodePending / decodePending", func() {
+		It("round-trips a valid pending state", func() {
+			p := pendingState{
+				State:    "abc",
+				Verifier: "xyz",
+				Next:     "/foo",
+				Expires:  time.Now().Add(5 * time.Minute).Unix(),
+			}
+			enc, err := encodePending(p, testSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			got, err := decodePending(enc, testSecret)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.State).To(Equal(p.State))
+			Expect(got.Verifier).To(Equal(p.Verifier))
+			Expect(got.Next).To(Equal(p.Next))
+		})
+
+		It("rejects an expired pending state", func() {
+			p := pendingState{
+				State:   "abc",
+				Expires: time.Now().Add(-time.Minute).Unix(),
+			}
+			enc, err := encodePending(p, testSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = decodePending(enc, testSecret)
+			Expect(err).To(HaveOccurred())
+		})
+	})
+})
 
 func flipASCII(s string) string {
 	if len(s) == 0 {

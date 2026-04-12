@@ -6,17 +6,15 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"golang.org/x/oauth2"
 )
 
-// testProviderWithOAuth builds a Provider with a fake oauth2.Config so that
-// handleLogin can generate an authorize URL. No real IdP needed.
-func testProviderWithOAuth(t *testing.T) *Provider {
-	t.Helper()
-	p := testProvider(t)
+func testProviderWithOAuth() *Provider {
+	p := testProvider()
 	p.oauth = &oauth2.Config{
 		ClientID:    "test-client",
 		RedirectURL: "http://localhost:8080/auth/callback",
@@ -31,273 +29,284 @@ func testProviderWithOAuth(t *testing.T) *Provider {
 	return p
 }
 
-// --- handleLogin tests ---
+var _ = Describe("Handlers", func() {
 
-func TestHandleLogin_Redirect(t *testing.T) {
-	p := testProviderWithOAuth(t)
+	Describe("handleLogin", func() {
+		var p *Provider
 
-	req := httptest.NewRequest("GET", "/auth/login?next=/instances/abc/missions", nil)
-	rec := httptest.NewRecorder()
-	p.handleLogin(rec, req)
+		BeforeEach(func() {
+			p = testProviderWithOAuth()
+		})
 
-	if rec.Code != http.StatusFound {
-		t.Fatalf("status = %d, want 302", rec.Code)
-	}
-	loc := rec.Header().Get("Location")
-	u, err := url.Parse(loc)
-	if err != nil {
-		t.Fatalf("parse Location: %v", err)
-	}
-	if u.Host != "idp.example.com" || u.Path != "/authorize" {
-		t.Errorf("redirect target = %s%s", u.Host, u.Path)
-	}
-	q := u.Query()
-	if q.Get("client_id") != "test-client" {
-		t.Errorf("client_id = %q", q.Get("client_id"))
-	}
-	if q.Get("code_challenge_method") != "S256" {
-		t.Errorf("code_challenge_method = %q", q.Get("code_challenge_method"))
-	}
-	if q.Get("code_challenge") == "" {
-		t.Error("missing code_challenge")
-	}
-	if q.Get("state") == "" {
-		t.Error("missing state")
-	}
-}
+		It("redirects to the IdP authorize endpoint", func() {
+			req := httptest.NewRequest("GET", "/auth/login?next=/instances/abc", nil)
+			rec := httptest.NewRecorder()
+			p.handleLogin(rec, req)
 
-func TestHandleLogin_SetsPendingCookie(t *testing.T) {
-	p := testProviderWithOAuth(t)
+			Expect(rec.Code).To(Equal(http.StatusFound))
+			u, err := url.Parse(rec.Header().Get("Location"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(u.Host).To(Equal("idp.example.com"))
+			Expect(u.Path).To(Equal("/authorize"))
 
-	req := httptest.NewRequest("GET", "/auth/login?next=/foo", nil)
-	rec := httptest.NewRecorder()
-	p.handleLogin(rec, req)
+			q := u.Query()
+			Expect(q.Get("client_id")).To(Equal("test-client"))
+			Expect(q.Get("code_challenge_method")).To(Equal("S256"))
+			Expect(q.Get("code_challenge")).NotTo(BeEmpty())
+			Expect(q.Get("state")).NotTo(BeEmpty())
+		})
 
-	cookies := rec.Result().Cookies()
-	var pending *http.Cookie
-	for _, c := range cookies {
-		if c.Name == pendingCookieName {
-			pending = c
-			break
-		}
-	}
-	if pending == nil {
-		t.Fatal("pending cookie not set")
-	}
-	if !pending.HttpOnly {
-		t.Error("pending cookie should be HttpOnly")
-	}
+		It("sets the pending cookie with the next path", func() {
+			req := httptest.NewRequest("GET", "/auth/login?next=/foo", nil)
+			rec := httptest.NewRecorder()
+			p.handleLogin(rec, req)
 
-	// Decode and verify it contains the next path.
-	ps, err := decodePending(pending.Value, p.cfg.CookieSecret)
-	if err != nil {
-		t.Fatalf("decode pending: %v", err)
-	}
-	if ps.Next != "/foo" {
-		t.Errorf("pending.Next = %q, want /foo", ps.Next)
-	}
-	if ps.State == "" {
-		t.Error("pending.State is empty")
-	}
-	if ps.Verifier == "" {
-		t.Error("pending.Verifier is empty")
-	}
-}
-
-func TestHandleLogin_UnsafeNextNormalized(t *testing.T) {
-	p := testProviderWithOAuth(t)
-
-	cases := []struct {
-		next string
-		want string
-	}{
-		{"", "/"},
-		{"//evil.com", "/"},
-		{"http://evil.com/foo", "/"},
-		{"relative", "/"},
-		{"/safe/path", "/safe/path"},
-	}
-
-	for _, tc := range cases {
-		req := httptest.NewRequest("GET", "/auth/login?next="+url.QueryEscape(tc.next), nil)
-		rec := httptest.NewRecorder()
-		p.handleLogin(rec, req)
-
-		cookies := rec.Result().Cookies()
-		var pending *http.Cookie
-		for _, c := range cookies {
-			if c.Name == pendingCookieName {
-				pending = c
-				break
+			var pending *http.Cookie
+			for _, c := range rec.Result().Cookies() {
+				if c.Name == pendingCookieName {
+					pending = c
+				}
 			}
-		}
-		if pending == nil {
-			t.Fatalf("next=%q: pending cookie not set", tc.next)
-		}
-		ps, err := decodePending(pending.Value, p.cfg.CookieSecret)
-		if err != nil {
-			t.Fatalf("next=%q: decode: %v", tc.next, err)
-		}
-		if ps.Next != tc.want {
-			t.Errorf("next=%q: pending.Next = %q, want %q", tc.next, ps.Next, tc.want)
-		}
-	}
-}
+			Expect(pending).NotTo(BeNil())
+			Expect(pending.HttpOnly).To(BeTrue())
 
-func TestHandleLogin_AudienceParam(t *testing.T) {
-	p := testProviderWithOAuth(t)
-	p.cfg.Audience = "https://api.example.com"
+			ps, err := decodePending(pending.Value, p.cfg.CookieSecret)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ps.Next).To(Equal("/foo"))
+			Expect(ps.State).NotTo(BeEmpty())
+			Expect(ps.Verifier).NotTo(BeEmpty())
+		})
 
-	req := httptest.NewRequest("GET", "/auth/login", nil)
-	rec := httptest.NewRecorder()
-	p.handleLogin(rec, req)
+		DescribeTable("normalizes unsafe next values to /",
+			func(next string) {
+				req := httptest.NewRequest("GET", "/auth/login?next="+url.QueryEscape(next), nil)
+				rec := httptest.NewRecorder()
+				p.handleLogin(rec, req)
 
-	loc := rec.Header().Get("Location")
-	u, _ := url.Parse(loc)
-	if u.Query().Get("audience") != "https://api.example.com" {
-		t.Errorf("audience = %q", u.Query().Get("audience"))
-	}
-}
+				var pending *http.Cookie
+				for _, c := range rec.Result().Cookies() {
+					if c.Name == pendingCookieName {
+						pending = c
+					}
+				}
+				Expect(pending).NotTo(BeNil())
+				ps, err := decodePending(pending.Value, p.cfg.CookieSecret)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ps.Next).To(Equal("/"))
+			},
+			Entry("empty string", ""),
+			Entry("protocol-relative URL", "//evil.com"),
+			Entry("absolute URL", "http://evil.com/foo"),
+			Entry("relative path (no leading /)", "relative"),
+		)
 
-// --- handleLogout tests ---
+		It("includes audience param when configured", func() {
+			p.cfg.Audience = "https://api.example.com"
 
-func TestHandleLogout_ClearsCookie(t *testing.T) {
-	p := testProviderWithOAuth(t)
+			req := httptest.NewRequest("GET", "/auth/login", nil)
+			rec := httptest.NewRecorder()
+			p.handleLogin(rec, req)
 
-	req := httptest.NewRequest("GET", "/auth/logout", nil)
-	rec := httptest.NewRecorder()
-	p.handleLogout(rec, req)
+			u, _ := url.Parse(rec.Header().Get("Location"))
+			Expect(u.Query().Get("audience")).To(Equal("https://api.example.com"))
+		})
+	})
 
-	cookies := rec.Result().Cookies()
-	var sess *http.Cookie
-	for _, c := range cookies {
-		if c.Name == p.cfg.CookieName {
-			sess = c
-			break
-		}
-	}
-	if sess == nil {
-		t.Fatal("session cookie not in response")
-	}
-	if sess.MaxAge != -1 {
-		t.Errorf("session cookie MaxAge = %d, want -1", sess.MaxAge)
-	}
-}
+	Describe("handleLogout", func() {
+		It("clears the session cookie", func() {
+			p := testProviderWithOAuth()
 
-func TestHandleLogout_NoLogoutURL(t *testing.T) {
-	p := testProviderWithOAuth(t)
-	p.logoutURL = ""
+			req := httptest.NewRequest("GET", "/auth/logout", nil)
+			rec := httptest.NewRecorder()
+			p.handleLogout(rec, req)
 
-	req := httptest.NewRequest("GET", "/auth/logout", nil)
-	rec := httptest.NewRecorder()
-	p.handleLogout(rec, req)
+			var sess *http.Cookie
+			for _, c := range rec.Result().Cookies() {
+				if c.Name == p.cfg.CookieName {
+					sess = c
+				}
+			}
+			Expect(sess).NotTo(BeNil())
+			Expect(sess.MaxAge).To(Equal(-1))
+		})
 
-	if rec.Code != http.StatusFound {
-		t.Fatalf("status = %d, want 302", rec.Code)
-	}
-	if loc := rec.Header().Get("Location"); loc != "/" {
-		t.Errorf("Location = %q, want /", loc)
-	}
-}
+		Context("without end_session_endpoint", func() {
+			It("redirects to /", func() {
+				p := testProviderWithOAuth()
+				p.logoutURL = ""
 
-func TestHandleLogout_WithLogoutURL(t *testing.T) {
-	p := testProviderWithOAuth(t)
-	p.logoutURL = "https://idp.example.com/logout"
+				req := httptest.NewRequest("GET", "/auth/logout", nil)
+				rec := httptest.NewRecorder()
+				p.handleLogout(rec, req)
 
-	req := httptest.NewRequest("GET", "/auth/logout", nil)
-	rec := httptest.NewRecorder()
-	p.handleLogout(rec, req)
+				Expect(rec.Code).To(Equal(http.StatusFound))
+				Expect(rec.Header().Get("Location")).To(Equal("/"))
+			})
+		})
 
-	if rec.Code != http.StatusFound {
-		t.Fatalf("status = %d, want 302", rec.Code)
-	}
-	loc := rec.Header().Get("Location")
-	u, err := url.Parse(loc)
-	if err != nil {
-		t.Fatalf("parse Location: %v", err)
-	}
-	if u.Host != "idp.example.com" || u.Path != "/logout" {
-		t.Errorf("redirect = %s%s", u.Host, u.Path)
-	}
-	q := u.Query()
-	if q.Get("client_id") != "test-client" {
-		t.Errorf("client_id = %q", q.Get("client_id"))
-	}
-	if !strings.HasPrefix(q.Get("post_logout_redirect_uri"), "http://localhost:8080/") {
-		t.Errorf("post_logout_redirect_uri = %q", q.Get("post_logout_redirect_uri"))
-	}
-}
+		Context("with end_session_endpoint", func() {
+			It("redirects to the IdP logout URL with correct params", func() {
+				p := testProviderWithOAuth()
+				p.logoutURL = "https://idp.example.com/logout"
 
-// --- handleMe tests ---
+				req := httptest.NewRequest("GET", "/auth/logout", nil)
+				rec := httptest.NewRecorder()
+				p.handleLogout(rec, req)
 
-func TestHandleMe_ValidSession(t *testing.T) {
-	p := testProvider(t)
+				Expect(rec.Code).To(Equal(http.StatusFound))
+				u, err := url.Parse(rec.Header().Get("Location"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(u.Host).To(Equal("idp.example.com"))
+				Expect(u.Path).To(Equal("/logout"))
+				Expect(u.Query().Get("client_id")).To(Equal("test-client"))
+				Expect(u.Query().Get("post_logout_redirect_uri")).To(
+					HavePrefix("http://localhost:8080/"),
+				)
+			})
+		})
+	})
 
-	req := httptest.NewRequest("GET", "/auth/me", nil)
-	req.AddCookie(validSessionCookie(t, p))
-	rec := httptest.NewRecorder()
-	p.handleMe(rec, req)
+	Describe("handleMe", func() {
+		It("returns user info for a valid session", func() {
+			p := testProvider()
+			req := httptest.NewRequest("GET", "/auth/me", nil)
+			req.AddCookie(validSessionCookie(p))
+			rec := httptest.NewRecorder()
+			p.handleMe(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	var body map[string]string
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if body["email"] != "test@example.com" {
-		t.Errorf("email = %q", body["email"])
-	}
-	if body["name"] != "Test User" {
-		t.Errorf("name = %q", body["name"])
-	}
-}
+			Expect(rec.Code).To(Equal(http.StatusOK))
+			var body map[string]string
+			Expect(json.NewDecoder(rec.Body).Decode(&body)).To(Succeed())
+			Expect(body["email"]).To(Equal("test@example.com"))
+			Expect(body["name"]).To(Equal("Test User"))
+		})
 
-func TestHandleMe_NoCookie(t *testing.T) {
-	p := testProvider(t)
+		It("returns 401 with no cookie", func() {
+			p := testProvider()
+			req := httptest.NewRequest("GET", "/auth/me", nil)
+			rec := httptest.NewRecorder()
+			p.handleMe(rec, req)
 
-	req := httptest.NewRequest("GET", "/auth/me", nil)
-	rec := httptest.NewRecorder()
-	p.handleMe(rec, req)
+			Expect(rec.Code).To(Equal(http.StatusUnauthorized))
+		})
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", rec.Code)
-	}
-}
+		It("returns 401 with an expired cookie", func() {
+			p := testProvider()
+			sess := Session{
+				Email:   "old@example.com",
+				Expires: time.Now().Add(-time.Minute).Unix(),
+			}
+			val, err := encodeSession(sess, p.cfg.CookieSecret)
+			Expect(err).NotTo(HaveOccurred())
 
-func TestHandleMe_ExpiredCookie(t *testing.T) {
-	p := testProvider(t)
+			req := httptest.NewRequest("GET", "/auth/me", nil)
+			req.AddCookie(&http.Cookie{Name: p.cfg.CookieName, Value: val})
+			rec := httptest.NewRecorder()
+			p.handleMe(rec, req)
 
-	sess := Session{
-		Email:   "old@example.com",
-		Expires: time.Now().Add(-time.Minute).Unix(),
-	}
-	val, _ := encodeSession(sess, p.cfg.CookieSecret)
+			Expect(rec.Code).To(Equal(http.StatusUnauthorized))
+		})
+	})
 
-	req := httptest.NewRequest("GET", "/auth/me", nil)
-	req.AddCookie(&http.Cookie{Name: p.cfg.CookieName, Value: val})
-	rec := httptest.NewRecorder()
-	p.handleMe(rec, req)
+	Describe("baseURL", func() {
+		DescribeTable("extracts scheme://host",
+			func(input, expected string) {
+				Expect(baseURL(input)).To(Equal(expected))
+			},
+			Entry("https URL", "https://app.example.com/auth/callback", "https://app.example.com/"),
+			Entry("http with port", "http://localhost:8080/auth/callback", "http://localhost:8080/"),
+		)
+	})
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", rec.Code)
-	}
-}
+	Describe("handleCallback", func() {
+		It("returns 400 when IdP reports an error", func() {
+			p := testProviderWithOAuth()
+			req := httptest.NewRequest("GET", "/auth/callback?error=access_denied&error_description=user+denied", nil)
+			rec := httptest.NewRecorder()
+			p.handleCallback(rec, req)
 
-// --- helper tests ---
+			Expect(rec.Code).To(Equal(http.StatusBadRequest))
+			Expect(rec.Body.String()).To(ContainSubstring("access_denied"))
+		})
 
-func TestBaseURL(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"https://app.example.com/auth/callback", "https://app.example.com/"},
-		{"http://localhost:8080/auth/callback", "http://localhost:8080/"},
-		{"not-a-url", ":///"},
-	}
-	for _, tc := range cases {
-		got := baseURL(tc.in)
-		if got != tc.want {
-			t.Errorf("baseURL(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
+		It("returns 400 when pending cookie is missing", func() {
+			p := testProviderWithOAuth()
+			req := httptest.NewRequest("GET", "/auth/callback?code=abc&state=xyz", nil)
+			rec := httptest.NewRecorder()
+			p.handleCallback(rec, req)
+
+			Expect(rec.Code).To(Equal(http.StatusBadRequest))
+			Expect(rec.Body.String()).To(ContainSubstring("missing oauth flow cookie"))
+		})
+
+		It("returns 400 when state doesn't match", func() {
+			p := testProviderWithOAuth()
+
+			ps := pendingState{
+				State:    "correct-state",
+				Verifier: "verifier",
+				Next:     "/",
+				Expires:  time.Now().Add(5 * time.Minute).Unix(),
+			}
+			val, err := encodePending(ps, p.cfg.CookieSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := httptest.NewRequest("GET", "/auth/callback?code=abc&state=wrong-state", nil)
+			req.AddCookie(&http.Cookie{Name: pendingCookieName, Value: val})
+			rec := httptest.NewRecorder()
+			p.handleCallback(rec, req)
+
+			Expect(rec.Code).To(Equal(http.StatusBadRequest))
+			Expect(rec.Body.String()).To(ContainSubstring("state mismatch"))
+		})
+
+		It("clears the pending cookie on callback", func() {
+			p := testProviderWithOAuth()
+
+			ps := pendingState{
+				State:    "mystate",
+				Verifier: "myverifier",
+				Next:     "/",
+				Expires:  time.Now().Add(5 * time.Minute).Unix(),
+			}
+			val, err := encodePending(ps, p.cfg.CookieSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := httptest.NewRequest("GET", "/auth/callback?code=abc&state=mystate", nil)
+			req.AddCookie(&http.Cookie{Name: pendingCookieName, Value: val})
+			rec := httptest.NewRecorder()
+			p.handleCallback(rec, req)
+
+			// Even though the token exchange will fail (no real IdP), the
+			// pending cookie should still be cleared.
+			var cleared *http.Cookie
+			for _, c := range rec.Result().Cookies() {
+				if c.Name == pendingCookieName {
+					cleared = c
+				}
+			}
+			Expect(cleared).NotTo(BeNil())
+			Expect(cleared.MaxAge).To(Equal(-1))
+		})
+	})
+
+	Describe("handleCallback error on IdP error query param", func() {
+		It("surfaces error_description", func() {
+			p := testProviderWithOAuth()
+			req := httptest.NewRequest("GET",
+				"/auth/callback?error=server_error&error_description=something+broke",
+				nil,
+			)
+			rec := httptest.NewRecorder()
+			p.handleCallback(rec, req)
+
+			Expect(rec.Code).To(Equal(http.StatusBadRequest))
+			body := rec.Body.String()
+			Expect(body).To(ContainSubstring("server_error"))
+			Expect(body).To(ContainSubstring("something broke"))
+		})
+	})
+})
+
+// Silence the "strings imported and not used" lint when not needed.
+var _ = strings.HasPrefix
