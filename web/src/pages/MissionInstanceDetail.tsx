@@ -33,6 +33,7 @@ import type { TaskInfo, MissionEvent, MissionTaskRecord, ToolResultDTO, TaskOutp
 import { RouterEdge } from '@/components/RouterEdge';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
 import { ImageCarousel, extractImages } from '@/components/ImageCarousel';
+import { useTheme } from '@/components/ThemeProvider';
 
 
 const NODE_WIDTH = 260;
@@ -141,7 +142,7 @@ const runEdgeTypes: EdgeTypes = { router: RouterEdge };
 
 /* ── Layout helper (reused from MissionDetail) ── */
 
-function layoutGraph(tasks: TaskInfo[], chosenRoutes?: Record<string, string>, statusMap?: Record<string, { status: string }>): { nodes: Node[]; edges: Edge[] } {
+function layoutGraph(tasks: TaskInfo[], chosenRoutes?: Record<string, string>, statusMap?: Record<string, { status: string }>, isDefcon5 = false): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80 });
@@ -153,13 +154,13 @@ function layoutGraph(tasks: TaskInfo[], chosenRoutes?: Record<string, string>, s
   // Status → color mapping (matches card border colors)
   const statusColor = (status?: string): string | undefined => {
     if (status === 'completed') return '#22c55e';
-    if (status === 'running') return '#3b82f6';
+    if (status === 'running') return isDefcon5 ? '#22d3ee' : '#3b82f6';
     if (status === 'failed') return '#ef4444';
-    if (status === 'stopped') return '#f97316';
+    if (status === 'stopped') return isDefcon5 ? '#facc15' : '#f97316';
     return undefined;
   };
 
-  const defaultEdgeColor = '#9ca3af';
+  const defaultEdgeColor = isDefcon5 ? '#4a7050' : '#9ca3af';
 
   const edgeStyle = (src: string, tgt: string): { style: Record<string, unknown> } => {
     const srcRan = statusMap?.[src]?.status && statusMap[src].status !== 'pending';
@@ -225,7 +226,7 @@ function layoutGraph(tasks: TaskInfo[], chosenRoutes?: Record<string, string>, s
           missionNodes.push({ id: missionNodeId, missionName: route.target, isActive: !!isActive });
           g.setNode(missionNodeId, { width: NODE_WIDTH, height: NODE_HEIGHT });
           g.setEdge(task.name, missionNodeId);
-          const missionColor = isActive ? '#14b8a6' : defaultEdgeColor;
+          const missionColor = isActive ? (isDefcon5 ? '#34d399' : '#14b8a6') : defaultEdgeColor;
           edges.push({
             id: `${task.name}->mission:${route.target}`,
             source: task.name,
@@ -590,6 +591,13 @@ const SPAN_COLORS_HEX: Record<GanttSpan['category'] | TraceRow['category'], stri
   dataset_next: '#8b5cf6',
 };
 
+const SPAN_COLORS_HEX_DEFCON5: Record<GanttSpan['category'] | TraceRow['category'], string> = {
+  commander: '#15803d',
+  agent: '#15803d',
+  tool: '#0d9488',
+  dataset_next: '#166534',
+};
+
 function IterationBar({
   iterations,
   selectedIteration,
@@ -699,6 +707,8 @@ function IterationBar({
 }
 
 function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRoutes, selectedTaskName, onSelectTaskName }: { instanceId: string; tasks: MissionTaskRecord[]; allTasks: TaskInfo[]; missionId: string; isRunning: boolean; chosenRoutes?: Record<string, string>; selectedTaskName?: string | null; onSelectTaskName?: (name: string | null) => void }) {
+  const { resolvedTheme } = useTheme();
+  const spanColorsHex = resolvedTheme === 'defcon5' ? SPAN_COLORS_HEX_DEFCON5 : SPAN_COLORS_HEX;
   // Track selected task by name (synced with canvas node clicks)
   const [localSelectedName, setLocalSelectedName] = useState<string | null>(null);
   const activeName = selectedTaskName ?? localSelectedName;
@@ -1957,7 +1967,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                                     )}
                                     style={{
                                       left: `${sLeft}%`, width: `${sWidth}%`, minWidth: '4px',
-                                      backgroundColor: SPAN_COLORS_HEX[row.category],
+                                      backgroundColor: spanColorsHex[row.category],
                                       borderRadius: '3px',
                                       outlineOffset: '-2px',
                                     }}
@@ -1977,7 +1987,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                                         return (
                                           <div
                                             key={`r-${ri}`}
-                                            className="absolute top-0 bottom-0 bg-blue-300/20 cursor-pointer"
+                                            className="absolute top-0 bottom-0 bg-blue-300/40 cursor-pointer"
                                             style={{ left: `${cLeft}%`, width: `${cWidth}%` }}
                                             onClick={(e) => {
                                               e.stopPropagation();
@@ -2124,7 +2134,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                                             left: `${cLeft}%`, width: `${cWidth}%`, minWidth: '4px',
                                             top: spanTop,
                                             height: spanHeight,
-                                            backgroundColor: SPAN_COLORS_HEX[child.category],
+                                            backgroundColor: spanColorsHex[child.category],
                                             borderRadius: '3px',
                                             opacity: isThisSelected ? 1 : 0.85,
                                             outlineOffset: '-2px',
@@ -2604,12 +2614,12 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                           )}
                           {item.type === 'reasoning' && (
                             <details className="group" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) requestAnimationFrame(() => (e.target as HTMLElement).scrollIntoView({ block: 'nearest', behavior: 'smooth' })); }}>
-                              <summary className="text-[11px] text-muted-foreground cursor-pointer font-medium flex items-center gap-1.5 select-none">
+                              <summary className="text-[11px] text-blue-400 cursor-pointer font-semibold flex items-center gap-1.5 select-none">
                                 Reasoning
-                                <svg className="size-3 text-muted-foreground/40 transition-transform group-open:rotate-90 shrink-0" viewBox="0 0 16 16" fill="currentColor"><path d="M6 3l5 5-5 5V3z"/></svg>
-                                {item.duration && <span className="text-muted-foreground/50 font-normal ml-auto text-[10px] tabular-nums">{item.duration}</span>}
+                                <svg className="size-3 text-blue-400/60 transition-transform group-open:rotate-90 shrink-0" viewBox="0 0 16 16" fill="currentColor"><path d="M6 3l5 5-5 5V3z"/></svg>
+                                {item.duration && <span className="text-blue-400/60 font-normal ml-auto text-[10px] tabular-nums">{item.duration}</span>}
                               </summary>
-                              <p className="text-[11px] text-muted-foreground whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed mt-1">
+                              <p className="text-[11px] text-foreground/80 whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed mt-1 pl-2 border-l-2 border-blue-400/30">
                                 {item.content}
                               </p>
                             </details>
@@ -3070,6 +3080,8 @@ function EventsTab({ instanceId, missionId, isRunning }: { instanceId: string; m
 export function MissionInstanceDetail() {
   const { id, mid } = useParams<{ id: string; mid: string }>();
   const queryClient = useQueryClient();
+  const { resolvedTheme } = useTheme();
+  const isDefcon5 = resolvedTheme === 'defcon5';
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('general');
   const [liveTaskStatuses, setLiveTaskStatuses] = useState<Record<string, string>>({});
@@ -3198,8 +3210,8 @@ export function MissionInstanceDetail() {
 
   const { nodes, edges } = useMemo(() => {
     if (tasksWithStatus.length === 0) return { nodes: [], edges: [] };
-    return layoutGraph(tasksWithStatus, chosenRoutes, statusMap);
-  }, [tasksWithStatus, chosenRoutes, statusMap]);
+    return layoutGraph(tasksWithStatus, chosenRoutes, statusMap, isDefcon5);
+  }, [tasksWithStatus, chosenRoutes, statusMap, isDefcon5]);
 
   const nodesWithSelection = useMemo(() => {
     return nodes.map(n => ({
