@@ -1,11 +1,12 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 
-type Theme = 'light' | 'dark' | 'system';
+type Theme = 'light' | 'dark' | 'defcon5' | 'system';
+type ResolvedTheme = 'light' | 'dark' | 'defcon5';
 
 interface ThemeContextValue {
   theme: Theme;
   setTheme: (theme: Theme) => void;
-  resolvedTheme: 'light' | 'dark';
+  resolvedTheme: ResolvedTheme;
 }
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
@@ -14,15 +15,17 @@ function getSystemTheme(): 'light' | 'dark' {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
+const validThemes: Theme[] = ['light', 'dark', 'defcon5', 'system'];
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
     const stored = localStorage.getItem('theme');
-    return (stored === 'light' || stored === 'dark' || stored === 'system') ? stored : 'system';
+    return validThemes.includes(stored as Theme) ? (stored as Theme) : 'system';
   });
 
   const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(getSystemTheme);
 
-  const resolvedTheme = theme === 'system' ? systemTheme : theme;
+  const resolvedTheme: ResolvedTheme = theme === 'system' ? systemTheme : theme;
 
   // Listen for system theme changes
   useEffect(() => {
@@ -32,13 +35,14 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => mq.removeEventListener('change', handler);
   }, []);
 
-  // Apply .dark class to <html>
+  // Apply theme class to <html>
   useEffect(() => {
     const root = document.documentElement;
+    root.classList.remove('dark', 'defcon5');
     if (resolvedTheme === 'dark') {
       root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
+    } else if (resolvedTheme === 'defcon5') {
+      root.classList.add('dark', 'defcon5');
     }
   }, [resolvedTheme]);
 

@@ -1,4 +1,5 @@
 import dagre from 'dagre';
+import { useTheme } from '@/components/ThemeProvider';
 
 export interface MiniNode {
   id: string;
@@ -21,7 +22,7 @@ interface MiniGraphProps {
   className?: string;
 }
 
-const colorMap: Record<string, { fill: string; stroke: string }> = {
+const defaultColorMap: Record<string, { fill: string; stroke: string }> = {
   amber:  { fill: '#fbbf24', stroke: '#f59e0b' },
   teal:   { fill: '#2dd4bf', stroke: '#14b8a6' },
   blue:   { fill: '#60a5fa', stroke: '#3b82f6' },
@@ -31,10 +32,23 @@ const colorMap: Record<string, { fill: string; stroke: string }> = {
   green:  { fill: '#4ade80', stroke: '#22c55e' },
 };
 
+const defcon5ColorMap: Record<string, { fill: string; stroke: string }> = {
+  amber:  { fill: '#bef264', stroke: '#a3e635' },
+  teal:   { fill: '#34d399', stroke: '#10b981' },
+  blue:   { fill: '#22d3ee', stroke: '#06b6d4' },
+  violet: { fill: '#86efac', stroke: '#4ade80' },
+  slate:  { fill: '#6b8f71', stroke: '#4a7050' },
+  purple: { fill: '#4ade80', stroke: '#22c55e' },
+  green:  { fill: '#4ade80', stroke: '#22c55e' },
+};
+
 const NODE_W = { sm: 12, md: 16 };
 const NODE_H = { sm: 8, md: 10 };
 
 export function MiniGraph({ nodes, edges, width = 200, height = 100, className }: MiniGraphProps) {
+  const { resolvedTheme } = useTheme();
+  const colorMap = resolvedTheme === 'defcon5' ? defcon5ColorMap : defaultColorMap;
+
   if (nodes.length === 0) return null;
 
   const g = new dagre.graphlib.Graph();

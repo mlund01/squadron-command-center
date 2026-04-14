@@ -83,6 +83,58 @@ export const materialDarkHighlightStyle = HighlightStyle.define([
   { tag: t.invalid, color: '#606f7a', borderBottom: '1px dotted #ff5f52' },
 ]);
 
+// --- DEFCON 5 terminal theme ---
+
+export const defcon5Theme = EditorView.theme({
+  '&': { backgroundColor: '#0a1f0a', color: '#33ff33' },
+  '.cm-content': { caretColor: '#33ff33' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#33ff33' },
+  '.cm-selectionBackground': { backgroundColor: '#1a4a1a !important' },
+  '.cm-gutters': {
+    backgroundColor: '#081808',
+    borderRight: '1px solid #1a3a1a',
+    color: '#2a6a2a',
+  },
+  '.cm-activeLineGutter': { backgroundColor: '#1a3a1a', color: '#33ff33' },
+  '.cm-activeLine': { backgroundColor: '#1a3a1a' },
+  '.cm-matchingBracket': { color: '#66ff66', outline: '1px solid #33ff33' },
+  '.cm-searchMatch': { outline: '1px solid #33ff33', backgroundColor: 'transparent' },
+  '.cm-foldPlaceholder': { backgroundColor: 'transparent', border: 'none', color: '#33ff33' },
+}, { dark: true });
+
+export const defcon5HighlightStyle = HighlightStyle.define([
+  { tag: t.keyword, color: '#66ff66', fontWeight: 'bold' },
+  { tag: [t.name, t.deleted, t.character, t.macroName], color: '#33cc33' },
+  { tag: [t.propertyName], color: '#88ff88' },
+  { tag: [t.variableName], color: '#33ff33' },
+  { tag: [t.function(t.variableName)], color: '#66ffaa' },
+  { tag: [t.labelName], color: '#66ff66' },
+  { tag: [t.color, t.constant(t.name), t.standard(t.name)], color: '#aaff44' },
+  { tag: [t.definition(t.name), t.separator], color: '#ff6644' },
+  { tag: [t.brace], color: '#66ff66' },
+  { tag: [t.number, t.changed, t.annotation, t.modifier, t.self, t.namespace], color: '#ffcc33' },
+  { tag: [t.typeName, t.className], color: '#ffcc33' },
+  { tag: [t.operator, t.operatorKeyword], color: '#88ff88' },
+  { tag: [t.tagName], color: '#ff6644' },
+  { tag: [t.squareBracket], color: '#66ff66' },
+  { tag: [t.angleBracket], color: '#2a6a2a' },
+  { tag: [t.attributeName], color: '#33ff33' },
+  { tag: [t.regexp], color: '#ff6644' },
+  { tag: [t.quote], color: '#44cc44' },
+  { tag: [t.string], color: '#44dd44' },
+  { tag: t.link, color: '#66ffaa', textDecoration: 'underline' },
+  { tag: [t.url, t.escape, t.special(t.string)], color: '#aaff44' },
+  { tag: [t.meta], color: '#2a6a2a' },
+  { tag: [t.comment], color: '#2a6a2a', fontStyle: 'italic' },
+  { tag: t.strong, fontWeight: 'bold', color: '#66ff66' },
+  { tag: t.emphasis, fontStyle: 'italic', color: '#44dd44' },
+  { tag: t.strikethrough, textDecoration: 'line-through' },
+  { tag: t.heading, fontWeight: 'bold', color: '#88ff88' },
+  { tag: [t.atom, t.bool, t.special(t.variableName)], color: '#66ffaa' },
+  { tag: [t.processingInstruction, t.inserted], color: '#ff6644' },
+  { tag: t.invalid, color: '#2a6a2a', borderBottom: '1px dotted #ff6644' },
+]);
+
 // --- Neat (light) theme ---
 
 export const neatTheme = EditorView.theme({
@@ -138,7 +190,12 @@ export function getLanguageExtension(filename: string) {
 // --- Theme helpers ---
 
 export function getThemeExtensions(resolvedTheme: string) {
-  return resolvedTheme === 'dark'
-    ? [materialDarkTheme, syntaxHighlighting(materialDarkHighlightStyle)]
-    : [neatTheme, syntaxHighlighting(neatHighlightStyle)];
+  switch (resolvedTheme) {
+    case 'defcon5':
+      return [defcon5Theme, syntaxHighlighting(defcon5HighlightStyle)];
+    case 'dark':
+      return [materialDarkTheme, syntaxHighlighting(materialDarkHighlightStyle)];
+    default:
+      return [neatTheme, syntaxHighlighting(neatHighlightStyle)];
+  }
 }

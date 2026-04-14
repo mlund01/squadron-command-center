@@ -17,6 +17,7 @@ import '@xyflow/react/dist/style.css';
 import { ChevronsDown, ChevronsUp, Repeat, Clock, Webhook, ChevronLeft, ChevronRight, Copy, Check, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 
 import { getInstance, getMissionHistory, runMission, getServerInfo } from '@/api/client';
+import { useTheme } from '@/components/ThemeProvider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -110,7 +111,8 @@ const edgeTypes: EdgeTypes = {
   router: RouterEdge,
 };
 
-function layoutGraph(tasks: TaskInfo[], nodeWidth = NODE_WIDTH, nodeHeight = NODE_HEIGHT): { nodes: Node[]; edges: Edge[] } {
+function layoutGraph(tasks: TaskInfo[], nodeWidth = NODE_WIDTH, nodeHeight = NODE_HEIGHT, isDefcon5 = false): { nodes: Node[]; edges: Edge[] } {
+  const routerEdgeColor = isDefcon5 ? '#4a7050' : '#9ca3af';
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80 });
@@ -146,7 +148,7 @@ function layoutGraph(tasks: TaskInfo[], nodeWidth = NODE_WIDTH, nodeHeight = NOD
           type: 'router',
           animated: false,
           data: { condition: route.condition },
-          style: { strokeDasharray: '5,5', stroke: '#9ca3af' },
+          style: { strokeDasharray: '5,5', stroke: routerEdgeColor },
         });
       }
     }
@@ -182,7 +184,7 @@ function layoutGraph(tasks: TaskInfo[], nodeWidth = NODE_WIDTH, nodeHeight = NOD
             type: 'router',
             animated: false,
             data: { condition: route.condition },
-            style: { strokeDasharray: '5,5', stroke: '#9ca3af' },
+            style: { strokeDasharray: '5,5', stroke: routerEdgeColor },
           });
         }
       }
@@ -552,6 +554,8 @@ function AgentsTabContent({
 export function MissionDetail() {
   const { id, name } = useParams<{ id: string; name: string }>();
   const navigate = useNavigate();
+  const { resolvedTheme } = useTheme();
+  const isDefcon5 = resolvedTheme === 'defcon5';
   const [selectedTask, setSelectedTask] = useState<TaskInfo | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<AgentInfo | null>(null);
   const [selectedDataset, setSelectedDataset] = useState<DatasetInfo | null>(null);
@@ -591,8 +595,8 @@ export function MissionDetail() {
 
   const { nodes, edges } = useMemo(() => {
     if (!mission?.tasks || mission.tasks.length === 0) return { nodes: [], edges: [] };
-    return layoutGraph(mission.tasks);
-  }, [mission?.tasks]);
+    return layoutGraph(mission.tasks, NODE_WIDTH, NODE_HEIGHT, isDefcon5);
+  }, [mission?.tasks, isDefcon5]);
 
   const nodesWithSelection = useMemo(() => {
     return nodes.map((n) => ({
