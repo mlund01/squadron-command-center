@@ -10,6 +10,8 @@ builds:
   - id: command-center
     binary: command-center
     main: .
+    env:
+      - CGO_ENABLED=0
     goos:
       - darwin
       - linux
@@ -17,8 +19,12 @@ builds:
     goarch:
       - amd64
       - arm64
+    tags:
+      - netgo
+      - osusergo
     ldflags:
       - -s -w
+      - -extldflags=-static
 
 archives:
   - id: command-center
