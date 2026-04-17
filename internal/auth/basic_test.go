@@ -197,32 +197,46 @@ var _ = Describe("BasicAuth login", func() {
 		Expect(rec.Code).To(Equal(http.StatusUnauthorized))
 	})
 
-	It("applies exponential backoff on consecutive failures", func() {
+	It("gives a grace period before any lockout", func() {
+		p := testBasicProvider(user, pass)
+		const ip = "10.0.0.20"
+		for i := 0; i < gracePeriod; i++ {
+			rec := loginAttempt(p, user, "wrong", ip+":1234")
+			Expect(rec.Code).To(Equal(http.StatusUnauthorized))
+		}
+		Expect(p.limiter.records[ip].count).To(Equal(gracePeriod))
+		Expect(p.limiter.records[ip].lockedUntil.IsZero()).To(BeTrue())
+	})
+
+	It("applies exponential backoff after the grace period", func() {
 		p := testBasicProvider(user, pass)
 		const ip = "10.0.0.2"
 
-		// First failure → locked for ≈ backoffBase (1s).
+		// Burn through the grace allotment.
+		for i := 0; i < gracePeriod; i++ {
+			_ = loginAttempt(p, user, "wrong", ip+":1234")
+		}
+
+		// Next failure → locked for ≈ backoffBase.
 		before := time.Now()
 		_ = loginAttempt(p, user, "wrong", ip+":1234")
 		rec1 := p.limiter.records[ip]
-		Expect(rec1).NotTo(BeNil())
-		firstLock := rec1.lockedUntil.Sub(before)
-		Expect(firstLock).To(BeNumerically("~", backoffBase, 100*time.Millisecond))
+		Expect(rec1.count).To(Equal(gracePeriod + 1))
+		Expect(rec1.lockedUntil.Sub(before)).To(BeNumerically("~", backoffBase, 100*time.Millisecond))
 
-		// Immediately retry — should be rate-limited without consuming a
-		// password check (since the limiter runs first).
+		// Immediately retry — rate-limited before password check.
 		rec := loginAttempt(p, user, pass, ip+":1234")
 		Expect(rec.Code).To(Equal(http.StatusTooManyRequests))
 		Expect(rec.Header().Get("Retry-After")).NotTo(BeEmpty())
+		Expect(rec.Body.String()).To(ContainSubstring("Try again in"))
 
-		// Force unlock, then fail again → backoff doubles.
+		// Force unlock, fail again → backoff doubles.
 		p.limiter.records[ip].lockedUntil = time.Time{}
 		before = time.Now()
 		_ = loginAttempt(p, user, "wrong", ip+":1234")
 		rec2 := p.limiter.records[ip]
-		Expect(rec2.count).To(Equal(2))
-		secondLock := rec2.lockedUntil.Sub(before)
-		Expect(secondLock).To(BeNumerically("~", 2*backoffBase, 100*time.Millisecond))
+		Expect(rec2.count).To(Equal(gracePeriod + 2))
+		Expect(rec2.lockedUntil.Sub(before)).To(BeNumerically("~", 2*backoffBase, 100*time.Millisecond))
 	})
 
 	It("caps backoff at maxBackoff", func() {

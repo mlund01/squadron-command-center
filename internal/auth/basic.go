@@ -15,13 +15,20 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Brute-force tuning. Every failure produces a per-IP lockout that doubles
-// with each consecutive failure inside the window, capped at maxBackoff.
-// A human who fat-fingers once waits ~1s; a script that keeps guessing hits
-// exponential pain fast (by failure 11 it's waiting ~15 min between tries).
+// Brute-force tuning. The first `gracePeriod` failures in a window are
+// accepted without any lockout — humans typo, and a one-second lockout
+// after a single typo feels broken. Once a client exceeds the grace count,
+// each subsequent failure doubles the wait (starting at backoffBase),
+// capped at maxBackoff. The counter resets after failureWindow of quiet or
+// on a successful login.
+//
+// With gracePeriod=3 and backoffBase=5s, a scripted attacker gets 3 free
+// tries, then waits 5s, 10s, 20s, 40s, 80s, … — 9 total failures push them
+// to the ~15 min cap.
 const (
 	failureWindow     = 15 * time.Minute
-	backoffBase       = 1 * time.Second
+	gracePeriod       = 3
+	backoffBase       = 5 * time.Second
 	maxBackoff        = 15 * time.Minute
 	limiterGCInterval = 10 * time.Minute
 	limiterRecordTTL  = 1 * time.Hour
@@ -92,10 +99,15 @@ func (l *bruteForceLimiter) recordFailure(key string) {
 	}
 	rec.count++
 
-	// backoff = backoffBase * 2^(count-1), capped at maxBackoff. Using a loop
-	// instead of math.Pow keeps us dependency-free and avoids float rounding.
+	// First gracePeriod failures don't lock out at all. After that,
+	// backoff = backoffBase * 2^(count-gracePeriod-1), capped at maxBackoff.
+	// A loop avoids float math and keeps us dependency-free.
+	if rec.count <= gracePeriod {
+		rec.lockedUntil = time.Time{}
+		return
+	}
 	backoff := backoffBase
-	for i := 1; i < rec.count && backoff < maxBackoff; i++ {
+	for i := gracePeriod + 1; i < rec.count && backoff < maxBackoff; i++ {
 		backoff *= 2
 	}
 	if backoff > maxBackoff {
@@ -208,7 +220,8 @@ func (p *Provider) handleBasicLogin(w http.ResponseWriter, r *http.Request) {
 	if allowed, retryAfter := p.limiter.check(key); !allowed {
 		w.Header().Set("Retry-After", retryAfterSeconds(retryAfter))
 		token, _ := p.issueCSRFToken(w)
-		p.renderLogin(w, next, token, "Too many failed attempts. Try again later.", http.StatusTooManyRequests)
+		msg := "Too many failed attempts. Try again in " + humanDuration(retryAfter) + "."
+		p.renderLogin(w, next, token, msg, http.StatusTooManyRequests)
 		return
 	}
 
@@ -319,6 +332,21 @@ func retryAfterSeconds(d time.Duration) string {
 	}
 	// itoa without pulling strconv just for this — stay small
 	return itoa(secs)
+}
+
+// humanDuration formats d as "Ns" / "Nm Ns" / "Nm" for user-facing messages.
+// Rounds up to the nearest second so the message never understates the wait.
+func humanDuration(d time.Duration) string {
+	secs := int((d + time.Second - 1) / time.Second)
+	if secs < 60 {
+		return itoa(secs) + "s"
+	}
+	mins := secs / 60
+	rem := secs % 60
+	if rem == 0 {
+		return itoa(mins) + "m"
+	}
+	return itoa(mins) + "m " + itoa(rem) + "s"
 }
 
 func itoa(n int) string {
