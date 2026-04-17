@@ -49,6 +49,10 @@ func (p *Provider) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if p.cfg.Mode == ModeBasic {
+		p.handleBasicLogin(w, r)
+		return
+	}
 	next := r.URL.Query().Get("next")
 	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
 		next = "/"
@@ -91,6 +95,10 @@ func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
+	if p.cfg.Mode == ModeBasic {
+		http.NotFound(w, r)
+		return
+	}
 	if errCode := r.URL.Query().Get("error"); errCode != "" {
 		desc := r.URL.Query().Get("error_description")
 		http.Error(w, fmt.Sprintf("oauth error: %s: %s", errCode, desc), http.StatusBadRequest)
@@ -184,6 +192,11 @@ func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 // logout parameters. Auth0 honors these.
 func (p *Provider) handleLogout(w http.ResponseWriter, r *http.Request) {
 	p.clearCookie(w, p.cfg.CookieName)
+
+	if p.cfg.Mode == ModeBasic {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 
 	returnTo := baseURL(p.cfg.RedirectURL)
 	if p.logoutURL != "" {
