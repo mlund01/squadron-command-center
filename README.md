@@ -2,13 +2,34 @@
 
 Web-based command center for [Squadron](https://github.com/mlund01/squadron) instances. Provides a dashboard for managing missions, agents, skills, tools, config, and costs across one or more connected Squadron instances.
 
-## Deploy
+## Deploy to Fly.io
 
-[![Deploy on Fly.io](https://fly.io/static/images/launch/deploy.svg)](https://fly.io/launch?repo=https://github.com/mlund01/squadron-command-center)
+The repo ships with a `Dockerfile` and `fly.toml` configured for always-on deployment. To launch:
 
-One-click deploy to [Fly.io](https://fly.io/). The included `Dockerfile` and `fly.toml` build the frontend, compile the Go binary, and run it on a shared-cpu VM. WebSocket support (`/ws`) works out of the box.
+```bash
+# one-time: install flyctl and sign in
+brew install flyctl
+fly auth signup   # or: fly auth login
 
-After launch, set OAuth env vars with `fly secrets set OAUTH_ISSUER_URL=... OAUTH_CLIENT_ID=...` if you want to enable the [auth wall](#authentication-optional). Otherwise the instance is publicly accessible — fine for a Squadron sitting behind it on a private network, not fine on the open internet.
+# from a clone of this repo
+fly launch --copy-config --name <your-app-name>
+fly deploy
+```
+
+`fly launch --copy-config` keeps the committed `fly.toml` (always-on shared-cpu-1x, `iad` region, force HTTPS) instead of regenerating it. The multi-stage Dockerfile builds the frontend, compiles the Go binary, and runs it on port 8080. WebSockets (`/ws`) work out of the box.
+
+To enable the [auth wall](#authentication-optional):
+
+```bash
+fly secrets set \
+  OAUTH_ISSUER_URL=https://your-tenant.auth0.com/ \
+  OAUTH_CLIENT_ID=... \
+  OAUTH_CLIENT_SECRET=... \
+  OAUTH_REDIRECT_URL=https://<your-app-name>.fly.dev/auth/callback \
+  OAUTH_COOKIE_SECRET=$(openssl rand -hex 32)
+```
+
+Without these, the instance is publicly accessible — fine for a Squadron behind it on a private network, not fine on the open internet.
 
 ## Quick start
 
