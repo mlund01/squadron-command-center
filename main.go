@@ -45,18 +45,23 @@ func main() {
 		ka = keepalive.New(*keepAliveSecs)
 	}
 
-	// Load optional OAuth/OIDC config from env. Nil means auth is disabled.
+	// Load optional auth config from env. Nil means auth is disabled.
 	authCfg, err := auth.LoadFromEnv()
 	if err != nil {
-		log.Fatalf("OAuth config: %v", err)
+		log.Fatalf("Auth config: %v", err)
 	}
 	var authProv *auth.Provider
 	if authCfg != nil {
 		authProv, err = auth.NewProvider(context.Background(), authCfg)
 		if err != nil {
-			log.Fatalf("OIDC discovery failed: %v", err)
+			log.Fatalf("Auth provider init failed: %v", err)
 		}
-		log.Printf("OAuth enabled (issuer=%s)", authCfg.IssuerURL)
+		switch authCfg.Mode {
+		case auth.ModeOIDC:
+			log.Printf("Auth enabled: OIDC (issuer=%s)", authCfg.IssuerURL)
+		case auth.ModeBasic:
+			log.Printf("Auth enabled: basic (user=%s) — OIDC is recommended for real deployments", authCfg.BasicUsername)
+		}
 	}
 
 	srv, err := server.New(*addr, webFS, !*disableConfigEdit, ka, authProv)
