@@ -2,13 +2,33 @@
 
 Web-based command center for [Squadron](https://github.com/mlund01/squadron) instances. Provides a dashboard for managing missions, agents, skills, tools, config, and costs across one or more connected Squadron instances.
 
-## Deploy
+## Deploy to Fly.io
 
-[![Deploy on Fly.io](https://fly.io/static/images/launch/deploy.svg)](https://fly.io/launch?repo=https://github.com/mlund01/squadron-command-center)
+The repo ships with a `Dockerfile` and `fly.toml` configured for an always-on, shared-cpu-1x VM in `iad` with HTTPS forced. Deploy directly from [fly.io](https://fly.io/) — no CLI, no local build:
 
-One-click deploy to [Fly.io](https://fly.io/). The included `Dockerfile` and `fly.toml` build the frontend, compile the Go binary, and run it on a shared-cpu VM. WebSocket support (`/ws`) works out of the box.
+1. Sign in at [fly.io/dashboard](https://fly.io/dashboard) (create an account if you don't have one; a payment method is required even on the free tier).
+2. Click **Launch an App** → **Launch from GitHub** and authorize the Fly GitHub app if prompted.
+3. Pick this repo. Fly detects the committed `fly.toml` and `Dockerfile`, so you can leave the defaults alone.
+4. Choose an app name and region, then click **Deploy**. Fly clones the repo, builds the Docker image on their builders, and rolls it out.
 
-After launch, set OAuth env vars with `fly secrets set OAUTH_ISSUER_URL=... OAUTH_CLIENT_ID=...` if you want to enable the [auth wall](#authentication-optional). Otherwise the instance is publicly accessible — fine for a Squadron sitting behind it on a private network, not fine on the open internet.
+Your app will be live at `https://<your-app-name>.fly.dev/`. WebSockets (`/ws`) work out of the box.
+
+### Enable the auth wall (optional)
+
+Commander is publicly accessible by default. To put it behind OIDC (see [Authentication](#authentication-optional) for provider setup):
+
+1. In the Fly dashboard, open your app → **Secrets** → **New Secret**.
+2. Add each of these as a separate secret:
+   - `OAUTH_ISSUER_URL` — e.g. `https://your-tenant.auth0.com/`
+   - `OAUTH_CLIENT_ID`
+   - `OAUTH_CLIENT_SECRET`
+   - `OAUTH_REDIRECT_URL` — `https://<your-app-name>.fly.dev/auth/callback`
+   - `OAUTH_COOKIE_SECRET` — a random 32+ byte hex string
+3. Redeploy (dashboard → **Deployments** → **Redeploy**) so the new env vars take effect.
+
+### Updating
+
+Push to `main` and trigger a redeploy from the dashboard, or enable auto-deploy under the app's **Settings** → **Deployments**.
 
 ## Quick start
 
