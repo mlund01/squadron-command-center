@@ -266,3 +266,160 @@ var _ = Describe("BasicAuth login", func() {
 		Expect(ok).To(BeFalse())
 	})
 })
+
+var _ = Describe("clientKey", func() {
+	It("falls back to RemoteAddr host when no X-Forwarded-For header is set", func() {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "192.0.2.10:54321"
+		Expect(clientKey(req)).To(Equal("192.0.2.10"))
+	})
+
+	It("returns the raw RemoteAddr when it has no port", func() {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "192.0.2.10"
+		Expect(clientKey(req)).To(Equal("192.0.2.10"))
+	})
+
+	It("prefers X-Forwarded-For over RemoteAddr", func() {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:1234"
+		req.Header.Set("X-Forwarded-For", "203.0.113.7")
+		Expect(clientKey(req)).To(Equal("203.0.113.7"))
+	})
+
+	It("picks the leftmost address in a chained X-Forwarded-For", func() {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:1234"
+		req.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.2, 10.0.0.3")
+		Expect(clientKey(req)).To(Equal("203.0.113.7"))
+	})
+
+	It("trims whitespace around X-Forwarded-For entries", func() {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:1234"
+		req.Header.Set("X-Forwarded-For", "   203.0.113.7  , 10.0.0.2")
+		Expect(clientKey(req)).To(Equal("203.0.113.7"))
+	})
+
+	It("falls back to RemoteAddr if X-Forwarded-For is empty-ish", func() {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:1234"
+		req.Header.Set("X-Forwarded-For", "   ")
+		Expect(clientKey(req)).To(Equal("10.0.0.1"))
+	})
+})
+
+var _ = Describe("bruteForceLimiter window reset", func() {
+	It("resets the counter after failureWindow of no failures", func() {
+		l := newBruteForceLimiter()
+		const key = "198.51.100.1"
+
+		// 4 failures in quick succession — counter is now past the grace
+		// period, lockout is active.
+		for i := 0; i < gracePeriod+1; i++ {
+			l.recordFailure(key)
+		}
+		Expect(l.records[key].count).To(Equal(gracePeriod + 1))
+
+		// Rewind firstFail to just outside the window. The next failure
+		// should treat the record as stale and start a fresh count at 1.
+		l.records[key].firstFail = time.Now().Add(-failureWindow - time.Second)
+		l.recordFailure(key)
+		Expect(l.records[key].count).To(Equal(1))
+		// Still inside grace, so no lockout yet.
+		Expect(l.records[key].lockedUntil.IsZero()).To(BeTrue())
+	})
+})
+
+var _ = Describe("BasicAuth end-to-end with middleware", func() {
+	const user, pass = "admin", "hunter2"
+
+	It("authenticates a request after a successful login and rejects before", func() {
+		p := testBasicProvider(user, pass)
+		p.RegisterRoutes(http.NewServeMux()) // harmless; exercises the wiring
+
+		var reached bool
+		protected := p.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reached = true
+			sess := SessionFromContext(r.Context())
+			Expect(sess).NotTo(BeNil())
+			Expect(sess.Email).To(Equal(user))
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		// Without a session cookie, JSON API hit returns 401 and does not
+		// reach the handler.
+		req := httptest.NewRequest("GET", "/api/whatever", nil)
+		rec := httptest.NewRecorder()
+		protected.ServeHTTP(rec, req)
+		Expect(rec.Code).To(Equal(http.StatusUnauthorized))
+		Expect(reached).To(BeFalse())
+
+		// Log in. Grab the resulting session cookie.
+		loginRec := loginAttempt(p, user, pass, "10.0.0.50:1234")
+		Expect(loginRec.Code).To(Equal(http.StatusFound))
+		var sessCookie *http.Cookie
+		for _, c := range loginRec.Result().Cookies() {
+			if c.Name == defaultCookieName && c.Value != "" {
+				sessCookie = c
+			}
+		}
+		Expect(sessCookie).NotTo(BeNil())
+
+		// Same protected request, now with the session cookie → reaches
+		// the handler with the session populated.
+		req2 := httptest.NewRequest("GET", "/api/whatever", nil)
+		req2.AddCookie(sessCookie)
+		rec2 := httptest.NewRecorder()
+		protected.ServeHTTP(rec2, req2)
+		Expect(rec2.Code).To(Equal(http.StatusOK))
+		Expect(reached).To(BeTrue())
+	})
+})
+
+var _ = Describe("BasicAuth handler mode branching", func() {
+	const user, pass = "admin", "hunter2"
+
+	It("handleCallback returns 404 in basic mode", func() {
+		p := testBasicProvider(user, pass)
+		req := httptest.NewRequest("GET", "/auth/callback?code=abc", nil)
+		rec := httptest.NewRecorder()
+		p.handleCallback(rec, req)
+		Expect(rec.Code).To(Equal(http.StatusNotFound))
+	})
+
+	It("handleLogout clears the cookie and redirects to / without touching an IdP", func() {
+		p := testBasicProvider(user, pass)
+		req := httptest.NewRequest("GET", "/auth/logout", nil)
+		req.AddCookie(&http.Cookie{Name: defaultCookieName, Value: "stale"})
+		rec := httptest.NewRecorder()
+		p.handleLogout(rec, req)
+
+		Expect(rec.Code).To(Equal(http.StatusFound))
+		Expect(rec.Header().Get("Location")).To(Equal("/"))
+
+		var cleared bool
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == defaultCookieName && c.MaxAge < 0 {
+				cleared = true
+			}
+		}
+		Expect(cleared).To(BeTrue(), "session cookie should be cleared")
+	})
+})
+
+var _ = Describe("humanDuration", func() {
+	DescribeTable("formats durations for humans",
+		func(d time.Duration, expected string) {
+			Expect(humanDuration(d)).To(Equal(expected))
+		},
+		Entry("sub-second rounds up to 1s", 500*time.Millisecond, "1s"),
+		Entry("exact second", 1*time.Second, "1s"),
+		Entry("under a minute", 45*time.Second, "45s"),
+		Entry("just under a minute rounds up", 59500*time.Millisecond, "1m"),
+		Entry("exactly one minute", 60*time.Second, "1m"),
+		Entry("one minute and some seconds", 90*time.Second, "1m 30s"),
+		Entry("multiple minutes exact", 5*time.Minute, "5m"),
+		Entry("multiple minutes with remainder", 5*time.Minute+20*time.Second, "5m 20s"),
+	)
+})
