@@ -63,3 +63,43 @@ export function subscribeMissionEvents(
 
   return { close: () => es.close() };
 }
+
+export interface InstanceNotification {
+  type: string; // "oauth_completed" | "oauth_failed" | (future)
+  timestamp?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface InstanceNotificationSource {
+  close: () => void;
+}
+
+// subscribeInstanceNotifications opens an SSE stream for per-instance
+// notifications (OAuth completions, future alert types). Unlike mission
+// event streams, notifications are ephemeral — subscribers that aren't
+// listening when an event fires will miss it.
+export function subscribeInstanceNotifications(
+  instanceId: string,
+  onNotification: (note: InstanceNotification) => void,
+): InstanceNotificationSource {
+  const url = `/api/instances/${instanceId}/notifications`;
+  const es = new EventSource(url);
+
+  es.onmessage = (e) => {
+    try {
+      const note: InstanceNotification = JSON.parse(e.data);
+      onNotification(note);
+    } catch {
+      // Skip malformed events
+    }
+  };
+
+  es.onerror = () => {
+    // Notifications are best-effort; no redirect-on-401 here.
+    if (es.readyState === EventSource.CLOSED) {
+      return;
+    }
+  };
+
+  return { close: () => es.close() };
+}

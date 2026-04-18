@@ -44,9 +44,13 @@ func New(addr string, webFS fs.FS, allowConfigEdit bool, ka *keepalive.KeepAlive
 
 	// Outer mux: routes /ws directly to the hub (bypassing auth — it's
 	// machine-to-machine for squadron instances) and forwards everything
-	// else to the (optionally protected) inner mux.
+	// else to the (optionally protected) inner mux. /oauth/callback is also
+	// unauthenticated so OAuth IdPs (which don't carry session cookies) can
+	// reach it; security comes from the state parameter being unguessable
+	// and single-use.
 	outerMux := http.NewServeMux()
 	outerMux.HandleFunc("/ws", h.ServeWS)
+	outerMux.HandleFunc("GET /oauth/callback", api.HandleOAuthCallback(h))
 	outerMux.Handle("/", protectedHandler)
 
 	return &Server{

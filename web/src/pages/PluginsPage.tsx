@@ -1,10 +1,12 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import { ChevronRight, Info } from 'lucide-react';
-import { getInstance } from '@/api/client';
+import { toast } from 'sonner';
+import { ChevronRight, Info, KeyRound } from 'lucide-react';
+import { getInstance, startMcpOauth } from '@/api/client';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { PageStats } from '@/components/page-stats';
 import {
   Dialog,
@@ -191,7 +193,12 @@ function PluginRow({ plugin, kind, isOpen, toolCount, onToggle, onToolClick }: P
         <TableCell className="font-mono text-xs text-muted-foreground truncate">
           {plugin.version || '—'}
         </TableCell>
-        <TableCell className="text-right tabular-nums">{toolCount}</TableCell>
+        <TableCell className="text-right tabular-nums">
+          <div className="flex items-center justify-end gap-2">
+            {kind === 'mcp' && <McpConnectButton mcpName={plugin.name} />}
+            <span>{toolCount}</span>
+          </div>
+        </TableCell>
       </TableRow>
       {isOpen && toolCount > 0 && (
         <TableRow className="bg-muted/20 hover:bg-muted/20">
@@ -205,6 +212,42 @@ function PluginRow({ plugin, kind, isOpen, toolCount, onToggle, onToolClick }: P
         </TableRow>
       )}
     </>
+  );
+}
+
+// McpConnectButton kicks off an OAuth login for the named MCP server by
+// asking commander to forward a StartMCPLogin request to the squadron.
+// The squadron returns the IdP authorization URL, which we open in a new
+// tab; the IdP later redirects to commander's /oauth/callback and the
+// flow completes out of band. A toast (from useInstanceNotifications)
+// confirms success or failure.
+function McpConnectButton({ mcpName }: { mcpName: string }) {
+  const { id } = useParams<{ id: string }>();
+  const [loading, setLoading] = useState(false);
+  async function handleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!id) return;
+    setLoading(true);
+    try {
+      const { authUrl } = await startMcpOauth(id, mcpName);
+      window.open(authUrl, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      toast.error(`Could not start OAuth: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="h-6 px-2 text-[10px]"
+      disabled={loading}
+      onClick={handleClick}
+    >
+      <KeyRound className="h-3 w-3 mr-1" />
+      {loading ? 'Starting...' : 'Connect'}
+    </Button>
   );
 }
 
