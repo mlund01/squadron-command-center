@@ -3318,7 +3318,7 @@ export function MissionInstanceDetail() {
                 Stop
               </Button>
             )}
-            {(mission.status === 'failed' || mission.status === 'stopped') && (
+            {mission.status === 'stopped' && (
               <Button
                 variant="outline"
                 size="sm"
