@@ -2,6 +2,10 @@ module commander
 
 go 1.25.4
 
+// TEMP: local replace for unpublished squadron-wire OAuth proxy messages.
+// Revert + publish a new squadron-wire tag before merging.
+replace github.com/mlund01/squadron-wire => ../squadron-wire
+
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/mlund01/squadron-wire v0.0.40

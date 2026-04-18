@@ -235,6 +235,16 @@ export interface CostSummaryResponse {
   }>;
 }
 
+// startMcpOauth asks commander to ask the squadron to kick off an OAuth
+// login for the named MCP server. Returns the authorization URL — the
+// caller is expected to open it in a new tab. The IdP redirect will land
+// on commander's /oauth/callback and complete the flow back over WS.
+export async function startMcpOauth(instanceId: string, mcpName: string): Promise<{ authUrl: string }> {
+  return fetchJSON<{ authUrl: string }>(`/instances/${instanceId}/mcp/${encodeURIComponent(mcpName)}/oauth/start`, {
+    method: 'POST',
+  });
+}
+
 export async function getCostSummary(instanceId: string, from?: string, to?: string, groupBy?: string, breakdownField?: string): Promise<CostSummaryResponse> {
   const params = new URLSearchParams();
   if (from) params.set('from', from);

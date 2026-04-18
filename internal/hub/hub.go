@@ -8,6 +8,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/mlund01/squadron-wire/protocol"
+
+	oauthflows "commander/internal/oauth"
 )
 
 var upgrader = websocket.Upgrader{
@@ -19,6 +21,8 @@ type Hub struct {
 	mu              sync.RWMutex
 	connections     map[string]*Connection // instanceID → connection
 	registry        *Registry
+	pendingFlows    *oauthflows.PendingFlows
+	notifications   *Notifications
 	AllowConfigEdit bool
 }
 
@@ -27,9 +31,17 @@ func New(allowConfigEdit bool) *Hub {
 	return &Hub{
 		connections:     make(map[string]*Connection),
 		registry:        NewRegistry(),
+		pendingFlows:    oauthflows.New(),
+		notifications:   NewNotifications(),
 		AllowConfigEdit: allowConfigEdit,
 	}
 }
+
+// PendingFlows returns the OAuth flow store.
+func (h *Hub) PendingFlows() *oauthflows.PendingFlows { return h.pendingFlows }
+
+// Notifications returns the per-instance notification fan-out.
+func (h *Hub) Notifications() *Notifications { return h.notifications }
 
 // Start initializes background tasks (heartbeat, cleanup, etc.).
 func (h *Hub) Start() {

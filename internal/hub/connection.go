@@ -371,9 +371,42 @@ func (c *Connection) dispatch(env *protocol.Envelope) {
 		c.fanOutChatEvent(env)
 	case protocol.TypeChatComplete:
 		c.fanOutChatComplete(env)
+	case protocol.TypeOAuthRegisterFlow:
+		c.handleOAuthRegisterFlow(env)
 	default:
 		log.Printf("Unhandled message type: %s", env.Type)
 	}
+}
+
+// handleOAuthRegisterFlow records a pending OAuth flow for later callback
+// routing. Called when a squadron kicks off an MCP login and asks commander
+// to reserve the `state` value.
+func (c *Connection) handleOAuthRegisterFlow(env *protocol.Envelope) {
+	var payload protocol.OAuthRegisterFlowPayload
+	if err := protocol.DecodePayload(env, &payload); err != nil {
+		log.Printf("Invalid oauth_register_flow payload: %v", err)
+		ack, _ := protocol.NewError(env.RequestID, "decode_error", err.Error())
+		c.Send(ack)
+		return
+	}
+	if c.instanceID == "" {
+		ack, _ := protocol.NewError(env.RequestID, "not_registered", "instance not registered yet")
+		c.Send(ack)
+		return
+	}
+	if payload.State == "" {
+		ack, _ := protocol.NewResponse(env.RequestID, protocol.TypeOAuthRegisterFlowAck, &protocol.OAuthRegisterFlowAckPayload{
+			Accepted: false,
+			Reason:   "state is required",
+		})
+		c.Send(ack)
+		return
+	}
+	c.hub.PendingFlows().Register(payload.State, c.instanceID, payload.McpName)
+	ack, _ := protocol.NewResponse(env.RequestID, protocol.TypeOAuthRegisterFlowAck, &protocol.OAuthRegisterFlowAckPayload{
+		Accepted: true,
+	})
+	c.Send(ack)
 }
 
 func (c *Connection) handleRegister(env *protocol.Envelope) {

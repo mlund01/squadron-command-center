@@ -69,6 +69,12 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, ka *keepalive.KeepAlive) {
 	mux.HandleFunc("GET /api/instances/{id}/agents/{name}/chats", handleChatHistory(h))
 	mux.HandleFunc("GET /api/instances/{id}/chats/{sessionId}/messages", handleChatMessages(h))
 	mux.HandleFunc("DELETE /api/instances/{id}/chats/{sessionId}", handleArchiveChat(h))
+
+	// OAuth proxy: start a login flow, stream completion notifications.
+	// The public callback endpoint (/oauth/callback) is registered separately
+	// on the outer mux so IdPs can reach it without auth.
+	mux.HandleFunc("POST /api/instances/{id}/mcp/{name}/oauth/start", HandleStartOAuth(h))
+	mux.HandleFunc("GET /api/instances/{id}/notifications", HandleNotifications(h))
 }
 
 func handleListInstances(h *hub.Hub) http.HandlerFunc {
