@@ -731,6 +731,7 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     setSelectionStack(prev => prev.length > 1 ? prev.slice(0, -1) : []);
   }, []);
   const [traceView, setTraceView] = useState<'detail' | 'subtasks' | 'output' | 'iterations' | 'flamegraph' | 'table' | 'turns' | 'events'>('detail');
+  const defaultedTaskIdRef = useRef<string | null>(null);
   const [traceLabelWidth, setTraceLabelWidth] = useState(200);
   const traceDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const traceTimelineRef = useRef<HTMLDivElement | null>(null);
@@ -944,6 +945,18 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
     if (!isIterated || selectedIteration == null) return all;
     return all.filter(o => o.datasetIndex === selectedIteration);
   }, [taskDetail?.outputs, isIterated, selectedIteration]);
+
+  useEffect(() => {
+    if (!selectedTaskId) {
+      defaultedTaskIdRef.current = null;
+      return;
+    }
+    if (defaultedTaskIdRef.current === selectedTaskId) return;
+    if (selectedTaskRecord?.status === 'completed' && outputs.length > 0) {
+      setTraceView('output');
+      defaultedTaskIdRef.current = selectedTaskId;
+    }
+  }, [selectedTaskId, selectedTaskRecord?.status, outputs.length]);
 
   // Build a session ID → session lookup for agent name resolution
   const sessionMap = useMemo(() => {
