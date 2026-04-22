@@ -7,7 +7,6 @@ import { MissionsPage } from './pages/MissionsPage'
 import { AgentsPage } from './pages/AgentsPage'
 import { PluginsPage } from './pages/PluginsPage'
 import { MissionDetail } from './pages/MissionDetail'
-import { MissionHistory } from './pages/MissionHistory'
 import { MissionInstanceDetail } from './pages/MissionInstanceDetail'
 import { AgentDetail } from './pages/AgentDetail'
 import { ConfigPage } from './pages/ConfigPage'
@@ -32,7 +31,7 @@ function App() {
         <Route path="skills" element={<SkillsPage />} />
         <Route path="skills/:name" element={<SkillDetail />} />
         <Route path="tools" element={<PluginsPage />} />
-        <Route path="history" element={<MissionHistory />} />
+        <Route path="history" element={<Navigate to="../missions?view=history" replace />} />
         <Route path="missions/:name" element={<MissionDetail />} />
         <Route path="runs/:mid" element={<MissionInstanceDetail />} />
         <Route path="costs" element={<CostsPage />} />
