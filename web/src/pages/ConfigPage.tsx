@@ -5,7 +5,8 @@ import { toast } from 'sonner';
 import { listConfigFiles, getConfigFile, writeConfigFile, reloadConfig, validateConfig } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { FileCode, Save, RefreshCw, Undo2, CheckCircle, X, ChevronRight, ChevronDown, Eye, EyeOff, Code } from 'lucide-react';
+import { buildNewFilePath, validateNewFileName } from '@/lib/config-files';
+import { FileCode, FilePlus, Save, RefreshCw, Undo2, CheckCircle, X, ChevronRight, ChevronDown, Eye, EyeOff, Code } from 'lucide-react';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
 import { useHorizontalResize } from '@/hooks/use-horizontal-resize';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, gutter, GutterMarker } from '@codemirror/view';
@@ -219,6 +220,14 @@ export function ConfigPage() {
   const [validating, setValidating] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
+  const [addingFile, setAddingFile] = useState<{ dir: string } | null>(null);
+  const [newFileName, setNewFileName] = useState('');
+  const [creatingFile, setCreatingFile] = useState(false);
+  const [contextMenu, setContextMenu] = useState<
+    | { x: number; y: number; type: 'root' }
+    | { x: number; y: number; type: 'folder'; dir: string }
+    | null
+  >(null);
   const [codeOpen, setCodeOpen] = useState(true);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewContent, setPreviewContent] = useState('');
@@ -470,6 +479,77 @@ export function ConfigPage() {
     }
   }, [id, reloading, selectedFile, queryClient]);
 
+  const existingNames = useMemo(
+    () => new Set((fileList?.files ?? []).map(f => f.name)),
+    [fileList],
+  );
+
+  const trimmedNewName = newFileName.trim();
+  const newFileFullPath = addingFile ? buildNewFilePath(addingFile.dir, newFileName) : '';
+  const newFileErrorCode = addingFile
+    ? validateNewFileName(addingFile.dir, newFileName, existingNames)
+    : null;
+  const newFileError =
+    newFileErrorCode === 'invalid-path'
+      ? 'Invalid path'
+      : newFileErrorCode === 'already-exists'
+        ? 'File already exists'
+        : null;
+
+  // Close context menu on any outside interaction
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('blur', close);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('blur', close);
+    };
+  }, [contextMenu]);
+
+  const startAddingFile = useCallback((dir: string) => {
+    setNewFileName('');
+    setAddingFile({ dir });
+    if (dir) {
+      setOpenDirs(prev => {
+        if (prev.has(dir)) return prev;
+        const next = new Set(prev);
+        next.add(dir);
+        return next;
+      });
+    }
+  }, []);
+
+  const cancelAddingFile = useCallback(() => {
+    setAddingFile(null);
+    setNewFileName('');
+  }, []);
+
+  const handleCreateFile = useCallback(async () => {
+    if (!id || creatingFile || !addingFile) return;
+    if (!trimmedNewName || newFileError) return;
+    const name = newFileFullPath;
+    setCreatingFile(true);
+    try {
+      await writeConfigFile(id, name, '');
+      toast.success(`Created ${name}`);
+      setAddingFile(null);
+      setNewFileName('');
+      await queryClient.invalidateQueries({ queryKey: ['configFiles', id] });
+      setSelectedFile(name);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to create file';
+      toast.error('Create failed', { description: msg });
+    } finally {
+      setCreatingFile(false);
+    }
+  }, [id, creatingFile, addingFile, newFileFullPath, trimmedNewName, newFileError, queryClient]);
+
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     resizing.current = true;
@@ -580,11 +660,53 @@ export function ConfigPage() {
         </div>
       </div>
 
+
+      {contextMenu && (
+        <div
+          className="fixed z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md py-1"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={e => e.stopPropagation()}
+          onContextMenu={e => e.preventDefault()}
+        >
+          {contextMenu.type === 'root' && (
+            <button
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+              onClick={() => { setContextMenu(null); startAddingFile(''); }}
+            >
+              <FilePlus className="h-3.5 w-3.5" />
+              Add file
+            </button>
+          )}
+          {contextMenu.type === 'folder' && (
+            <>
+              <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground font-mono truncate">
+                {contextMenu.dir}
+              </div>
+              <button
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+                onClick={() => { const d = contextMenu.dir; setContextMenu(null); startAddingFile(d); }}
+              >
+                <FilePlus className="h-3.5 w-3.5" />
+                Add file to folder
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Content */}
       <div className="flex flex-1 min-h-0">
         {/* File tree */}
-        <div className="shrink-0 border-r overflow-y-auto" style={{ width: fileTreeWidth }}>
-          <div className="p-2">
+        <div
+          className="shrink-0 border-r overflow-y-auto"
+          style={{ width: fileTreeWidth }}
+          onContextMenu={e => {
+            if (!allowEdit) return;
+            e.preventDefault();
+            setContextMenu({ x: e.clientX, y: e.clientY, type: 'root' });
+          }}
+        >
+          <div className="p-2 min-h-full">
             {(() => {
               // Sort files: root files first, then grouped by directory
               const sorted = [...fileList.files].sort((a, b) => {
@@ -625,6 +747,12 @@ export function ConfigPage() {
                   <button
                     key={file.name}
                     onClick={() => { setSelectedFile(file.name); setShowDiff(false); }}
+                    onContextMenu={e => {
+                      // No file-level actions available yet; suppress root menu but don't open anything.
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setContextMenu(null);
+                    }}
                     className={cn(
                       'flex items-center gap-2 w-full px-2 py-1 rounded text-xs text-left',
                       selectedFile === file.name
@@ -640,15 +768,58 @@ export function ConfigPage() {
                 );
               };
 
+              const renderInlineInput = () => (
+                <div className="flex items-center gap-2 px-2 py-1">
+                  <FileCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <input
+                    autoFocus
+                    type="text"
+                    value={newFileName}
+                    disabled={creatingFile}
+                    placeholder="filename.md"
+                    onChange={e => setNewFileName(e.target.value)}
+                    onClick={e => e.stopPropagation()}
+                    onContextMenu={e => e.stopPropagation()}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (trimmedNewName && !newFileError && !creatingFile) handleCreateFile();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        cancelAddingFile();
+                      }
+                    }}
+                    onBlur={() => {
+                      // Small delay so click on the input doesn't insta-cancel
+                      setTimeout(() => {
+                        if (!creatingFile) cancelAddingFile();
+                      }, 100);
+                    }}
+                    className={cn(
+                      'flex-1 min-w-0 bg-background border rounded px-1.5 py-0.5 text-xs outline-none focus:ring-1 focus:ring-ring',
+                      newFileError && 'border-destructive focus:ring-destructive',
+                    )}
+                  />
+                </div>
+              );
+
               return (
                 <>
                   {rootFiles.map(f => renderFile(f))}
+                  {addingFile && addingFile.dir === '' && renderInlineInput()}
                   {[...dirGroups.entries()].map(([dir, files]) => {
                     const isOpen = openDirs.has(dir);
+                    const isAddingHere = addingFile?.dir === dir;
                     return (
                       <div key={dir}>
                         <button
                           onClick={() => toggleDir(dir)}
+                          onContextMenu={e => {
+                            if (!allowEdit) return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setContextMenu({ x: e.clientX, y: e.clientY, type: 'folder', dir });
+                          }}
                           className="flex items-center gap-2 w-full px-2 py-1 rounded text-xs text-left hover:bg-muted/50 text-muted-foreground"
                         >
                           {isOpen
@@ -657,9 +828,10 @@ export function ConfigPage() {
                           }
                           <span className="truncate">{dir}</span>
                         </button>
-                        {isOpen && (
+                        {(isOpen || isAddingHere) && (
                           <div className="ml-[15px] pl-px border-l border-border">
                             {files.map(f => renderFile(f, true))}
+                            {isAddingHere && renderInlineInput()}
                           </div>
                         )}
                       </div>
