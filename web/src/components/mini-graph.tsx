@@ -118,12 +118,12 @@ export function MiniGraph({
             fill="none"
             stroke="currentColor"
             strokeWidth={quiet ? 1 : 1.2}
-            className={quiet ? 'text-muted-foreground/40' : 'text-muted-foreground/20'}
+            className={quiet ? 'text-emerald-500/35' : 'text-muted-foreground/20'}
           />
         );
       })}
 
-      {/* Quiet tone — small neutral dots + optional single accent on emphasized node */}
+      {/* Quiet tone — soft mint dots + breathing halo on the emphasized node */}
       {quiet && nodes.map((n) => {
         const pos = g.node(n.id);
         if (!pos) return null;
@@ -134,19 +134,19 @@ export function MiniGraph({
               <circle
                 cx={pos.x}
                 cy={pos.y}
-                r={6.5}
+                r={7}
                 fill="none"
                 stroke="currentColor"
-                strokeWidth={1}
-                className="text-primary/50"
+                strokeWidth={1.2}
+                className="text-emerald-400 sqd-node-ring"
               />
             )}
             <circle
               cx={pos.x}
               cy={pos.y}
-              r={isEmph ? 3.5 : 3}
+              r={isEmph ? 3.75 : 3}
               fill="currentColor"
-              className={isEmph ? 'text-primary' : 'text-muted-foreground/70'}
+              className={isEmph ? 'text-emerald-300' : 'text-emerald-400/70'}
             />
           </g>
         );

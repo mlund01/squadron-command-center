@@ -377,3 +377,17 @@ html.defcon5 body {
   100% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
 }
 .task-pulse { animation: task-pulse 1.5s ease-out infinite; }
+
+/* Living border for mission cards with an active run — breathing primary-tinted halo. */
+@keyframes sqd-card-live {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 35%, transparent); }
+  50%      { box-shadow: 0 0 0 4px color-mix(in oklch, var(--primary) 14%, transparent); }
+}
+.sqd-card-live { animation: sqd-card-live 2.4s ease-in-out infinite; }
+
+/* Mini-graph emphasis ring — breathing halo on the running node. */
+@keyframes sqd-node-ring {
+  0%, 100% { opacity: 0.25; transform: scale(0.9); transform-origin: center; transform-box: fill-box; }
+  50%      { opacity: 0.55; transform: scale(1.15); transform-origin: center; transform-box: fill-box; }
+}
+.sqd-node-ring { animation: sqd-node-ring 2s ease-in-out infinite; }

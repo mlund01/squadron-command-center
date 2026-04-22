@@ -2,8 +2,6 @@ import type { ReactNode } from 'react';
 import { MiniGraph, type MiniNode, type MiniEdge } from './mini-graph';
 import { cn } from '@/lib/utils';
 
-export type MissionRunStatus = 'running' | 'completed' | 'failed' | 'queued' | 'stopped' | 'none';
-
 interface MissionCardProps {
   name: string;
   description?: string;
@@ -11,30 +9,12 @@ interface MissionCardProps {
   agents: number;
   inputs: number;
   schedule?: string | null;
-  lastStatus: MissionRunStatus;
+  runningCount: number;
   lastRunAgo?: string | null;
   graph?: { nodes: MiniNode[]; edges: MiniEdge[]; emphasizeId?: string };
   action?: ReactNode;
   onClick?: () => void;
   className?: string;
-}
-
-function StatusLight({ status }: { status: MissionRunStatus }) {
-  const color =
-    status === 'running' ? 'bg-blue-500' :
-    status === 'completed' ? 'bg-green-500' :
-    status === 'failed' ? 'bg-red-500' :
-    status === 'queued' ? 'bg-amber-500' :
-    'bg-muted-foreground/60';
-  const isLive = status === 'running';
-  return (
-    <span className="relative inline-flex h-1.5 w-1.5 shrink-0">
-      <span className={cn('absolute inset-0 rounded-full', color)} />
-      {isLive && (
-        <span className={cn('absolute inset-0 rounded-full animate-ping', color, 'opacity-60')} />
-      )}
-    </span>
-  );
 }
 
 function Dot() {
@@ -48,41 +28,37 @@ export function MissionCard({
   agents,
   inputs,
   schedule,
-  lastStatus,
+  runningCount,
   lastRunAgo,
   graph,
   action,
   onClick,
   className,
 }: MissionCardProps) {
-  const isRunning = lastStatus === 'running';
-  const isFailed = lastStatus === 'failed';
+  const isRunning = runningCount > 0;
 
-  const metaTone =
-    isFailed ? 'text-red-400' :
-    isRunning ? 'text-blue-400' :
-    'text-muted-foreground/80';
-
-  const metaText = lastRunAgo
-    ? isRunning ? `running · ${lastRunAgo}`
-      : isFailed ? `failed · ${lastRunAgo} ago`
-      : `${lastRunAgo} ago`
-    : 'never run';
+  const statusText = isRunning
+    ? `${runningCount} running`
+    : lastRunAgo
+      ? `last run ${lastRunAgo} ago`
+      : 'never run';
 
   return (
     <div
       onClick={onClick}
       className={cn(
-        'group rounded-sm border border-border/60 bg-card/60',
+        'group rounded-sm border bg-card/60',
         'flex flex-col gap-3.5 p-4',
-        'transition-colors hover:border-foreground/25 hover:bg-card',
+        'transition-colors hover:bg-card',
+        isRunning
+          ? 'border-primary/60 sqd-card-live hover:border-primary/80'
+          : 'border-border/60 hover:border-foreground/25',
         onClick && 'cursor-pointer',
         className,
       )}
     >
-      {/* Header: status light + name + overflow */}
+      {/* Header: name + overflow */}
       <div className="flex items-center gap-2">
-        <StatusLight status={lastStatus} />
         <span className="flex-1 truncate font-mono text-[13px] font-semibold tracking-tight">
           {name}
         </span>
@@ -135,7 +111,9 @@ export function MissionCard({
           </>
         )}
         <span className="flex-1" />
-        <span className={cn('shrink-0', metaTone)}>{metaText}</span>
+        <span className={cn('shrink-0', isRunning ? 'text-primary font-medium' : 'text-muted-foreground/80')}>
+          {statusText}
+        </span>
       </div>
     </div>
   );

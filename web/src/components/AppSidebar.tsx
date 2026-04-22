@@ -35,15 +35,6 @@ function IconMission({ className }: IconProps) {
     </svg>
   );
 }
-function IconHistory({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M7 2 A5 5 0 1 1 2 7" />
-      <path d="M2 2 L2 5 L5 5" />
-      <path d="M7 4 L7 7 L9.5 8.5" />
-    </svg>
-  );
-}
 function IconAgent({ className }: IconProps) {
   return (
     <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
@@ -123,7 +114,6 @@ function StatusDot({ tone, live = false, size = 6 }: { tone: 'running' | 'comple
 
 const staticNavItems: { label: string; path: string; icon: (p: IconProps) => ReactElement }[] = [
   { label: 'Missions',  path: 'missions',  icon: IconMission },
-  { label: 'History',   path: 'history',   icon: IconHistory },
   { label: 'Agents',    path: 'agents',    icon: IconAgent },
   { label: 'Skills',    path: 'skills',    icon: IconSkill },
   { label: 'Tools',     path: 'tools',     icon: IconTool },
@@ -174,7 +164,8 @@ export function AppSidebar() {
     queryKey: ['history', id],
     queryFn: () => getMissionHistory(id!),
     enabled: !!id && !!currentInstance?.connected,
-    refetchInterval: 10000,
+    refetchInterval: 3000,
+    refetchIntervalInBackground: false,
   });
 
   const runningCount = (history?.missions ?? []).filter((m) => m.status === 'running').length;
@@ -192,7 +183,9 @@ export function AppSidebar() {
   const activeSection = location.pathname.includes('/missions/') && location.pathname.includes('/run')
     ? 'missions'
     : location.pathname.includes('/runs/')
-    ? 'history'
+    ? 'missions'
+    : location.pathname.includes('/history')
+    ? 'missions'
     : location.pathname.includes('/files')
     ? 'files'
     : location.pathname.includes('/skills/')
