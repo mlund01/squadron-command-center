@@ -591,8 +591,8 @@ export function ConfigPage() {
       {/* Content */}
       <div className="flex flex-1 min-h-0">
         {/* File tree */}
-        <div className="shrink-0 border-r border-border/60 overflow-y-auto bg-card/40" style={{ width: fileTreeWidth }}>
-          <div className="p-2">
+        <div className="shrink-0 border-r border-border/60 overflow-y-auto bg-background" style={{ width: fileTreeWidth }}>
+          <div className="px-1.5 py-1.5">
             {(() => {
               // Sort files: root files first, then grouped by directory
               const sorted = [...fileList.files].sort((a, b) => {
@@ -634,13 +634,13 @@ export function ConfigPage() {
                     key={file.name}
                     onClick={() => { setSelectedFile(file.name); setShowDiff(false); }}
                     className={cn(
-                      'flex items-center gap-2 w-full px-2 py-[5px] rounded-sm font-mono text-[12px] text-left transition-colors',
+                      'flex items-center gap-1.5 w-full px-2 py-[3px] rounded-sm font-mono text-[12px] leading-tight text-left transition-colors',
                       selectedFile === file.name
-                        ? 'bg-accent/50 text-foreground font-medium'
+                        ? 'bg-accent text-foreground font-semibold ring-1 ring-border'
                         : 'hover:bg-accent/25 text-muted-foreground hover:text-foreground',
                     )}
                   >
-                    <FileCode className={cn('h-3.5 w-3.5 shrink-0', isModified ? 'text-amber-400' : 'opacity-70')} />
+                    <FileCode className={cn('h-3 w-3 shrink-0', isModified ? 'text-amber-400' : selectedFile === file.name ? 'text-primary' : 'opacity-70')} />
                     <span className={cn('truncate', isModified && 'text-amber-400 font-semibold')}>
                       {basename}
                     </span>
@@ -658,16 +658,16 @@ export function ConfigPage() {
                       <div key={dir}>
                         <button
                           onClick={() => toggleDir(dir)}
-                          className="flex items-center gap-1.5 w-full px-2 py-[5px] rounded-sm font-mono text-[11px] uppercase tracking-wider text-left hover:bg-accent/25 text-muted-foreground/80 hover:text-foreground transition-colors"
+                          className="flex items-center gap-1 w-full px-2 py-[3px] mt-1 first:mt-0 rounded-sm font-mono text-[10px] uppercase tracking-[0.1em] leading-tight text-left hover:bg-accent/25 text-muted-foreground/70 hover:text-foreground transition-colors"
                         >
                           {isOpen
-                            ? <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
-                            : <ChevronRight className="h-3 w-3 shrink-0 opacity-70" />
+                            ? <ChevronDown className="h-2.5 w-2.5 shrink-0 opacity-70" />
+                            : <ChevronRight className="h-2.5 w-2.5 shrink-0 opacity-70" />
                           }
                           <span className="truncate">{dir}</span>
                         </button>
                         {isOpen && (
-                          <div className="ml-[15px] pl-px border-l border-border/60">
+                          <div className="ml-[13px] pl-px border-l border-border/60">
                             {files.map(f => renderFile(f, true))}
                           </div>
                         )}
