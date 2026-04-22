@@ -385,6 +385,13 @@ html.defcon5 body {
 }
 .sqd-card-live { animation: sqd-card-live 2.4s ease-in-out infinite; }
 
+/* Stencil display face used only for the Squadron brand mark. */
+.sqd-brand {
+  font-family: 'Black Ops One', 'Courier New', ui-monospace, monospace;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+
 /* Shared auto-fill grid used by the Missions/Agents/Skills list pages. */
 .sqd-card-grid {
   display: grid;

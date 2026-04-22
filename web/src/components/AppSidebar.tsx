@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react';
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -16,86 +16,23 @@ import {
   SelectTrigger,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, AlertTriangle, LogOut } from 'lucide-react';
+import {
+  RefreshCw,
+  AlertTriangle,
+  LogOut,
+  Rocket,
+  Bot,
+  Sparkles,
+  Puzzle,
+  DollarSign,
+  KeyRound,
+  FileCode,
+  FolderOpen,
+  type LucideIcon,
+} from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { cn } from '@/lib/utils';
-
-type IconProps = { className?: string };
-
-// Minimal hairline icons — 14×14, 1.3 stroke, matching the design bundle
-function IconMission({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="3" cy="3" r="1.5" />
-      <circle cx="11" cy="3" r="1.5" />
-      <circle cx="7" cy="11" r="1.5" />
-      <path d="M3 3 L7 11 M11 3 L7 11" />
-    </svg>
-  );
-}
-function IconAgent({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="7" cy="5" r="2" />
-      <path d="M3 12 C3 9 5 8 7 8 C9 8 11 9 11 12" />
-    </svg>
-  );
-}
-function IconSkill({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 7 L5 4 L8 7 L5 10 Z" />
-      <path d="M9 3 L12 6" />
-    </svg>
-  );
-}
-function IconTool({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 2 A3 3 0 0 0 6 5 L2 9 L4 11 L8 7 A3 3 0 0 0 11 4 L10 5 L9 4 L10 3 Z" />
-    </svg>
-  );
-}
-function IconCost({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M7 2 L7 12 M4 4 L10 4 Q10 7 7 7 Q4 7 4 9.5 L10 9.5" />
-    </svg>
-  );
-}
-function IconVar({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M10 3 Q6 3 6 7 Q6 11 10 11 M4 6 L6 8 M4 8 L6 6" />
-    </svg>
-  );
-}
-function IconCfg({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="7" cy="7" r="2" />
-      <path d="M7 1 L7 3 M7 11 L7 13 M1 7 L3 7 M11 7 L13 7 M3 3 L4 4 M10 10 L11 11 M3 11 L4 10 M10 4 L11 3" />
-    </svg>
-  );
-}
-function IconFolder({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 4 L6 4 L7 5 L12 5 L12 11 L2 11 Z" />
-    </svg>
-  );
-}
-
-function SquadronMark({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 18 18" className={cn('size-[18px]', className)} fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.4}>
-      <path d="M3 5 L9 2 L15 5" className="stroke-primary" />
-      <path d="M3 9 L9 6 L15 9" className="stroke-foreground" />
-      <path d="M3 13 L9 10 L15 13" className="stroke-muted-foreground" />
-    </svg>
-  );
-}
 
 function StatusDot({ tone, live = false, size = 6 }: { tone: 'running' | 'completed' | 'failed' | 'idle'; live?: boolean; size?: number }) {
   const color =
@@ -111,14 +48,14 @@ function StatusDot({ tone, live = false, size = 6 }: { tone: 'running' | 'comple
   );
 }
 
-const staticNavItems: { label: string; path: string; icon: (p: IconProps) => ReactElement }[] = [
-  { label: 'Missions',  path: 'missions',  icon: IconMission },
-  { label: 'Agents',    path: 'agents',    icon: IconAgent },
-  { label: 'Skills',    path: 'skills',    icon: IconSkill },
-  { label: 'Tools',     path: 'tools',     icon: IconTool },
-  { label: 'Costs',     path: 'costs',     icon: IconCost },
-  { label: 'Variables', path: 'variables', icon: IconVar },
-  { label: 'Config',    path: 'config',    icon: IconCfg },
+const staticNavItems: { label: string; path: string; icon: LucideIcon }[] = [
+  { label: 'Missions',  path: 'missions',  icon: Rocket },
+  { label: 'Agents',    path: 'agents',    icon: Bot },
+  { label: 'Skills',    path: 'skills',    icon: Sparkles },
+  { label: 'Tools',     path: 'tools',     icon: Puzzle },
+  { label: 'Costs',     path: 'costs',     icon: DollarSign },
+  { label: 'Variables', path: 'variables', icon: KeyRound },
+  { label: 'Config',    path: 'config',    icon: FileCode },
 ];
 
 export function AppSidebar() {
@@ -182,7 +119,7 @@ export function AppSidebar() {
   };
 
   const navItems = currentInstance?.config?.sharedFolders?.length
-    ? [...staticNavItems, { label: 'Folders', path: 'files', icon: IconFolder }]
+    ? [...staticNavItems, { label: 'Folders', path: 'files', icon: FolderOpen }]
     : staticNavItems;
 
   const activePath = location.pathname.split('/').at(-1) ?? '';
@@ -201,9 +138,9 @@ export function AppSidebar() {
   return (
     <Sidebar>
       {/* Brand header */}
-      <SidebarHeader className="h-11 px-3.5 py-0 flex-row items-center gap-2 border-b border-sidebar-border">
-        <SquadronMark />
-        <span className="font-mono text-[13px] font-semibold tracking-tight">Squadron</span>
+      <SidebarHeader className="h-11 px-3.5 py-0 flex-row items-center justify-center gap-2 border-b border-sidebar-border">
+        <img src="/squadron-logo.svg" alt="Squadron" className="size-[18px] shrink-0" />
+        <span className="sqd-brand text-[14px] uppercase leading-none">Squadron</span>
       </SidebarHeader>
 
       {/* Workspace picker */}
@@ -276,7 +213,10 @@ export function AppSidebar() {
                   !id && 'pointer-events-none opacity-50',
                 )}
               >
-                <Icon className={isActive ? 'text-sidebar-accent-foreground' : 'text-muted-foreground'} />
+                <Icon
+                  className={cn('size-3.5', isActive ? 'text-sidebar-accent-foreground' : 'text-muted-foreground')}
+                  strokeWidth={1.75}
+                />
                 <span className="flex-1 truncate">{item.label}</span>
                 {count !== undefined && (
                   <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground/70">
