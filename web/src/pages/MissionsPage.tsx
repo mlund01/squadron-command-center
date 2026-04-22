@@ -99,7 +99,9 @@ export function MissionsPage() {
   const [dialogMission, setDialogMission] = useState<MissionInfo | null>(null);
   const [filter, setFilter] = useState<FilterKey>('all');
   const [historyFilter, setHistoryFilter] = useState<HistoryFilterKey>('all');
-  const [search, setSearch] = useState('');
+  // Seed the search input from a ?q= query param (e.g. when arriving from a
+  // mission detail page's "N runs" link).
+  const [search, setSearch] = useState(() => searchParams.get('q') ?? '');
 
   const { data: instance, isLoading } = useQuery({
     queryKey: ['instance', id],
@@ -141,15 +143,13 @@ export function MissionsPage() {
       const run = lastRunByName.get(m.name);
       const runningCount = runningByName.get(m.name) ?? 0;
       const lastRunAgo = run ? formatTimeAgo(run.finishedAt ?? run.startedAt) : null;
-      const lastFailed = run?.status === 'failed';
-      return { mission: m, runningCount, lastRunAgo, lastFailed };
+      return { mission: m, runningCount, lastRunAgo };
     });
   }, [missions, lastRunByName, runningByName]);
 
   const totalTasks = missions.reduce((s, m) => s + (m.tasks?.length ?? 0), 0);
   const scheduledCount = missions.filter((m) => (m.schedules?.length ?? 0) > 0).length;
   const runningCount = enriched.reduce((s, e) => s + e.runningCount, 0);
-  const failedCount = enriched.filter((e) => e.lastFailed).length;
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -207,6 +207,7 @@ export function MissionsPage() {
     const next = new URLSearchParams(searchParams);
     if (v === 'missions') next.delete('view');
     else next.set('view', v);
+    next.delete('q');
     setSearchParams(next, { replace: true });
     setSearch('');
   };
@@ -249,7 +250,6 @@ export function MissionsPage() {
               <Stat k="tasks" v={totalTasks} />
               <Stat k="scheduled" v={scheduledCount} />
               <Stat k="running" v={runningCount} accent={runningCount > 0 ? 'running' : undefined} />
-              {failedCount > 0 && <Stat k="failed" v={failedCount} accent="failed" />}
 
               <span className="flex-1" />
 

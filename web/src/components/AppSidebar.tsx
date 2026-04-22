@@ -2,7 +2,7 @@ import { useState, type ReactElement } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { listInstances, reloadConfig, getCurrentUser, logout, getMissionHistory } from '@/api/client';
+import { listInstances, reloadConfig, getCurrentUser, logout, getMissionHistory, getServerInfo } from '@/api/client';
 import {
   Sidebar,
   SidebarContent,
@@ -14,7 +14,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, AlertTriangle, LogOut } from 'lucide-react';
@@ -157,6 +156,12 @@ export function AppSidebar() {
     staleTime: Infinity,
   });
 
+  const { data: serverInfo } = useQuery({
+    queryKey: ['serverInfo'],
+    queryFn: getServerInfo,
+    staleTime: Infinity,
+  });
+
   const connectedInstances = instances?.filter((i) => i.connected) ?? [];
   const currentInstance = instances?.find((i) => i.id === id);
 
@@ -204,25 +209,24 @@ export function AppSidebar() {
       <div className="px-3 pt-3 pb-2 border-b border-sidebar-border">
         <Select value={id ?? ''} onValueChange={handleInstanceChange}>
           <SelectTrigger
-            className="w-full h-auto py-[5px] px-2 rounded-sm border-sidebar-border shadow-none bg-transparent text-[11.5px] text-muted-foreground hover:text-foreground"
+            className="w-full min-w-0 h-auto py-[5px] px-2 rounded-sm border-sidebar-border shadow-none bg-transparent text-[11.5px] text-muted-foreground hover:text-foreground"
           >
-            <div className="flex items-center gap-2 flex-1 min-w-0">
+            <span className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
               <StatusDot tone={currentInstance?.connected ? 'completed' : 'idle'} size={6} />
-              <SelectValue placeholder="Select instance..." />
+              <span className={cn('truncate text-left min-w-0 flex-1', !currentInstance && 'text-muted-foreground/60')}>
+                {currentInstance?.name ?? 'Select instance…'}
+              </span>
               {currentInstance && (
-                <span className="ml-auto font-mono text-[10px] text-muted-foreground/70 shrink-0">
+                <span className="font-mono text-[10px] text-muted-foreground/70 shrink-0">
                   v{currentInstance.version}
                 </span>
               )}
-            </div>
+            </span>
           </SelectTrigger>
           <SelectContent>
             {connectedInstances.map((instance) => (
               <SelectItem key={instance.id} value={instance.id}>
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
-                  <span>{instance.name}</span>
-                </div>
+                <span className="truncate">{instance.name}</span>
               </SelectItem>
             ))}
             {connectedInstances.length === 0 && (
@@ -303,10 +307,18 @@ export function AppSidebar() {
             </TooltipContent>
           </Tooltip>
         )}
+        {serverInfo?.version && (
+          <div
+            className="px-3.5 pb-2 mt-auto font-mono text-[9.5px] uppercase tracking-[0.12em] text-muted-foreground/60 truncate"
+            title="Command Center version"
+          >
+            command center · v{serverInfo.version}
+          </div>
+        )}
       </SidebarContent>
 
       {/* Footer */}
-      <SidebarFooter className="px-3.5 py-2.5 gap-2 border-t border-sidebar-border">
+      <SidebarFooter className="px-3.5 py-2.5 gap-1.5 border-t border-sidebar-border">
         <div className="flex items-center gap-1.5 font-mono text-[10.5px] text-muted-foreground/80">
           <StatusDot
             tone={runningCount > 0 ? 'running' : currentInstance?.connected ? 'completed' : 'idle'}

@@ -3,10 +3,32 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"runtime/debug"
 
 	"commander/internal/hub"
 	"commander/internal/keepalive"
 )
+
+// Version is overridable at build time via -ldflags "-X commander/internal/api.Version=vX.Y.Z".
+// When empty, we fall back to the VCS revision from the embedded build info.
+var Version = ""
+
+func commanderVersion() string {
+	if Version != "" {
+		return Version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" {
+				if len(s.Value) > 7 {
+					return s.Value[:7]
+				}
+				return s.Value
+			}
+		}
+	}
+	return "dev"
+}
 
 // RegisterRoutes registers all REST API endpoints.
 // ka is an optional KeepAlive for managed lifecycle (nil to disable).
@@ -114,6 +136,7 @@ func handleInfo() http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{
 			"baseUrl": scheme + "://" + r.Host,
+			"version": commanderVersion(),
 		})
 	}
 }
