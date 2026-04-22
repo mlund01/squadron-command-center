@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import { ChevronRight, Info, Search } from 'lucide-react';
+import { ChevronRight, Info } from 'lucide-react';
 import { getInstance } from '@/api/client';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { FilterChip, InlineStat, SearchBox } from '@/components/ui-shell';
 import {
   Dialog,
   DialogContent,
@@ -20,7 +21,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { cn } from '@/lib/utils';
 import type { PluginInfo, ToolInfo, ToolProperty } from '@/api/types';
 
 type Kind = 'builtin' | 'plugin' | 'mcp';
@@ -131,10 +131,10 @@ export function PluginsPage() {
       ) : (
         <>
           <div className="flex items-center gap-6 pb-3.5 mb-4 border-b border-border/60 font-mono text-[11px] text-muted-foreground/80 flex-wrap">
-            <Stat k="built-ins" v={counts.builtin} />
-            <Stat k="plugins" v={counts.plugin} tone={counts.plugin > 0 ? 'blue' : undefined} />
-            <Stat k="mcp" v={counts.mcp} tone={counts.mcp > 0 ? 'emerald' : undefined} />
-            <Stat k="tools" v={totalTools} />
+            <InlineStat k="built-ins" v={counts.builtin} />
+            <InlineStat k="plugins" v={counts.plugin} tone={counts.plugin > 0 ? 'blue' : undefined} />
+            <InlineStat k="mcp" v={counts.mcp} tone={counts.mcp > 0 ? 'emerald' : undefined} />
+            <InlineStat k="tools" v={totalTools} />
 
             <span className="flex-1" />
 
@@ -145,16 +145,7 @@ export function PluginsPage() {
               <FilterChip active={filter === 'mcp'} onClick={() => setFilter('mcp')}>MCP</FilterChip>
             </div>
 
-            <div className="flex items-center gap-1.5 px-2.5 py-1 border border-border/60 rounded-sm w-[200px] text-foreground/90">
-              <Search className="h-3 w-3 text-muted-foreground/70" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search tools"
-                className="flex-1 bg-transparent outline-none text-[11.5px] placeholder:text-muted-foreground/60 font-sans"
-              />
-            </div>
+            <SearchBox value={search} onChange={setSearch} placeholder="Search tools" />
           </div>
 
           {visible.length === 0 ? (
@@ -198,44 +189,6 @@ export function PluginsPage() {
 
       <ToolDetailDialog info={activeTool} onClose={() => setActiveTool(null)} />
     </div>
-  );
-}
-
-function Stat({ k, v, tone }: { k: string; v: number; tone?: 'blue' | 'emerald' }) {
-  const toneClass =
-    tone === 'blue' ? 'text-blue-400' :
-    tone === 'emerald' ? 'text-emerald-400' :
-    'text-foreground';
-  return (
-    <span className="inline-flex items-baseline gap-1.5">
-      <span className={cn('tabular-nums text-[13px] font-medium', toneClass)}>{v}</span>
-      <span className="tracking-[0.3px]">{k}</span>
-    </span>
-  );
-}
-
-function FilterChip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'font-sans text-[11.5px] px-2.5 py-[3px] rounded-sm border transition-colors cursor-pointer',
-        active
-          ? 'text-foreground bg-accent/40 border-border'
-          : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-accent/20',
-      )}
-    >
-      {children}
-    </button>
   );
 }
 

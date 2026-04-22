@@ -12,6 +12,7 @@ import {
   ChartLegendContent,
   type ChartConfig,
 } from '@/components/ui/chart';
+import { FilterChip, InlineStat } from '@/components/ui-shell';
 import { cn } from '@/lib/utils';
 
 const PERIODS = [
@@ -171,12 +172,12 @@ export function CostsPage() {
 
       {/* Stats + period chips strip */}
       <div className="flex items-center gap-6 pb-3.5 mb-4 border-b border-border/60 font-mono text-[11px] text-muted-foreground/80 flex-wrap">
-        <CostStat k="total" v={fmtCost(totals?.totalCost ?? 0)} emphasize />
-        <CostStat k="turns" v={fmtNum(totals?.totalTurns ?? 0)} />
-        <CostStat k="input" v={fmtCost(totals?.inputCost ?? 0)} />
-        <CostStat k="cache r" v={fmtCost(totals?.cacheReadCost ?? 0)} />
-        <CostStat k="cache w" v={fmtCost(totals?.cacheWriteCost ?? 0)} />
-        <CostStat k="output" v={fmtCost(totals?.outputCost ?? 0)} />
+        <InlineStat k="total" v={fmtCost(totals?.totalCost ?? 0)} emphasize />
+        <InlineStat k="turns" v={fmtNum(totals?.totalTurns ?? 0)} />
+        <InlineStat k="input" v={fmtCost(totals?.inputCost ?? 0)} />
+        <InlineStat k="cache r" v={fmtCost(totals?.cacheReadCost ?? 0)} />
+        <InlineStat k="cache w" v={fmtCost(totals?.cacheWriteCost ?? 0)} />
+        <InlineStat k="output" v={fmtCost(totals?.outputCost ?? 0)} />
 
         <span className="flex-1" />
 
@@ -348,47 +349,6 @@ export function CostsPage() {
         )}
       </Panel>
     </div>
-  );
-}
-
-function CostStat({ k, v, emphasize }: { k: string; v: string; emphasize?: boolean }) {
-  return (
-    <span className="inline-flex items-baseline gap-1.5">
-      <span
-        className={cn(
-          'tabular-nums text-[13px]',
-          emphasize ? 'text-foreground font-semibold' : 'text-foreground font-medium',
-        )}
-      >
-        {v}
-      </span>
-      <span className="tracking-[0.3px]">{k}</span>
-    </span>
-  );
-}
-
-function FilterChip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'font-sans text-[11.5px] px-2.5 py-[3px] rounded-sm border transition-colors cursor-pointer',
-        active
-          ? 'text-foreground bg-accent/40 border-border'
-          : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-accent/20',
-      )}
-    >
-      {children}
-    </button>
   );
 }
 

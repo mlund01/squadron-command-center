@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { MiniGraph, type MiniNode, type MiniEdge } from './mini-graph';
+import { Dot } from './ui-shell';
 import { cn } from '@/lib/utils';
 
 interface MissionCardProps {
@@ -11,14 +12,10 @@ interface MissionCardProps {
   schedule?: string | null;
   runningCount: number;
   lastRunAgo?: string | null;
-  graph?: { nodes: MiniNode[]; edges: MiniEdge[]; emphasizeId?: string };
+  graph?: { nodes: MiniNode[]; edges: MiniEdge[] };
   action?: ReactNode;
   onClick?: () => void;
   className?: string;
-}
-
-function Dot() {
-  return <span className="text-muted-foreground/50">·</span>;
 }
 
 export function MissionCard({
@@ -83,7 +80,6 @@ export function MissionCard({
             nodes={graph.nodes}
             edges={graph.edges}
             tone="quiet"
-            emphasizeId={graph.emphasizeId}
             width={260}
             height={58}
             className="w-full"

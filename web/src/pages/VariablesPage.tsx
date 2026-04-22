@@ -14,9 +14,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Lock, Pencil, Trash2, Check, X, Search } from 'lucide-react';
+import { Lock, Pencil, Trash2, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { FilterChip, InlineStat, SearchBox } from '@/components/ui-shell';
 
 type FilterKey = 'all' | 'override' | 'default' | 'unset' | 'secrets';
 
@@ -118,10 +119,10 @@ export function VariablesPage() {
       ) : (
         <>
           <div className="flex items-center gap-6 pb-3.5 mb-4 border-b border-border/60 font-mono text-[11px] text-muted-foreground/80 flex-wrap">
-            <Stat k="vars" v={total} />
-            <Stat k="overridden" v={overrides} tone={overrides > 0 ? 'primary' : undefined} />
-            <Stat k="secrets" v={secrets} />
-            <Stat k="unset" v={unset} tone={unset > 0 ? 'warn' : undefined} />
+            <InlineStat k="vars" v={total} />
+            <InlineStat k="overridden" v={overrides} tone={overrides > 0 ? 'primary' : undefined} />
+            <InlineStat k="secrets" v={secrets} />
+            <InlineStat k="unset" v={unset} tone={unset > 0 ? 'warn' : undefined} />
 
             <span className="flex-1" />
 
@@ -133,16 +134,7 @@ export function VariablesPage() {
               <FilterChip active={filter === 'secrets'} onClick={() => setFilter('secrets')}>Secrets</FilterChip>
             </div>
 
-            <div className="flex items-center gap-1.5 px-2.5 py-1 border border-border/60 rounded-sm w-[200px] text-foreground/90">
-              <Search className="h-3 w-3 text-muted-foreground/70" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search variables"
-                className="flex-1 bg-transparent outline-none text-[11.5px] placeholder:text-muted-foreground/60 font-sans"
-              />
-            </div>
+            <SearchBox value={search} onChange={setSearch} placeholder="Search variables" />
           </div>
 
           {visible.length === 0 ? (
@@ -266,40 +258,3 @@ function SourceBadge({ source }: { source: VariableDetail['source'] }) {
   );
 }
 
-function Stat({ k, v, tone }: { k: string; v: number; tone?: 'primary' | 'warn' }) {
-  const cls =
-    tone === 'primary' ? 'text-primary' :
-    tone === 'warn' ? 'text-amber-400' :
-    'text-foreground';
-  return (
-    <span className="inline-flex items-baseline gap-1.5">
-      <span className={cn('tabular-nums text-[13px] font-medium', cls)}>{v}</span>
-      <span className="tracking-[0.3px]">{k}</span>
-    </span>
-  );
-}
-
-function FilterChip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'font-sans text-[11.5px] px-2.5 py-[3px] rounded-sm border transition-colors cursor-pointer',
-        active
-          ? 'text-foreground bg-accent/40 border-border'
-          : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-accent/20',
-      )}
-    >
-      {children}
-    </button>
-  );
-}

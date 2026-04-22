@@ -9,7 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { MoreVertical, Play, Search } from 'lucide-react';
+import { MoreVertical, Play } from 'lucide-react';
 import { MissionCard } from '@/components/mission-card';
 import { RunMissionDialog } from '@/components/RunMissionDialog';
 import {
@@ -20,9 +20,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { formatTime, formatDuration } from '@/lib/mission-utils';
+import { formatTime, formatDuration, formatTimeAgo, formatSchedule } from '@/lib/mission-utils';
+import { FilterChip, InlineStat, SearchBox } from '@/components/ui-shell';
 import type { MiniNode, MiniEdge } from '@/components/mini-graph';
-import type { MissionInfo, MissionRecordInfo, ScheduleInfo } from '@/api/types';
+import type { MissionInfo, MissionRecordInfo } from '@/api/types';
 import { cn } from '@/lib/utils';
 
 type ViewKey = 'missions' | 'history';
@@ -64,30 +65,6 @@ function buildMissionMiniGraph(mission: MissionInfo): { nodes: MiniNode[]; edges
   return { nodes, edges };
 }
 
-function formatTimeAgo(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!isFinite(ms) || ms < 0) return '—';
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  const d = Math.floor(h / 24);
-  return `${d}d`;
-}
-
-function formatSchedule(s: ScheduleInfo | undefined): string | null {
-  if (!s) return null;
-  if (s.every) return `@every ${s.every}`;
-  if (s.at && s.at.length > 0) {
-    const prefix = s.weekdays && s.weekdays.length > 0 ? '@weekly' : '@daily';
-    return `${prefix} ${s.at[0]}`;
-  }
-  if (s.expression) return s.expression;
-  return 'scheduled';
-}
-
 export function MissionsPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -108,6 +85,7 @@ export function MissionsPage() {
     queryFn: () => getInstance(id!),
     enabled: !!id,
     refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   });
 
   // Poll every 3s so running / just-finished missions light up (and stop
@@ -138,12 +116,21 @@ export function MissionsPage() {
     return { lastRunByName: last, runningByName: running };
   }, [history]);
 
+  // Precompute the per-mission graph + schedule alongside the run stats. This
+  // keeps dagre layout off the render hot path — search-box keystrokes would
+  // otherwise rebuild every card's graph even for filtered-out rows.
   const enriched = useMemo(() => {
     return missions.map((m) => {
       const run = lastRunByName.get(m.name);
       const runningCount = runningByName.get(m.name) ?? 0;
       const lastRunAgo = run ? formatTimeAgo(run.finishedAt ?? run.startedAt) : null;
-      return { mission: m, runningCount, lastRunAgo };
+      return {
+        mission: m,
+        runningCount,
+        lastRunAgo,
+        graph: buildMissionMiniGraph(m),
+        schedule: formatSchedule(m.schedules?.[0]),
+      };
     });
   }, [missions, lastRunByName, runningByName]);
 
@@ -219,7 +206,6 @@ export function MissionsPage() {
 
   return (
     <div className="px-8 py-7 w-full">
-      {/* Header */}
       <div className="flex items-end gap-4 mb-5">
         <div className="flex flex-col gap-1">
           <h1 className="text-[22px] font-semibold tracking-tight leading-none">Missions</h1>
@@ -232,7 +218,6 @@ export function MissionsPage() {
 
         <div className="flex-1" />
 
-        {/* View toggle */}
         <div className="flex items-center gap-0 rounded-sm border border-border/60 overflow-hidden font-mono text-[11px]">
           <ViewTab active={showingMissions} onClick={() => switchView('missions')}>Configured</ViewTab>
           <ViewTab active={!showingMissions} onClick={() => switchView('history')}>History</ViewTab>
@@ -244,12 +229,11 @@ export function MissionsPage() {
           <p className="text-muted-foreground">No missions configured.</p>
         ) : (
           <>
-            {/* Stats + filters strip */}
             <div className="flex items-center gap-6 pb-3.5 mb-4 border-b border-border/60 font-mono text-[11px] text-muted-foreground/80 flex-wrap">
-              <Stat k="missions" v={missions.length} />
-              <Stat k="tasks" v={totalTasks} />
-              <Stat k="scheduled" v={scheduledCount} />
-              <Stat k="running" v={runningCount} accent={runningCount > 0 ? 'running' : undefined} />
+              <InlineStat k="missions" v={missions.length} />
+              <InlineStat k="tasks" v={totalTasks} />
+              <InlineStat k="scheduled" v={scheduledCount} />
+              <InlineStat k="running" v={runningCount} tone={runningCount > 0 ? 'running' : undefined} />
 
               <span className="flex-1" />
 
@@ -265,11 +249,8 @@ export function MissionsPage() {
             {visible.length === 0 ? (
               <p className="text-muted-foreground text-sm mt-10 text-center">No missions match.</p>
             ) : (
-              <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
-                {visible.map(({ mission: m, runningCount, lastRunAgo }) => {
-                  const graph = buildMissionMiniGraph(m);
-                  const schedule = formatSchedule(m.schedules?.[0]);
-                  return (
+              <div className="sqd-card-grid">
+                {visible.map(({ mission: m, runningCount, lastRunAgo, graph, schedule }) => (
                     <MissionCard
                       key={m.name}
                       name={m.name}
@@ -305,14 +286,12 @@ export function MissionsPage() {
                         </DropdownMenu>
                       }
                     />
-                  );
-                })}
+                ))}
               </div>
             )}
           </>
         )
       ) : (
-        // History view
         !instance.connected ? (
           <p className="text-muted-foreground">Instance is disconnected. History is unavailable.</p>
         ) : runs.length === 0 ? (
@@ -320,10 +299,10 @@ export function MissionsPage() {
         ) : (
           <>
             <div className="flex items-center gap-6 pb-3.5 mb-4 border-b border-border/60 font-mono text-[11px] text-muted-foreground/80 flex-wrap">
-              <Stat k="runs" v={totalRuns} />
-              <Stat k="running" v={historyRunning} accent={historyRunning > 0 ? 'running' : undefined} />
-              <Stat k="completed" v={historyCompleted} />
-              <Stat k="failed" v={historyFailed} accent={historyFailed > 0 ? 'failed' : undefined} />
+              <InlineStat k="runs" v={totalRuns} />
+              <InlineStat k="running" v={historyRunning} tone={historyRunning > 0 ? 'running' : undefined} />
+              <InlineStat k="completed" v={historyCompleted} />
+              <InlineStat k="failed" v={historyFailed} tone={historyFailed > 0 ? 'failed' : undefined} />
 
               <span className="flex-1" />
 
@@ -433,55 +412,3 @@ function StatusPill({ status }: { status: string }) {
   );
 }
 
-function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
-  return (
-    <div className="flex items-center gap-1.5 px-2.5 py-1 border border-border/60 rounded-sm w-[200px] text-foreground/90">
-      <Search className="h-3 w-3 text-muted-foreground/70" />
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="flex-1 bg-transparent outline-none text-[11.5px] placeholder:text-muted-foreground/60 font-sans"
-      />
-    </div>
-  );
-}
-
-function Stat({ k, v, accent }: { k: string; v: number; accent?: 'running' | 'failed' }) {
-  const tone =
-    accent === 'running' ? 'text-blue-400' :
-    accent === 'failed' ? 'text-red-400' :
-    'text-foreground';
-  return (
-    <span className="inline-flex items-baseline gap-1.5">
-      <span className={cn('tabular-nums text-[13px] font-medium', tone)}>{v}</span>
-      <span className="tracking-[0.3px]">{k}</span>
-    </span>
-  );
-}
-
-function FilterChip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'font-sans text-[11.5px] px-2.5 py-[3px] rounded-sm border transition-colors cursor-pointer',
-        active
-          ? 'text-foreground bg-accent/40 border-border'
-          : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-accent/20',
-      )}
-    >
-      {children}
-    </button>
-  );
-}

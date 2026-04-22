@@ -1,12 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Search } from 'lucide-react';
 import { getInstance } from '@/api/client';
 import { SkillCard } from '@/components/skill-card';
+import { FilterChip, InlineStat, SearchBox } from '@/components/ui-shell';
 import type { MiniNode, MiniEdge } from '@/components/mini-graph';
 import type { SkillInfo, AgentInfo, PluginInfo } from '@/api/types';
-import { cn } from '@/lib/utils';
 
 type FilterKey = 'all' | 'global' | 'scoped' | 'unused';
 
@@ -74,6 +73,7 @@ export function SkillsPage() {
     queryFn: () => getInstance(id!),
     enabled: !!id,
     refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   });
 
   const skills = useMemo(() => {
@@ -95,20 +95,29 @@ export function SkillsPage() {
   const scopedCount = skills.filter((s) => s.agent).length;
   const withToolsCount = skills.filter((s) => (s.tools?.length ?? 0) > 0).length;
 
+  // Precompute each skill's mini-graph (keeps dagre off the render hot path).
+  const enriched = useMemo(() => {
+    return skills.map((s) => ({
+      skill: s,
+      graph: buildSkillMiniGraph(s, allAgents, allPlugins),
+      usedBy: usedByCount.get(s.name) ?? 0,
+    }));
+  }, [skills, allAgents, allPlugins, usedByCount]);
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return skills.filter((s) => {
+    return enriched.filter(({ skill: s, usedBy }) => {
       if (q && !s.name.toLowerCase().includes(q) && !(s.description ?? '').toLowerCase().includes(q)) {
         return false;
       }
       switch (filter) {
         case 'global': return !s.agent;
         case 'scoped': return !!s.agent;
-        case 'unused': return (usedByCount.get(s.name) ?? 0) === 0;
+        case 'unused': return usedBy === 0;
         case 'all':    return true;
       }
     });
-  }, [skills, filter, search, usedByCount]);
+  }, [enriched, filter, search]);
 
   if (isLoading) return <div className="p-8 text-muted-foreground">Loading...</div>;
   if (!instance) return <div className="p-8 text-muted-foreground">Instance not found</div>;
@@ -129,10 +138,10 @@ export function SkillsPage() {
       ) : (
         <>
           <div className="flex items-center gap-6 pb-3.5 mb-4 border-b border-border/60 font-mono text-[11px] text-muted-foreground/80 flex-wrap">
-            <Stat k="skills" v={skills.length} />
-            <Stat k="global" v={globalCount} />
-            <Stat k="scoped" v={scopedCount} />
-            <Stat k="with tools" v={withToolsCount} />
+            <InlineStat k="skills" v={skills.length} />
+            <InlineStat k="global" v={globalCount} />
+            <InlineStat k="scoped" v={scopedCount} />
+            <InlineStat k="with tools" v={withToolsCount} />
 
             <span className="flex-1" />
 
@@ -143,37 +152,25 @@ export function SkillsPage() {
               <FilterChip active={filter === 'unused'} onClick={() => setFilter('unused')}>Unused</FilterChip>
             </div>
 
-            <div className="flex items-center gap-1.5 px-2.5 py-1 border border-border/60 rounded-sm w-[200px] text-foreground/90">
-              <Search className="h-3 w-3 text-muted-foreground/70" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search skills"
-                className="flex-1 bg-transparent outline-none text-[11.5px] placeholder:text-muted-foreground/60 font-sans"
-              />
-            </div>
+            <SearchBox value={search} onChange={setSearch} placeholder="Search skills" />
           </div>
 
           {visible.length === 0 ? (
             <p className="text-muted-foreground text-sm mt-10 text-center">No skills match.</p>
           ) : (
-            <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
-              {visible.map((s) => {
-                const graph = buildSkillMiniGraph(s, allAgents, allPlugins);
-                return (
-                  <SkillCard
-                    key={`${s.agent ?? 'global'}-${s.name}`}
-                    name={s.name}
-                    description={s.description}
-                    tools={s.tools?.length ?? 0}
-                    usedBy={usedByCount.get(s.name) ?? 0}
-                    agent={s.agent ?? null}
-                    graph={graph}
-                    onClick={() => navigate(`/instances/${id}/skills/${s.name}`)}
-                  />
-                );
-              })}
+            <div className="sqd-card-grid">
+              {visible.map(({ skill: s, graph, usedBy }) => (
+                <SkillCard
+                  key={`${s.agent ?? 'global'}-${s.name}`}
+                  name={s.name}
+                  description={s.description}
+                  tools={s.tools?.length ?? 0}
+                  usedBy={usedBy}
+                  agent={s.agent ?? null}
+                  graph={graph}
+                  onClick={() => navigate(`/instances/${id}/skills/${s.name}`)}
+                />
+              ))}
             </div>
           )}
         </>
@@ -182,36 +179,3 @@ export function SkillsPage() {
   );
 }
 
-function Stat({ k, v }: { k: string; v: number }) {
-  return (
-    <span className="inline-flex items-baseline gap-1.5">
-      <span className="tabular-nums text-[13px] font-medium text-foreground">{v}</span>
-      <span className="tracking-[0.3px]">{k}</span>
-    </span>
-  );
-}
-
-function FilterChip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'font-sans text-[11.5px] px-2.5 py-[3px] rounded-sm border transition-colors cursor-pointer',
-        active
-          ? 'text-foreground bg-accent/40 border-border'
-          : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-accent/20',
-      )}
-    >
-      {children}
-    </button>
-  );
-}

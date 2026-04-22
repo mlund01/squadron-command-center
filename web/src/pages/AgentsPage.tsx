@@ -1,12 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Search } from 'lucide-react';
 import { getInstance } from '@/api/client';
 import { AgentCard } from '@/components/agent-card';
+import { FilterChip, InlineStat, SearchBox } from '@/components/ui-shell';
 import type { MiniNode, MiniEdge } from '@/components/mini-graph';
 import type { AgentInfo, MissionInfo, SkillInfo } from '@/api/types';
-import { cn } from '@/lib/utils';
 
 type FilterKey = 'all' | 'global' | 'scoped';
 
@@ -59,6 +58,7 @@ export function AgentsPage() {
     queryFn: () => getInstance(id!),
     enabled: !!id,
     refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   });
 
   const agents = useMemo(() => instance?.config.agents ?? [], [instance]);
@@ -69,9 +69,18 @@ export function AgentsPage() {
   const scopedCount = agents.filter((a) => a.mission).length;
   const modelsCount = new Set(agents.map((a) => a.model)).size;
 
+  // Precompute each agent's mini-graph so dagre layout doesn't re-run on every
+  // search-box keystroke (filter is applied downstream).
+  const enriched = useMemo(() => {
+    return agents.map((a) => ({
+      agent: a,
+      graph: buildAgentMiniGraph(a, missions, skills),
+    }));
+  }, [agents, missions, skills]);
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return agents.filter((a) => {
+    return enriched.filter(({ agent: a }) => {
       if (q && !a.name.toLowerCase().includes(q) && !(a.role ?? '').toLowerCase().includes(q)) {
         return false;
       }
@@ -81,7 +90,7 @@ export function AgentsPage() {
         case 'all':    return true;
       }
     });
-  }, [agents, filter, search]);
+  }, [enriched, filter, search]);
 
   if (isLoading) return <div className="p-8 text-muted-foreground">Loading...</div>;
   if (!instance) return <div className="p-8 text-muted-foreground">Instance not found</div>;
@@ -102,10 +111,10 @@ export function AgentsPage() {
       ) : (
         <>
           <div className="flex items-center gap-6 pb-3.5 mb-4 border-b border-border/60 font-mono text-[11px] text-muted-foreground/80 flex-wrap">
-            <Stat k="agents" v={agents.length} />
-            <Stat k="global" v={globalCount} />
-            <Stat k="scoped" v={scopedCount} />
-            <Stat k="models" v={modelsCount} />
+            <InlineStat k="agents" v={agents.length} />
+            <InlineStat k="global" v={globalCount} />
+            <InlineStat k="scoped" v={scopedCount} />
+            <InlineStat k="models" v={modelsCount} />
 
             <span className="flex-1" />
 
@@ -115,38 +124,26 @@ export function AgentsPage() {
               <FilterChip active={filter === 'scoped'} onClick={() => setFilter('scoped')}>Scoped</FilterChip>
             </div>
 
-            <div className="flex items-center gap-1.5 px-2.5 py-1 border border-border/60 rounded-sm w-[200px] text-foreground/90">
-              <Search className="h-3 w-3 text-muted-foreground/70" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search agents"
-                className="flex-1 bg-transparent outline-none text-[11.5px] placeholder:text-muted-foreground/60 font-sans"
-              />
-            </div>
+            <SearchBox value={search} onChange={setSearch} placeholder="Search agents" />
           </div>
 
           {visible.length === 0 ? (
             <p className="text-muted-foreground text-sm mt-10 text-center">No agents match.</p>
           ) : (
-            <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
-              {visible.map((a) => {
-                const graph = buildAgentMiniGraph(a, missions, skills);
-                return (
-                  <AgentCard
-                    key={a.name}
-                    name={a.name}
-                    role={a.role}
-                    model={a.model}
-                    mission={a.mission ?? null}
-                    tools={a.tools?.length ?? 0}
-                    skills={a.skills?.length ?? 0}
-                    graph={graph}
-                    onClick={() => navigate(`/instances/${id}/agents/${a.name}`)}
-                  />
-                );
-              })}
+            <div className="sqd-card-grid">
+              {visible.map(({ agent: a, graph }) => (
+                <AgentCard
+                  key={a.name}
+                  name={a.name}
+                  role={a.role}
+                  model={a.model}
+                  mission={a.mission ?? null}
+                  tools={a.tools?.length ?? 0}
+                  skills={a.skills?.length ?? 0}
+                  graph={graph}
+                  onClick={() => navigate(`/instances/${id}/agents/${a.name}`)}
+                />
+              ))}
             </div>
           )}
         </>
@@ -155,36 +152,3 @@ export function AgentsPage() {
   );
 }
 
-function Stat({ k, v }: { k: string; v: number }) {
-  return (
-    <span className="inline-flex items-baseline gap-1.5">
-      <span className="tabular-nums text-[13px] font-medium text-foreground">{v}</span>
-      <span className="tracking-[0.3px]">{k}</span>
-    </span>
-  );
-}
-
-function FilterChip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'font-sans text-[11.5px] px-2.5 py-[3px] rounded-sm border transition-colors cursor-pointer',
-        active
-          ? 'text-foreground bg-accent/40 border-border'
-          : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-accent/20',
-      )}
-    >
-      {children}
-    </button>
-  );
-}

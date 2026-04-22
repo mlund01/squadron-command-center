@@ -385,6 +385,13 @@ html.defcon5 body {
 }
 .sqd-card-live { animation: sqd-card-live 2.4s ease-in-out infinite; }
 
+/* Shared auto-fill grid used by the Missions/Agents/Skills list pages. */
+.sqd-card-grid {
+  display: grid;
+  gap: 0.875rem; /* 14px */
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
 /* Mini-graph emphasis ring — breathing halo on the running node. */
 @keyframes sqd-node-ring {
   0%, 100% { opacity: 0.25; transform: scale(0.9); transform-origin: center; transform-box: fill-box; }

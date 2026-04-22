@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime/debug"
+	"sync"
 
 	"commander/internal/hub"
 	"commander/internal/keepalive"
@@ -13,21 +14,33 @@ import (
 // When empty, we fall back to the VCS revision from the embedded build info.
 var Version = ""
 
+// Resolved version string cached on first read — build info never changes at runtime.
+var (
+	cachedVersion     string
+	cachedVersionOnce sync.Once
+)
+
 func commanderVersion() string {
-	if Version != "" {
-		return Version
-	}
-	if info, ok := debug.ReadBuildInfo(); ok {
-		for _, s := range info.Settings {
-			if s.Key == "vcs.revision" {
-				if len(s.Value) > 7 {
-					return s.Value[:7]
+	cachedVersionOnce.Do(func() {
+		if Version != "" {
+			cachedVersion = Version
+			return
+		}
+		if info, ok := debug.ReadBuildInfo(); ok {
+			for _, s := range info.Settings {
+				if s.Key == "vcs.revision" {
+					if len(s.Value) > 7 {
+						cachedVersion = s.Value[:7]
+					} else {
+						cachedVersion = s.Value
+					}
+					return
 				}
-				return s.Value
 			}
 		}
-	}
-	return "dev"
+		cachedVersion = "dev"
+	})
+	return cachedVersion
 }
 
 // RegisterRoutes registers all REST API endpoints.

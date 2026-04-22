@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { MiniGraph, type MiniNode, type MiniEdge } from './mini-graph';
+import { Dot } from './ui-shell';
 import { cn } from '@/lib/utils';
 
 interface SkillCardProps {
@@ -12,10 +13,6 @@ interface SkillCardProps {
   action?: ReactNode;
   onClick?: () => void;
   className?: string;
-}
-
-function Dot() {
-  return <span className="text-muted-foreground/50">·</span>;
 }
 
 export function SkillCard({

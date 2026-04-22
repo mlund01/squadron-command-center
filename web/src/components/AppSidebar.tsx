@@ -148,6 +148,7 @@ export function AppSidebar() {
     queryKey: ['instances'],
     queryFn: listInstances,
     refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   });
 
   const { data: currentUser } = useQuery({
