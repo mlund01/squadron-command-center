@@ -11,15 +11,13 @@ export default defineConfig({
     },
   },
   server: {
-    port: 8087,
-    strictPort: true,
     headers: {
       'Cache-Control': 'no-store',
     },
     proxy: {
-      '/api': 'http://localhost:8086',
+      '/api': 'http://localhost:8080',
       '/ws': {
-        target: 'ws://localhost:8086',
+        target: 'ws://localhost:8080',
         ws: true,
       },
     },
