@@ -1542,14 +1542,6 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
                         </div>
                       )}
 
-                      {/* Summary */}
-                      {selectedTask.summary && (
-                        <div>
-                          <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Summary</div>
-                          <div className="text-xs whitespace-pre-wrap bg-muted/50 rounded px-3 py-2">{selectedTask.summary}</div>
-                        </div>
-                      )}
-
                       {/* Dataset Item */}
                       {isIterated && selectedIteration != null && (() => {
                         const item = (taskDetail?.datasetItems ?? []).find(d => d.index === selectedIteration);
@@ -1726,6 +1718,12 @@ function TasksTab({ instanceId, tasks, allTasks, missionId, isRunning, chosenRou
               </div>
               <div className="flex-1 relative min-h-0">
               <div className="absolute inset-0 overflow-auto p-4 space-y-3">
+                {selectedTask.summary && (
+                  <div>
+                    <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Summary</div>
+                    <div className="text-xs whitespace-pre-wrap bg-muted/50 rounded px-3 py-2">{selectedTask.summary}</div>
+                  </div>
+                )}
                 {(() => {
                   if (outputs.length === 0) {
                     return <p className="text-sm text-muted-foreground">No output recorded.</p>;

@@ -658,7 +658,7 @@ export function MissionDetail() {
           <div className="flex items-center gap-2">
             {runCount > 0 && (
               <Button asChild variant="outline" size="sm">
-                <Link to={`/instances/${id}/history`}>
+                <Link to={`/instances/${id}/missions?view=history&q=${encodeURIComponent(mission.name)}`}>
                   {runCount} {runCount === 1 ? 'run' : 'runs'}
                 </Link>
               </Button>

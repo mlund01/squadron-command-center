@@ -42,8 +42,8 @@ export async function logout(): Promise<void> {
   window.location.href = '/auth/logout';
 }
 
-export async function getServerInfo(): Promise<{ baseUrl: string }> {
-  return fetchJSON<{ baseUrl: string }>('/info');
+export async function getServerInfo(): Promise<{ baseUrl: string; version: string }> {
+  return fetchJSON<{ baseUrl: string; version: string }>('/info');
 }
 
 export async function listInstances(): Promise<InstanceState[]> {

@@ -2,23 +2,34 @@ import { useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
-import { getCostSummary } from '@/api/client';
+import { getCostSummary, getInstance } from '@/api/client';
 import { Badge } from '@/components/ui/badge';
-import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent, type ChartConfig } from '@/components/ui/chart';
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  ChartLegend,
+  ChartLegendContent,
+  type ChartConfig,
+} from '@/components/ui/chart';
+import { FilterChip, InlineStat } from '@/components/ui-shell';
+import { cn } from '@/lib/utils';
 
 const PERIODS = [
   { label: 'Today', days: 0 },
-  { label: '7 days', days: 7 },
-  { label: '30 days', days: 30 },
-  { label: '90 days', days: 90 },
-  { label: 'All time', days: 365 * 10 },
+  { label: '7d',    days: 7 },
+  { label: '30d',   days: 30 },
+  { label: '90d',   days: 90 },
+  { label: 'All',   days: 365 * 10 },
 ] as const;
 
+type BreakdownKey = 'type' | 'model' | 'mission';
+
 const chartConfig = {
-  output: { label: 'Output', color: 'var(--chart-1)' },
+  output:     { label: 'Output',      color: 'var(--chart-1)' },
   cacheWrite: { label: 'Cache Write', color: 'var(--chart-2)' },
-  input: { label: 'Input', color: 'var(--chart-3)' },
-  cacheRead: { label: 'Cache Read', color: 'var(--chart-4)' },
+  input:      { label: 'Input',       color: 'var(--chart-3)' },
+  cacheRead:  { label: 'Cache Read',  color: 'var(--chart-4)' },
 } satisfies ChartConfig;
 
 function fmtCost(c: number) {
@@ -35,7 +46,7 @@ function fmtNum(n: number) {
 export function CostsPage() {
   const { id: instanceId } = useParams();
   const [periodDays, setPeriodDays] = useState(30);
-  const [chartBreakdown, setChartBreakdown] = useState<'type' | 'model' | 'mission'>('type');
+  const [chartBreakdown, setChartBreakdown] = useState<BreakdownKey>('type');
 
   const from = useMemo(() => {
     const d = new Date();
@@ -49,6 +60,12 @@ export function CostsPage() {
     d.setUTCHours(0, 0, 0, 0);
     return d.toISOString();
   }, []);
+
+  const { data: instance } = useQuery({
+    queryKey: ['instance', instanceId],
+    queryFn: () => getInstance(instanceId!),
+    enabled: !!instanceId,
+  });
 
   const { data: byDate } = useQuery({
     queryKey: ['costs', instanceId, 'date', from, to],
@@ -64,7 +81,6 @@ export function CostsPage() {
     refetchInterval: 5000,
   });
 
-  // For model/mission breakdown, fetch date × field data
   const breakdownField = chartBreakdown === 'model' ? 'model' : chartBreakdown === 'mission' ? 'mission_name' : undefined;
   const { data: breakdownData } = useQuery({
     queryKey: ['costs', instanceId, 'breakdown', breakdownField, from, to],
@@ -75,9 +91,7 @@ export function CostsPage() {
 
   const totals = byDate?.totals;
 
-  // Build chart data and dynamic config based on breakdown mode
   const { chartData, dynamicChartConfig, dynamicBarKeys } = useMemo(() => {
-    // Fill date range
     const allDates: string[] = [];
     const start = new Date(from);
     const end = new Date(to);
@@ -86,23 +100,20 @@ export function CostsPage() {
     }
 
     if (chartBreakdown === 'type') {
-      // Cost type breakdown
       const dataMap = new Map<string, { input: number; output: number; cacheRead: number; cacheWrite: number }>();
       for (const d of byDate?.byGroup ?? []) {
         dataMap.set(d.groupKey, { input: d.inputCost, output: d.outputCost, cacheRead: d.cacheReadCost ?? 0, cacheWrite: d.cacheWriteCost ?? 0 });
       }
-      const data = allDates.map(date => {
+      const data = allDates.map((date) => {
         const existing = dataMap.get(date);
         return { date, output: existing?.output ?? 0, cacheWrite: existing?.cacheWrite ?? 0, input: existing?.input ?? 0, cacheRead: existing?.cacheRead ?? 0 };
       });
       return { chartData: data, dynamicChartConfig: chartConfig, dynamicBarKeys: ['output', 'cacheWrite', 'input', 'cacheRead'] };
     }
 
-    // Model or mission breakdown — pivot date × field into chart rows
     const rows = breakdownData?.byDateAndField ?? [];
-    const fieldKeys = [...new Set(rows.map(r => r.fieldKey))];
+    const fieldKeys = [...new Set(rows.map((r) => r.fieldKey))];
 
-    // Build per-date map: { date → { fieldKey → cost } }
     const dateMap = new Map<string, Record<string, number>>();
     for (const row of rows) {
       const existing = dateMap.get(row.date) ?? {};
@@ -110,16 +121,13 @@ export function CostsPage() {
       dateMap.set(row.date, existing);
     }
 
-    const data = allDates.map(date => {
+    const data = allDates.map((date) => {
       const fields = dateMap.get(date) ?? {};
       const entry: Record<string, unknown> = { date };
-      for (const key of fieldKeys) {
-        entry[key] = fields[key] ?? 0;
-      }
+      for (const key of fieldKeys) entry[key] = fields[key] ?? 0;
       return entry;
     });
 
-    // Build dynamic config with chart colors
     const themeColors = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
     const config: ChartConfig = {};
     fieldKeys.forEach((key, i) => {
@@ -130,9 +138,8 @@ export function CostsPage() {
   }, [chartBreakdown, byDate, breakdownData, from, to]);
 
   const modelData = (byModel?.byGroup ?? []).sort((a, b) => b.totalCost - a.totalCost);
-  const recentMissions = byDate?.recentMissions ?? [];
+  const recentMissions = useMemo(() => byDate?.recentMissions ?? [], [byDate]);
 
-  // Mission type aggregation
   const missionTypeData = useMemo(() => {
     const nameMap = new Map<string, { cost: number; turns: number }>();
     for (const m of recentMissions) {
@@ -149,96 +156,92 @@ export function CostsPage() {
   const maxModelCost = modelData.length > 0 ? modelData[0].totalCost : 1;
   const maxMissionCost = missionTypeData.length > 0 ? missionTypeData[0].cost : 1;
 
+  const periodLabel = PERIODS.find((p) => p.days === periodDays)?.label ?? '';
+
   return (
-    <div className="p-6 space-y-6 overflow-auto h-full">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Cost Management</h1>
-        <div className="flex gap-1">
-          {PERIODS.map(p => (
-            <button
+    <div className="px-8 py-7 w-full">
+      {/* Header */}
+      <div className="flex items-end gap-4 mb-5">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-[22px] font-semibold tracking-tight leading-none">Costs</h1>
+          <span className="font-mono text-[11px] text-muted-foreground/70 tracking-[0.2px]">
+            {instance?.name ?? '—'} · {periodLabel.toLowerCase()}
+          </span>
+        </div>
+      </div>
+
+      {/* Stats + period chips strip */}
+      <div className="flex items-center gap-6 pb-3.5 mb-4 border-b border-border/60 font-mono text-[11px] text-muted-foreground/80 flex-wrap">
+        <InlineStat k="total" v={fmtCost(totals?.totalCost ?? 0)} emphasize />
+        <InlineStat k="turns" v={fmtNum(totals?.totalTurns ?? 0)} />
+        <InlineStat k="input" v={fmtCost(totals?.inputCost ?? 0)} />
+        <InlineStat k="cache r" v={fmtCost(totals?.cacheReadCost ?? 0)} />
+        <InlineStat k="cache w" v={fmtCost(totals?.cacheWriteCost ?? 0)} />
+        <InlineStat k="output" v={fmtCost(totals?.outputCost ?? 0)} />
+
+        <span className="flex-1" />
+
+        <div className="flex items-center gap-1">
+          {PERIODS.map((p) => (
+            <FilterChip
               key={p.days}
-              className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                periodDays === p.days
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted text-muted-foreground hover:text-foreground'
-              }`}
+              active={periodDays === p.days}
               onClick={() => setPeriodDays(p.days)}
             >
               {p.label}
-            </button>
+            </FilterChip>
           ))}
         </div>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-5 gap-3">
-        <div className="border rounded-lg p-4">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Est. Total</p>
-          <p className="text-2xl font-semibold tabular-nums mt-1">{fmtCost(totals?.totalCost ?? 0)}</p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">{fmtNum(totals?.totalTurns ?? 0)} turns</p>
-        </div>
-        <div className="border rounded-lg p-4">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Input</p>
-          <p className="text-2xl font-semibold tabular-nums mt-1">{fmtCost(totals?.inputCost ?? 0)}</p>
-        </div>
-        <div className="border rounded-lg p-4">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Cache Read</p>
-          <p className="text-2xl font-semibold tabular-nums mt-1">{fmtCost(totals?.cacheReadCost ?? 0)}</p>
-        </div>
-        <div className="border rounded-lg p-4">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Cache Write</p>
-          <p className="text-2xl font-semibold tabular-nums mt-1">{fmtCost(totals?.cacheWriteCost ?? 0)}</p>
-        </div>
-        <div className="border rounded-lg p-4">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Output</p>
-          <p className="text-2xl font-semibold tabular-nums mt-1">{fmtCost(totals?.outputCost ?? 0)}</p>
-        </div>
-      </div>
-
       {/* Cost breakdown chart */}
-      <div className="border rounded-lg p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Cost Breakdown</h2>
-          <div className="flex gap-1">
-            {([['type', 'By Cost Type'], ['model', 'By Model'], ['mission', 'By Mission']] as const).map(([key, label]) => (
-              <button
+      <Panel
+        title="Cost Breakdown"
+        action={
+          <div className="flex items-center gap-1">
+            {([['type', 'By Type'], ['model', 'By Model'], ['mission', 'By Mission']] as const).map(([key, label]) => (
+              <FilterChip
                 key={key}
-                className={`px-2.5 py-0.5 text-[10px] rounded-md transition-colors ${
-                  chartBreakdown === key
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground hover:text-foreground'
-                }`}
+                active={chartBreakdown === key}
                 onClick={() => setChartBreakdown(key)}
               >
                 {label}
-              </button>
+              </FilterChip>
             ))}
           </div>
-        </div>
+        }
+      >
         {chartData.length > 0 ? (
-          <ChartContainer config={dynamicChartConfig} className="h-[250px] w-full">
+          <ChartContainer config={dynamicChartConfig} className="h-[260px] w-full">
             <BarChart data={chartData} accessibilityLayer>
-              <CartesianGrid vertical={false} />
+              <CartesianGrid vertical={false} stroke="var(--border)" />
               <XAxis
                 dataKey="date"
                 tickLine={false}
                 axisLine={false}
-                tick={{ fontSize: 10 }}
+                tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
                 tickFormatter={(v: string) => v.slice(5)}
               />
-              <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 10 }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
+                tickFormatter={(v: number) => `$${v.toFixed(2)}`}
+              />
               <ChartTooltip
                 content={
                   <ChartTooltipContent
                     formatter={(value, name) => (
                       <div className="flex items-center justify-between gap-4 w-full">
-                        <span className="text-muted-foreground">{(dynamicChartConfig as Record<string, { label?: React.ReactNode }>)[name as string]?.label ?? name}</span>
+                        <span className="text-muted-foreground">
+                          {(dynamicChartConfig as Record<string, { label?: React.ReactNode }>)[name as string]?.label ?? name}
+                        </span>
                         <span className="font-medium tabular-nums">{fmtCost(Number(value))}</span>
                       </div>
                     )}
-                    labelFormatter={(label) => {
-                      return new Date(label + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                    }}
+                    labelFormatter={(label) =>
+                      new Date(label + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    }
                   />
                 }
               />
@@ -249,7 +252,7 @@ export function CostsPage() {
                   dataKey={key}
                   fill={`var(--color-${key})`}
                   stackId="cost"
-                  radius={i === dynamicBarKeys.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                  radius={i === dynamicBarKeys.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
                 />
               ))}
             </BarChart>
@@ -257,100 +260,86 @@ export function CostsPage() {
         ) : (
           <p className="text-sm text-muted-foreground py-8 text-center">No cost data for this period.</p>
         )}
-      </div>
+      </Panel>
 
-      <hr className="border-border" />
-
-      <div className="grid grid-cols-2 gap-4">
-        {/* Cost by model — horizontal bars */}
-        <div className="border rounded-lg p-4">
-          <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Cost by Model</h2>
+      {/* Horizontal bars — model and mission-type */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5 mt-3.5">
+        <Panel title="Cost by Model">
           {modelData.length > 0 ? (
-            <div className="space-y-2">
-              {modelData.map(m => (
-                <div key={m.groupKey} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-mono truncate">{m.groupKey}</span>
-                    <div className="flex items-center gap-3">
-                      <span className="text-muted-foreground tabular-nums">{m.turns} turns</span>
-                      <span className="tabular-nums font-medium w-16 text-right">{fmtCost(m.totalCost)}</span>
-                    </div>
-                  </div>
-                  <div className="h-2 bg-muted rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{ backgroundColor: 'var(--chart-1)', width: `${Math.max(1, (m.totalCost / maxModelCost) * 100)}%` }}
-                    />
-                  </div>
-                </div>
+            <div className="space-y-2.5">
+              {modelData.map((m) => (
+                <BarRow
+                  key={m.groupKey}
+                  name={m.groupKey}
+                  turns={m.turns}
+                  cost={m.totalCost}
+                  ratio={m.totalCost / maxModelCost}
+                  color="var(--chart-1)"
+                />
               ))}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">No cost data for this period.</p>
           )}
-        </div>
+        </Panel>
 
-        {/* Cost by mission type — horizontal bars */}
-        <div className="border rounded-lg p-4">
-          <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Cost by Mission Type</h2>
+        <Panel title="Cost by Mission Type">
           {missionTypeData.length > 0 ? (
-            <div className="space-y-2">
-              {missionTypeData.map(m => (
-                <div key={m.name} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-mono truncate">{m.name}</span>
-                    <div className="flex items-center gap-3">
-                      <span className="text-muted-foreground tabular-nums">{m.turns} turns</span>
-                      <span className="tabular-nums font-medium w-16 text-right">{fmtCost(m.cost)}</span>
-                    </div>
-                  </div>
-                  <div className="h-2 bg-muted rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-primary/70 rounded-full transition-all"
-                      style={{ width: `${Math.max(1, (m.cost / maxMissionCost) * 100)}%` }}
-                    />
-                  </div>
-                </div>
+            <div className="space-y-2.5">
+              {missionTypeData.map((m) => (
+                <BarRow
+                  key={m.name}
+                  name={m.name}
+                  turns={m.turns}
+                  cost={m.cost}
+                  ratio={m.cost / maxMissionCost}
+                  color="var(--chart-2)"
+                />
               ))}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">No cost data for this period.</p>
           )}
-        </div>
+        </Panel>
       </div>
 
-      <hr className="border-border" />
-
-      {/* Recent mission runs */}
-      <div className="border rounded-lg p-4">
-        <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Recent Mission Runs</h2>
+      {/* Recent runs */}
+      <Panel title="Recent Mission Runs" className="mt-3.5">
         {recentMissions.length > 0 ? (
-          <table className="w-full text-xs">
+          <table className="w-full text-[12px]">
             <thead>
-              <tr className="border-b text-left text-muted-foreground">
-                <th className="px-2 py-1.5 font-medium">Mission</th>
-                <th className="px-2 py-1.5 font-medium">Status</th>
-                <th className="px-2 py-1.5 font-medium text-right">Turns</th>
-                <th className="px-2 py-1.5 font-medium text-right">Est. Cost</th>
-                <th className="px-2 py-1.5 font-medium text-right">Started</th>
+              <tr className="text-left text-muted-foreground/80 border-b border-border/60">
+                <th className="px-2 py-2 font-mono text-[10px] uppercase tracking-wider font-medium">Mission</th>
+                <th className="px-2 py-2 font-mono text-[10px] uppercase tracking-wider font-medium">Status</th>
+                <th className="px-2 py-2 font-mono text-[10px] uppercase tracking-wider font-medium text-right">Turns</th>
+                <th className="px-2 py-2 font-mono text-[10px] uppercase tracking-wider font-medium text-right">Est. Cost</th>
+                <th className="px-2 py-2 font-mono text-[10px] uppercase tracking-wider font-medium text-right">Started</th>
               </tr>
             </thead>
             <tbody>
-              {recentMissions.map(m => (
-                <tr key={m.missionId} className="border-b border-border/30 hover:bg-muted/30">
+              {recentMissions.map((m) => (
+                <tr key={m.missionId} className="border-b border-border/40 last:border-0 hover:bg-accent/20 transition-colors">
                   <td className="px-2 py-1.5">
-                    <Link to={`/instances/${instanceId}/runs/${m.missionId}`} className="font-mono text-primary hover:underline">
+                    <Link
+                      to={`/instances/${instanceId}/runs/${m.missionId}`}
+                      className="font-mono text-foreground hover:text-primary hover:underline"
+                    >
                       {m.missionName}
                     </Link>
                   </td>
                   <td className="px-2 py-1.5">
-                    <Badge variant={m.status === 'completed' ? 'default' : m.status === 'failed' ? 'destructive' : 'outline'} className="text-[10px] px-1.5 py-0">
+                    <Badge
+                      variant={m.status === 'completed' ? 'default' : m.status === 'failed' ? 'destructive' : 'outline'}
+                      className="text-[10px] px-1.5 py-0"
+                    >
                       {m.status}
                     </Badge>
                   </td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{m.turns}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fmtCost(m.totalCost)}</td>
-                  <td className="px-2 py-1.5 text-right text-muted-foreground">{new Date(m.startedAt).toLocaleString()}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums font-mono">{m.turns}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums font-mono font-medium">{fmtCost(m.totalCost)}</td>
+                  <td className="px-2 py-1.5 text-right text-muted-foreground font-mono text-[11.5px]">
+                    {new Date(m.startedAt).toLocaleString()}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -358,6 +347,63 @@ export function CostsPage() {
         ) : (
           <p className="text-sm text-muted-foreground">No mission runs with cost data.</p>
         )}
+      </Panel>
+    </div>
+  );
+}
+
+function Panel({
+  title,
+  action,
+  children,
+  className,
+}: {
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={cn('rounded-sm border border-border/60 bg-card p-4', className)}>
+      <div className="flex items-center gap-2 mb-3.5">
+        <h2 className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/80 font-medium">
+          {title}
+        </h2>
+        <div className="flex-1" />
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function BarRow({
+  name,
+  turns,
+  cost,
+  ratio,
+  color,
+}: {
+  name: string;
+  turns: number;
+  cost: number;
+  ratio: number;
+  color: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-[12px]">
+        <span className="font-mono truncate">{name}</span>
+        <div className="flex items-center gap-3">
+          <span className="text-muted-foreground tabular-nums font-mono text-[11px]">{turns} turns</span>
+          <span className="tabular-nums font-mono font-medium w-16 text-right">{fmtCost(cost)}</span>
+        </div>
+      </div>
+      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all"
+          style={{ backgroundColor: color, width: `${Math.max(1, ratio * 100)}%` }}
+        />
       </div>
     </div>
   );
