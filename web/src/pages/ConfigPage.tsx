@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { listConfigFiles, getConfigFile, writeConfigFile, reloadConfig, validateConfig } from '@/api/client';
+import { listConfigFiles, getConfigFile, writeConfigFile, reloadConfig, validateConfig, getInstance } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { FileCode, Save, RefreshCw, Undo2, CheckCircle, X, ChevronRight, ChevronDown, Eye, EyeOff, Code } from 'lucide-react';
@@ -236,6 +236,12 @@ export function ConfigPage() {
 
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+
+  const { data: instance } = useQuery({
+    queryKey: ['instance', id],
+    queryFn: () => getInstance(id!),
+    enabled: !!id,
+  });
 
   const { data: fileList, isLoading: filesLoading } = useQuery({
     queryKey: ['configFiles', id],
@@ -493,62 +499,64 @@ export function ConfigPage() {
     document.body.style.userSelect = 'none';
   }, [fileTreeWidth]);
 
-  if (filesLoading) return <div className="p-8 text-muted-foreground">Loading...</div>;
-  if (!fileList) return <div className="p-8 text-muted-foreground">No config files found.</div>;
+  if (filesLoading) return <div className="px-8 py-7 text-muted-foreground">Loading...</div>;
+  if (!fileList) return <div className="px-8 py-7 text-muted-foreground">No config files found.</div>;
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium">Config</span>
-          <span className="text-xs text-muted-foreground font-mono">{fileList.path}</span>
+    <div className="flex flex-col h-full w-full overflow-hidden">
+      {/* Header — fixed above the file tree + editor */}
+      <div className="px-8 pt-7 pb-3.5 shrink-0 border-b border-border/60 bg-background">
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex flex-col gap-1 min-w-0">
+            <h1 className="text-[22px] font-semibold tracking-tight leading-none">Config</h1>
+            <span className="font-mono text-[11px] text-muted-foreground/70 tracking-[0.2px] truncate">
+              {instance?.name ?? '—'} · <span className="text-muted-foreground/90">{fileList.path}</span>
+            </span>
+          </div>
+
+          <span className="flex-1" />
+
           {hasAnyChanges && (
-            <span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
-              {pendingChanges.size} unsaved change{pendingChanges.size > 1 ? 's' : ''}
+            <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-amber-400 px-2 py-[3px] rounded-sm border border-amber-500/40 bg-amber-500/10">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              {pendingChanges.size} unsaved
             </span>
           )}
-        </div>
-        <div className="flex items-center gap-1.5">
+
           {hasAnyChanges && (
             <>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs gap-1.5"
-                onClick={handleUndoAll}
-              >
+              <Button variant="ghost" size="sm" className="h-7 text-[12px] gap-1.5 font-mono" onClick={handleUndoAll}>
                 <Undo2 className="h-3.5 w-3.5" />
-                Undo All
+                Undo all
               </Button>
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 text-xs gap-1.5"
+                className="h-7 text-[12px] gap-1.5 font-mono border-border/60 rounded-sm"
                 onClick={handleValidate}
                 disabled={validating}
               >
                 <CheckCircle className="h-3.5 w-3.5" />
-                {validating ? 'Validating...' : 'Validate'}
+                {validating ? 'Validating…' : 'Validate'}
               </Button>
               <Button
                 variant="default"
                 size="sm"
-                className="h-7 text-xs gap-1.5"
+                className="h-7 text-[12px] gap-1.5 font-mono rounded-sm"
                 onClick={handleSave}
                 disabled={saving}
               >
                 <Save className="h-3.5 w-3.5" />
-                {saving ? 'Saving...' : 'Save'}
+                {saving ? 'Saving…' : 'Save'}
               </Button>
             </>
           )}
           {selectedFile && isMarkdownFile(selectedFile) && (
-            <>
+            <div className="flex items-center gap-1 ml-1">
               <Button
                 variant={codeOpen ? 'secondary' : 'ghost'}
                 size="sm"
-                className="h-7 text-xs gap-1.5"
+                className="h-7 text-[12px] gap-1.5 font-mono rounded-sm"
                 onClick={() => { if (!codeOpen || previewOpen) setCodeOpen(!codeOpen); }}
                 title={codeOpen ? 'Hide code' : 'Show code'}
               >
@@ -558,19 +566,19 @@ export function ConfigPage() {
               <Button
                 variant={previewOpen ? 'secondary' : 'ghost'}
                 size="sm"
-                className="h-7 text-xs gap-1.5"
+                className="h-7 text-[12px] gap-1.5 font-mono rounded-sm"
                 onClick={() => { if (!previewOpen || codeOpen) setPreviewOpen(!previewOpen); }}
                 title={previewOpen ? 'Hide preview' : 'Show preview'}
               >
                 {previewOpen ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                 Preview
               </Button>
-            </>
+            </div>
           )}
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs gap-1.5"
+            className="h-7 text-[12px] gap-1.5 font-mono"
             onClick={handleReload}
             disabled={reloading}
           >
@@ -583,7 +591,7 @@ export function ConfigPage() {
       {/* Content */}
       <div className="flex flex-1 min-h-0">
         {/* File tree */}
-        <div className="shrink-0 border-r overflow-y-auto" style={{ width: fileTreeWidth }}>
+        <div className="shrink-0 border-r border-border/60 overflow-y-auto bg-card/40" style={{ width: fileTreeWidth }}>
           <div className="p-2">
             {(() => {
               // Sort files: root files first, then grouped by directory
@@ -626,16 +634,17 @@ export function ConfigPage() {
                     key={file.name}
                     onClick={() => { setSelectedFile(file.name); setShowDiff(false); }}
                     className={cn(
-                      'flex items-center gap-2 w-full px-2 py-1 rounded text-xs text-left',
+                      'flex items-center gap-2 w-full px-2 py-[5px] rounded-sm font-mono text-[12px] text-left transition-colors',
                       selectedFile === file.name
-                        ? 'bg-muted font-medium'
-                        : 'hover:bg-muted/50 text-muted-foreground',
+                        ? 'bg-accent/50 text-foreground font-medium'
+                        : 'hover:bg-accent/25 text-muted-foreground hover:text-foreground',
                     )}
                   >
-                    <FileCode className={cn('h-3.5 w-3.5 shrink-0', isModified && 'text-yellow-500')} />
-                    <span className={cn('truncate', isModified && 'text-yellow-600 dark:text-yellow-400 font-medium')}>
+                    <FileCode className={cn('h-3.5 w-3.5 shrink-0', isModified ? 'text-amber-400' : 'opacity-70')} />
+                    <span className={cn('truncate', isModified && 'text-amber-400 font-semibold')}>
                       {basename}
                     </span>
+                    {isModified && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-amber-400" />}
                   </button>
                 );
               };
@@ -649,16 +658,16 @@ export function ConfigPage() {
                       <div key={dir}>
                         <button
                           onClick={() => toggleDir(dir)}
-                          className="flex items-center gap-2 w-full px-2 py-1 rounded text-xs text-left hover:bg-muted/50 text-muted-foreground"
+                          className="flex items-center gap-1.5 w-full px-2 py-[5px] rounded-sm font-mono text-[11px] uppercase tracking-wider text-left hover:bg-accent/25 text-muted-foreground/80 hover:text-foreground transition-colors"
                         >
                           {isOpen
-                            ? <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                            : <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                            ? <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+                            : <ChevronRight className="h-3 w-3 shrink-0 opacity-70" />
                           }
                           <span className="truncate">{dir}</span>
                         </button>
                         {isOpen && (
-                          <div className="ml-[15px] pl-px border-l border-border">
+                          <div className="ml-[15px] pl-px border-l border-border/60">
                             {files.map(f => renderFile(f, true))}
                           </div>
                         )}

@@ -76,36 +76,37 @@
 
 :root {
     --radius: 1.15rem;
-    --background: oklch(1.0000 0 0);
-    --foreground: oklch(0.3211 0 0);
-    --card: oklch(1.0000 0 0);
-    --card-foreground: oklch(0.3211 0 0);
-    --popover: oklch(1.0000 0 0);
-    --popover-foreground: oklch(0.3211 0 0);
+    /* Design tokens (light): bg #f6f6f4 · surface #ffffff · surface3 #f0f0ee · hairline rgba(15,20,30,0.08) · text #0f1420 */
+    --background: #f6f6f4;
+    --foreground: #0f1420;
+    --card: #ffffff;
+    --card-foreground: #0f1420;
+    --popover: #ffffff;
+    --popover-foreground: #0f1420;
     --primary: oklch(0.6225 0.2041 259.9027);
     --primary-foreground: oklch(1.0000 0 0);
-    --secondary: oklch(0.9665 0.0045 258.3247);
-    --secondary-foreground: oklch(0.4419 0.0375 257.2811);
-    --muted: oklch(0.9846 0.0017 247.8389);
-    --muted-foreground: oklch(0.5471 0.0321 263.2921);
-    --accent: oklch(0.9510 0.0267 237.5723);
-    --accent-foreground: oklch(0.3742 0.1844 263.9420);
+    --secondary: #f0f0ee;
+    --secondary-foreground: #0f1420;
+    --muted: #f0f0ee;
+    --muted-foreground: #5a6473;
+    --accent: #f0f0ee;
+    --accent-foreground: #0f1420;
     --destructive: oklch(0.6496 0.2362 26.9032);
-    --border: oklch(0.9271 0.0075 260.7315);
-    --input: oklch(0.9271 0.0075 260.7315);
+    --border: rgba(15, 20, 30, 0.08);
+    --input: rgba(15, 20, 30, 0.08);
     --ring: oklch(0.6225 0.2041 259.9027);
     --chart-1: oklch(0.6225 0.2041 259.9027);
     --chart-2: oklch(0.5469 0.2507 262.8085);
     --chart-3: oklch(0.4902 0.2693 263.7106);
     --chart-4: oklch(0.4234 0.2370 263.9162);
     --chart-5: oklch(0.3742 0.1844 263.9420);
-    --sidebar: oklch(0.9846 0.0017 247.8389);
-    --sidebar-foreground: oklch(0.3211 0 0);
+    --sidebar: #ffffff;
+    --sidebar-foreground: #0f1420;
     --sidebar-primary: oklch(0.6225 0.2041 259.9027);
     --sidebar-primary-foreground: oklch(1.0000 0 0);
-    --sidebar-accent: oklch(0.9510 0.0267 237.5723);
-    --sidebar-accent-foreground: oklch(0.3742 0.1844 263.9420);
-    --sidebar-border: oklch(0.9271 0.0075 260.7315);
+    --sidebar-accent: #f0f0ee;
+    --sidebar-accent-foreground: #0f1420;
+    --sidebar-border: rgba(15, 20, 30, 0.08);
     --sidebar-ring: oklch(0.6225 0.2041 259.9027);
     --destructive-foreground: oklch(1.0000 0 0);
     --font-sans: Inter, sans-serif;
@@ -131,36 +132,37 @@
 }
 
 .dark {
-    --background: oklch(0.2046 0 0);
-    --foreground: oklch(0.9219 0 0);
-    --card: oklch(0.2686 0 0);
-    --card-foreground: oklch(0.9219 0 0);
-    --popover: oklch(0.2686 0 0);
-    --popover-foreground: oklch(0.9219 0 0);
+    /* Design tokens (dark): bg #0a0c10 · surface #11141a · surface2 #161a22 (cards) · surface3 #1d222c (hover) · hairline rgba(255,255,255,0.06) · text #e6e8ec · muted #9ba3b0 */
+    --background: #0a0c10;
+    --foreground: #e6e8ec;
+    --card: #161a22;
+    --card-foreground: #e6e8ec;
+    --popover: #161a22;
+    --popover-foreground: #e6e8ec;
     --primary: oklch(0.6225 0.2041 259.9027);
     --primary-foreground: oklch(1.0000 0 0);
-    --secondary: oklch(0.2686 0 0);
-    --secondary-foreground: oklch(0.9219 0 0);
-    --muted: oklch(0.2393 0 0);
-    --muted-foreground: oklch(0.7155 0 0);
-    --accent: oklch(0.5802 0.1915 259.7416);
-    --accent-foreground: oklch(0.8820 0.0588 253.9688);
+    --secondary: #1d222c;
+    --secondary-foreground: #e6e8ec;
+    --muted: #1d222c;
+    --muted-foreground: #9ba3b0;
+    --accent: #1d222c;
+    --accent-foreground: #e6e8ec;
     --destructive: oklch(0.6496 0.2362 26.9032);
-    --border: oklch(0.3715 0 0);
-    --input: oklch(0.3715 0 0);
+    --border: rgba(255, 255, 255, 0.06);
+    --input: rgba(255, 255, 255, 0.08);
     --ring: oklch(0.6225 0.2041 259.9027);
     --chart-1: oklch(0.7122 0.1526 254.9868);
     --chart-2: oklch(0.6225 0.2041 259.9027);
     --chart-3: oklch(0.5739 0.2334 262.7735);
     --chart-4: oklch(0.6225 0.2041 259.9027);
     --chart-5: oklch(0.6225 0.2041 259.9027);
-    --sidebar: oklch(0.2046 0 0);
-    --sidebar-foreground: oklch(0.9219 0 0);
+    --sidebar: #11141a;
+    --sidebar-foreground: #e6e8ec;
     --sidebar-primary: oklch(0.6225 0.2041 259.9027);
     --sidebar-primary-foreground: oklch(1.0000 0 0);
-    --sidebar-accent: oklch(0.6225 0.2041 259.9027);
-    --sidebar-accent-foreground: oklch(0.8820 0.0588 253.9688);
-    --sidebar-border: oklch(0.3715 0 0);
+    --sidebar-accent: #1d222c;
+    --sidebar-accent-foreground: #e6e8ec;
+    --sidebar-border: rgba(255, 255, 255, 0.06);
     --sidebar-ring: oklch(0.6225 0.2041 259.9027);
     --destructive-foreground: oklch(1.0000 0 0);
     --radius: 1.15rem;
@@ -196,41 +198,87 @@
 }
 
 .dark.defcon5 {
-    --background: oklch(0.1400 0.0200 150);
-    --foreground: oklch(0.8500 0.1500 145);
-    --card: oklch(0.1700 0.0250 150);
-    --card-foreground: oklch(0.8500 0.1500 145);
-    --popover: oklch(0.1700 0.0250 150);
-    --popover-foreground: oklch(0.8500 0.1500 145);
-    --primary: oklch(0.7200 0.1800 145);
-    --primary-foreground: oklch(0.1400 0.0200 150);
-    --secondary: oklch(0.2000 0.0300 150);
-    --secondary-foreground: oklch(0.7500 0.1300 145);
-    --muted: oklch(0.1800 0.0250 150);
-    --muted-foreground: oklch(0.5500 0.0800 145);
-    --accent: oklch(0.6500 0.1600 145);
-    --accent-foreground: oklch(0.1400 0.0200 150);
-    --destructive: oklch(0.6000 0.2000 25);
-    --destructive-foreground: oklch(1.0000 0 0);
-    --border: oklch(0.3000 0.0500 150);
-    --input: oklch(0.3000 0.0500 150);
-    --ring: oklch(0.7200 0.1800 145);
-    --chart-1: oklch(0.7200 0.1800 145);
-    --chart-2: oklch(0.6000 0.1500 145);
-    --chart-3: oklch(0.5000 0.1200 145);
-    --chart-4: oklch(0.8000 0.1000 80);
-    --chart-5: oklch(0.6000 0.2000 25);
-    --sidebar: oklch(0.1200 0.0180 150);
-    --sidebar-foreground: oklch(0.8500 0.1500 145);
-    --sidebar-primary: oklch(0.7200 0.1800 145);
-    --sidebar-primary-foreground: oklch(0.1400 0.0200 150);
-    --sidebar-accent: oklch(0.6500 0.1600 145);
-    --sidebar-accent-foreground: oklch(0.1400 0.0200 150);
-    --sidebar-border: oklch(0.3000 0.0500 150);
-    --sidebar-ring: oklch(0.7200 0.1800 145);
-    --font-sans: 'JetBrains Mono', 'Courier New', monospace;
-    --font-serif: 'JetBrains Mono', 'Courier New', monospace;
-    --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+    /* DEFCON 5 — military terminal, green-on-black CRT. Palette mirrors the docs site
+     * (github.com/mlund01/squadron/blob/main/docs/app/globals.css).
+     *   bg #0a1f0a · elevated #0d2a0d · inset #081808
+     *   fg #4ade80 · bright #86efac · dim #6b8f71
+     *   border #1a4a1a · strong #2a6a2a
+     *   accent #a3e635 · amber #facc15 · red #f87171
+     */
+    --background: #0a1f0a;
+    --foreground: #4ade80;
+    --card: #0d2a0d;
+    --card-foreground: #4ade80;
+    --popover: #0d2a0d;
+    --popover-foreground: #4ade80;
+    --primary: #a3e635;
+    --primary-foreground: #0a1f0a;
+    --secondary: #081808;
+    --secondary-foreground: #86efac;
+    --muted: #081808;
+    --muted-foreground: #6b8f71;
+    --accent: #0d2a0d;
+    --accent-foreground: #86efac;
+    --destructive: #f87171;
+    --destructive-foreground: #0a1f0a;
+    --border: #1a4a1a;
+    --input: #1a4a1a;
+    --ring: #a3e635;
+    --chart-1: #4ade80;
+    --chart-2: #a3e635;
+    --chart-3: #86efac;
+    --chart-4: #facc15;
+    --chart-5: #f87171;
+    --sidebar: #081808;
+    --sidebar-foreground: #4ade80;
+    --sidebar-primary: #a3e635;
+    --sidebar-primary-foreground: #0a1f0a;
+    --sidebar-accent: #0d2a0d;
+    --sidebar-accent-foreground: #86efac;
+    --sidebar-border: #1a4a1a;
+    --sidebar-ring: #a3e635;
+    --font-sans: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
+    --font-serif: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
+    --font-mono: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
+}
+
+/* Headings pop in bright green to match the docs treatment */
+.defcon5 h1, .defcon5 h2, .defcon5 h3, .defcon5 h4, .defcon5 h5, .defcon5 h6 {
+    color: #86efac;
+    letter-spacing: -0.01em;
+}
+
+/* Selection */
+.defcon5 ::selection {
+    background: rgba(74, 222, 128, 0.3);
+    color: #86efac;
+}
+
+/* Scrollbars — sharp, zero-radius, green */
+.defcon5 ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+.defcon5 ::-webkit-scrollbar-track {
+    background: #081808;
+}
+.defcon5 ::-webkit-scrollbar-thumb {
+    background: #2a6a2a;
+    border-radius: 0;
+}
+.defcon5 ::-webkit-scrollbar-thumb:hover {
+    background: #6b8f71;
+}
+
+/* Subtle CRT scanline overlay — very low opacity so readability stays intact */
+html.defcon5 body {
+    background-image: repeating-linear-gradient(
+        0deg,
+        rgba(74, 222, 128, 0.02) 0px,
+        rgba(74, 222, 128, 0.02) 1px,
+        transparent 1px,
+        transparent 3px
+    );
 }
 
 /* ─── DEFCON 5: remap hardcoded Tailwind colors to green spectrum ─── */

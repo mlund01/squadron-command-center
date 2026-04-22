@@ -6,9 +6,9 @@ import { AppSidebar } from './AppSidebar';
 export function AppLayout() {
   return (
     <TooltipProvider>
-      <SidebarProvider>
+      <SidebarProvider style={{ '--sidebar-width': '200px' } as React.CSSProperties}>
         <AppSidebar />
-        <SidebarInset className="overflow-hidden min-w-0">
+        <SidebarInset className="min-w-0 h-svh overflow-y-auto">
           <Outlet />
         </SidebarInset>
       </SidebarProvider>

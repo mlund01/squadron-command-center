@@ -1,19 +1,13 @@
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { listInstances, reloadConfig, getCurrentUser, logout } from '@/api/client';
+import { listInstances, reloadConfig, getCurrentUser, logout, getMissionHistory } from '@/api/client';
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarSeparator,
-  SidebarGroup,
-  SidebarGroupContent,
 } from '@/components/ui/sidebar';
 import {
   Select,
@@ -22,21 +16,120 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Rocket, Bot, Puzzle, RefreshCw, History, FileCode, FolderOpen, KeyRound, AlertTriangle, DollarSign, Sparkles, LogOut } from 'lucide-react';
+import { RefreshCw, AlertTriangle, LogOut } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { cn } from '@/lib/utils';
 
-const staticNavItems = [
-  { label: 'Missions', path: 'missions', icon: Rocket },
-  { label: 'History', path: 'history', icon: History },
-  { label: 'Agents', path: 'agents', icon: Bot },
-  { label: 'Skills', path: 'skills', icon: Sparkles },
-  { label: 'Tools', path: 'tools', icon: Puzzle },
-  { label: 'Costs', path: 'costs', icon: DollarSign },
-  { label: 'Variables', path: 'variables', icon: KeyRound },
-  { label: 'Config', path: 'config', icon: FileCode },
+type IconProps = { className?: string };
+
+// Minimal hairline icons — 14×14, 1.3 stroke, matching the design bundle
+function IconMission({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="3" cy="3" r="1.5" />
+      <circle cx="11" cy="3" r="1.5" />
+      <circle cx="7" cy="11" r="1.5" />
+      <path d="M3 3 L7 11 M11 3 L7 11" />
+    </svg>
+  );
+}
+function IconHistory({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 2 A5 5 0 1 1 2 7" />
+      <path d="M2 2 L2 5 L5 5" />
+      <path d="M7 4 L7 7 L9.5 8.5" />
+    </svg>
+  );
+}
+function IconAgent({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="7" cy="5" r="2" />
+      <path d="M3 12 C3 9 5 8 7 8 C9 8 11 9 11 12" />
+    </svg>
+  );
+}
+function IconSkill({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 7 L5 4 L8 7 L5 10 Z" />
+      <path d="M9 3 L12 6" />
+    </svg>
+  );
+}
+function IconTool({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 2 A3 3 0 0 0 6 5 L2 9 L4 11 L8 7 A3 3 0 0 0 11 4 L10 5 L9 4 L10 3 Z" />
+    </svg>
+  );
+}
+function IconCost({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 2 L7 12 M4 4 L10 4 Q10 7 7 7 Q4 7 4 9.5 L10 9.5" />
+    </svg>
+  );
+}
+function IconVar({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 3 Q6 3 6 7 Q6 11 10 11 M4 6 L6 8 M4 8 L6 6" />
+    </svg>
+  );
+}
+function IconCfg({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="7" cy="7" r="2" />
+      <path d="M7 1 L7 3 M7 11 L7 13 M1 7 L3 7 M11 7 L13 7 M3 3 L4 4 M10 10 L11 11 M3 11 L4 10 M10 4 L11 3" />
+    </svg>
+  );
+}
+function IconFolder({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 14 14" className={cn('size-3.5', className)} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 4 L6 4 L7 5 L12 5 L12 11 L2 11 Z" />
+    </svg>
+  );
+}
+
+function SquadronMark({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" className={cn('size-[18px]', className)} fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.4}>
+      <path d="M3 5 L9 2 L15 5" className="stroke-primary" />
+      <path d="M3 9 L9 6 L15 9" className="stroke-foreground" />
+      <path d="M3 13 L9 10 L15 13" className="stroke-muted-foreground" />
+    </svg>
+  );
+}
+
+function StatusDot({ tone, live = false, size = 6 }: { tone: 'running' | 'completed' | 'failed' | 'idle'; live?: boolean; size?: number }) {
+  const color =
+    tone === 'running' ? 'bg-blue-500' :
+    tone === 'completed' ? 'bg-green-500' :
+    tone === 'failed' ? 'bg-red-500' :
+    'bg-muted-foreground/60';
+  return (
+    <span className="relative inline-flex shrink-0" style={{ height: size, width: size }}>
+      <span className={cn('absolute inset-0 rounded-full', color)} />
+      {live && <span className={cn('absolute inset-0 rounded-full animate-ping opacity-60', color)} />}
+    </span>
+  );
+}
+
+const staticNavItems: { label: string; path: string; icon: (p: IconProps) => ReactElement }[] = [
+  { label: 'Missions',  path: 'missions',  icon: IconMission },
+  { label: 'History',   path: 'history',   icon: IconHistory },
+  { label: 'Agents',    path: 'agents',    icon: IconAgent },
+  { label: 'Skills',    path: 'skills',    icon: IconSkill },
+  { label: 'Tools',     path: 'tools',     icon: IconTool },
+  { label: 'Costs',     path: 'costs',     icon: IconCost },
+  { label: 'Variables', path: 'variables', icon: IconVar },
+  { label: 'Config',    path: 'config',    icon: IconCfg },
 ];
 
 export function AppSidebar() {
@@ -68,8 +161,6 @@ export function AppSidebar() {
     refetchInterval: 5000,
   });
 
-  // Current user — null when auth is disabled (endpoint 404s) or unauthenticated.
-  // Loaded once per mount; no refetch interval since identity doesn't change.
   const { data: currentUser } = useQuery({
     queryKey: ['auth', 'me'],
     queryFn: getCurrentUser,
@@ -79,18 +170,25 @@ export function AppSidebar() {
   const connectedInstances = instances?.filter((i) => i.connected) ?? [];
   const currentInstance = instances?.find((i) => i.id === id);
 
+  const { data: history } = useQuery({
+    queryKey: ['history', id],
+    queryFn: () => getMissionHistory(id!),
+    enabled: !!id && !!currentInstance?.connected,
+    refetchInterval: 10000,
+  });
+
+  const runningCount = (history?.missions ?? []).filter((m) => m.status === 'running').length;
+  const queuedCount = (history?.missions ?? []).filter((m) => m.status === 'queued' || m.status === 'pending').length;
+
   const handleInstanceChange = (instanceId: string) => {
     navigate(`/instances/${instanceId}/missions`);
   };
 
-  // Build nav items — add "Files" when file browsers are configured
   const navItems = currentInstance?.config?.sharedFolders?.length
-    ? [...staticNavItems, { label: 'Folders', path: 'files', icon: FolderOpen }]
+    ? [...staticNavItems, { label: 'Folders', path: 'files', icon: IconFolder }]
     : staticNavItems;
 
-  // Determine active nav item from URL
   const activePath = location.pathname.split('/').at(-1) ?? '';
-  // Handle nested paths like /missions/:name/run, /runs/:mid, and /files/view
   const activeSection = location.pathname.includes('/missions/') && location.pathname.includes('/run')
     ? 'missions'
     : location.pathname.includes('/runs/')
@@ -103,11 +201,27 @@ export function AppSidebar() {
 
   return (
     <Sidebar>
-      <SidebarHeader className="p-4">
-        <div className="text-sm font-semibold text-muted-foreground mb-2">Squadron</div>
+      {/* Brand header */}
+      <SidebarHeader className="h-11 px-3.5 py-0 flex-row items-center gap-2 border-b border-sidebar-border">
+        <SquadronMark />
+        <span className="font-mono text-[13px] font-semibold tracking-tight">Squadron</span>
+      </SidebarHeader>
+
+      {/* Workspace picker */}
+      <div className="px-3 pt-3 pb-2 border-b border-sidebar-border">
         <Select value={id ?? ''} onValueChange={handleInstanceChange}>
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select instance..." />
+          <SelectTrigger
+            className="w-full h-auto py-[5px] px-2 rounded-sm border-sidebar-border shadow-none bg-transparent text-[11.5px] text-muted-foreground hover:text-foreground"
+          >
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <StatusDot tone={currentInstance?.connected ? 'completed' : 'idle'} size={6} />
+              <SelectValue placeholder="Select instance..." />
+              {currentInstance && (
+                <span className="ml-auto font-mono text-[10px] text-muted-foreground/70 shrink-0">
+                  v{currentInstance.version}
+                </span>
+              )}
+            </div>
           </SelectTrigger>
           <SelectContent>
             {connectedInstances.map((instance) => (
@@ -126,93 +240,101 @@ export function AppSidebar() {
           </SelectContent>
         </Select>
         {currentInstance && (
-          <div className="mt-2 flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">v{currentInstance.version}</span>
+          <div className="mt-1.5 flex items-center gap-1 pl-0.5">
             <Button
               variant="ghost"
               size="icon"
-              className="h-5 w-5"
+              className="h-5 w-5 text-muted-foreground/80"
               onClick={handleReload}
               disabled={reloading || !currentInstance.connected}
               title="Reload config"
             >
-              <RefreshCw className={`h-3 w-3 ${reloading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={cn('h-3 w-3', reloading && 'animate-spin')} />
             </Button>
             <div className="ml-auto">
               <ThemeToggle />
             </div>
           </div>
         )}
-      </SidebarHeader>
+      </div>
 
-      <SidebarSeparator className="!w-auto" />
-
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {navItems.map((item) => {
-                const isActive = activeSection === item.path;
-                const count = getNavCount(item.path, currentInstance?.config);
-                return (
-                  <SidebarMenuItem key={item.path}>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={isActive}
-                      disabled={!id}
-                    >
-                      <Link to={id ? `/instances/${id}/${item.path}` : '#'}>
-                        <item.icon className="size-4" />
-                        <span>{item.label}</span>
-                        {count !== undefined && (
-                          <Badge variant="secondary" className="ml-auto text-xs">
-                            {count}
-                          </Badge>
-                        )}
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+      {/* Nav */}
+      <SidebarContent className="px-2 py-2">
+        <nav className="flex flex-col">
+          {navItems.map((item) => {
+            const isActive = activeSection === item.path;
+            const count = getNavCount(item.path, currentInstance?.config);
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.path}
+                to={id ? `/instances/${id}/${item.path}` : '#'}
+                aria-disabled={!id}
+                className={cn(
+                  'flex items-center gap-2.5 px-2.5 py-1.5 rounded-sm text-[12.5px] transition-colors mb-px',
+                  isActive
+                    ? 'bg-sidebar-accent/50 text-sidebar-accent-foreground font-medium'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/25',
+                  !id && 'pointer-events-none opacity-50',
+                )}
+              >
+                <Icon className={isActive ? 'text-sidebar-accent-foreground' : 'text-muted-foreground'} />
+                <span className="flex-1 truncate">{item.label}</span>
+                {count !== undefined && (
+                  <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground/70">
+                    {count}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
+        </nav>
 
         {currentInstance && currentInstance.connected && !currentInstance.configReady && (
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="mx-2 rounded-md border border-yellow-500/50 bg-yellow-500/10 px-3 py-2 cursor-default">
-                    <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
-                      <AlertTriangle className="size-4 flex-shrink-0" />
-                      <span className="text-xs font-medium">Config Invalid</span>
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground line-clamp-3">
-                      {currentInstance.configError || 'Fix config errors or set missing variables to enable missions.'}
-                    </p>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="right" className="max-w-80">
-                  <p className="text-sm">
-                    {currentInstance.configError || 'Fix config errors or set missing variables to enable missions.'}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="mx-1 mt-3 rounded-sm border border-yellow-500/50 bg-yellow-500/10 px-2.5 py-2 cursor-default">
+                <div className="flex items-center gap-1.5 text-yellow-600 dark:text-yellow-400">
+                  <AlertTriangle className="size-3.5 shrink-0" />
+                  <span className="text-[11px] font-medium">Config Invalid</span>
+                </div>
+                <p className="mt-1 text-[10.5px] text-muted-foreground line-clamp-3 leading-snug">
+                  {currentInstance.configError || 'Fix config errors or set missing variables to enable missions.'}
+                </p>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="max-w-80">
+              <p className="text-sm">
+                {currentInstance.configError || 'Fix config errors or set missing variables to enable missions.'}
+              </p>
+            </TooltipContent>
+          </Tooltip>
         )}
       </SidebarContent>
 
-      {currentUser && (
-        <SidebarFooter className="p-3 border-t">
-          <div className="flex items-center gap-2 min-w-0">
+      {/* Footer */}
+      <SidebarFooter className="px-3.5 py-2.5 gap-2 border-t border-sidebar-border">
+        <div className="flex items-center gap-1.5 font-mono text-[10.5px] text-muted-foreground/80">
+          <StatusDot
+            tone={runningCount > 0 ? 'running' : currentInstance?.connected ? 'completed' : 'idle'}
+            live={runningCount > 0}
+            size={5}
+          />
+          <span className="truncate">
+            {currentInstance?.connected
+              ? `${runningCount} running · ${queuedCount} queued`
+              : 'disconnected'}
+          </span>
+        </div>
+
+        {currentUser && (
+          <div className="flex items-center gap-2 min-w-0 pt-2 border-t border-sidebar-border">
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-medium truncate" title={currentUser.name || currentUser.email}>
+              <div className="text-[11px] font-medium truncate" title={currentUser.name || currentUser.email}>
                 {currentUser.name || currentUser.email}
               </div>
               {currentUser.name && (
-                <div className="text-xs text-muted-foreground truncate" title={currentUser.email}>
+                <div className="text-[10px] text-muted-foreground truncate" title={currentUser.email}>
                   {currentUser.email}
                 </div>
               )}
@@ -220,15 +342,15 @@ export function AppSidebar() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 flex-shrink-0"
+              className="h-6 w-6 shrink-0 text-muted-foreground/80"
               onClick={() => logout()}
               title="Log out"
             >
-              <LogOut className="h-4 w-4" />
+              <LogOut className="h-3.5 w-3.5" />
             </Button>
           </div>
-        </SidebarFooter>
-      )}
+        )}
+      </SidebarFooter>
     </Sidebar>
   );
 }

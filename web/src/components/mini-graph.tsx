@@ -20,6 +20,8 @@ interface MiniGraphProps {
   width?: number;
   height?: number;
   className?: string;
+  tone?: 'loud' | 'mid' | 'quiet';
+  emphasizeId?: string;
 }
 
 const defaultColorMap: Record<string, { fill: string; stroke: string }> = {
@@ -45,19 +47,34 @@ const defcon5ColorMap: Record<string, { fill: string; stroke: string }> = {
 const NODE_W = { sm: 12, md: 16 };
 const NODE_H = { sm: 8, md: 10 };
 
-export function MiniGraph({ nodes, edges, width = 200, height = 100, className }: MiniGraphProps) {
+export function MiniGraph({
+  nodes,
+  edges,
+  width = 200,
+  height = 100,
+  className,
+  tone = 'loud',
+  emphasizeId,
+}: MiniGraphProps) {
   const { resolvedTheme } = useTheme();
   const colorMap = resolvedTheme === 'defcon5' ? defcon5ColorMap : defaultColorMap;
+  const quiet = tone === 'quiet';
 
   if (nodes.length === 0) return null;
 
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'LR', nodesep: 12, ranksep: 30, marginx: 20, marginy: 16 });
+  g.setGraph(
+    quiet
+      ? { rankdir: 'LR', nodesep: 8, ranksep: 22, marginx: 12, marginy: 10 }
+      : { rankdir: 'LR', nodesep: 12, ranksep: 30, marginx: 20, marginy: 16 },
+  );
 
   for (const n of nodes) {
     const s = n.size ?? 'sm';
-    g.setNode(n.id, { width: NODE_W[s], height: NODE_H[s] });
+    const w = quiet ? 6 : NODE_W[s];
+    const h = quiet ? 6 : NODE_H[s];
+    g.setNode(n.id, { width: w, height: h });
   }
   for (const e of edges) {
     g.setEdge(e.source, e.target);
@@ -100,14 +117,43 @@ export function MiniGraph({ nodes, edges, width = 200, height = 100, className }
             d={`M ${sNode.x} ${sNode.y} C ${midX} ${sNode.y}, ${midX} ${tNode.y}, ${tNode.x} ${tNode.y}`}
             fill="none"
             stroke="currentColor"
-            strokeWidth={1.2}
-            className="text-muted-foreground/20"
+            strokeWidth={quiet ? 1 : 1.2}
+            className={quiet ? 'text-muted-foreground/40' : 'text-muted-foreground/20'}
           />
         );
       })}
 
-      {/* Nodes — rounded pills with stroke */}
-      {nodes.map((n) => {
+      {/* Quiet tone — small neutral dots + optional single accent on emphasized node */}
+      {quiet && nodes.map((n) => {
+        const pos = g.node(n.id);
+        if (!pos) return null;
+        const isEmph = emphasizeId === n.id;
+        return (
+          <g key={n.id}>
+            {isEmph && (
+              <circle
+                cx={pos.x}
+                cy={pos.y}
+                r={6.5}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1}
+                className="text-primary/50"
+              />
+            )}
+            <circle
+              cx={pos.x}
+              cy={pos.y}
+              r={isEmph ? 3.5 : 3}
+              fill="currentColor"
+              className={isEmph ? 'text-primary' : 'text-muted-foreground/70'}
+            />
+          </g>
+        );
+      })}
+
+      {/* Loud / mid tone — rounded pills with stroke. Mid drops the glow. */}
+      {!quiet && nodes.map((n) => {
         const pos = g.node(n.id);
         if (!pos) return null;
         const s = n.size ?? 'sm';
@@ -117,17 +163,18 @@ export function MiniGraph({ nodes, edges, width = 200, height = 100, className }
         const rx = h / 2;
         const x = pos.x - w / 2;
         const y = pos.y - h / 2;
+        const glow = tone === 'loud' ? 'url(#mini-glow)' : undefined;
+        const fillOpacity = tone === 'loud' ? 1 : 0.85;
 
         if (n.stacked) {
-          // Stacked look: 2 offset layers behind the main node
           return (
-            <g key={n.id} filter="url(#mini-glow)">
+            <g key={n.id} filter={glow}>
               <rect x={x + 3} y={y + 3} width={w} height={h} rx={rx}
-                fill={fill} stroke={stroke} strokeWidth={0.8} opacity={0.3} />
+                fill={fill} stroke={stroke} strokeWidth={0.8} opacity={0.25} />
               <rect x={x + 1.5} y={y + 1.5} width={w} height={h} rx={rx}
-                fill={fill} stroke={stroke} strokeWidth={0.8} opacity={0.5} />
+                fill={fill} stroke={stroke} strokeWidth={0.8} opacity={0.45} />
               <rect x={x} y={y} width={w} height={h} rx={rx}
-                fill={fill} stroke={stroke} strokeWidth={1} opacity={1} />
+                fill={fill} stroke={stroke} strokeWidth={1} opacity={fillOpacity} />
             </g>
           );
         }
@@ -143,8 +190,8 @@ export function MiniGraph({ nodes, edges, width = 200, height = 100, className }
             fill={fill}
             stroke={stroke}
             strokeWidth={1}
-            opacity={1}
-            filter="url(#mini-glow)"
+            opacity={fillOpacity}
+            filter={glow}
           />
         );
       })}
