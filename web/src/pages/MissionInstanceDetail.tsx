@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ReactFlow,
@@ -3088,8 +3088,22 @@ function EventsTab({ instanceId, missionId, isRunning }: { instanceId: string; m
 
 /* ── Main page component ── */
 
+type RunBackFrom = { kind: 'mission'; name: string } | { kind: 'history' };
+
+function backTarget(instanceId: string | undefined, state: unknown, missionName: string): string {
+  const from = (state as { from?: RunBackFrom } | null)?.from;
+  if (from?.kind === 'mission') {
+    return `/instances/${instanceId}/missions/${from.name}`;
+  }
+  if (from?.kind === 'history') {
+    return `/instances/${instanceId}/missions?view=history&q=${encodeURIComponent(missionName)}`;
+  }
+  return `/instances/${instanceId}/history`;
+}
+
 export function MissionInstanceDetail() {
   const { id, mid } = useParams<{ id: string; mid: string }>();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const { resolvedTheme } = useTheme();
   const isDefcon5 = resolvedTheme === 'defcon5';
@@ -3294,7 +3308,7 @@ export function MissionInstanceDetail() {
       <div className="shrink-0 px-8 py-4 border-b">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Link to={`/instances/${id}/history`} className="text-muted-foreground hover:text-foreground">
+            <Link to={backTarget(id, location.state, mission.name)} className="text-muted-foreground hover:text-foreground">
               <ChevronLeft className="h-4 w-4" />
             </Link>
             <div>

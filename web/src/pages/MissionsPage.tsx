@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { getInstance, getMissionHistory, runMission } from '@/api/client';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,8 @@ import { cn } from '@/lib/utils';
 type ViewKey = 'missions' | 'history';
 type FilterKey = 'all' | 'active' | 'scheduled';
 type HistoryFilterKey = 'all' | 'running' | 'completed' | 'failed';
+
+const HISTORY_PAGE_SIZE = 50;
 
 function buildMissionMiniGraph(mission: MissionInfo): { nodes: MiniNode[]; edges: MiniEdge[] } {
   const nodes: MiniNode[] = [];
@@ -76,8 +78,7 @@ export function MissionsPage() {
   const [dialogMission, setDialogMission] = useState<MissionInfo | null>(null);
   const [filter, setFilter] = useState<FilterKey>('all');
   const [historyFilter, setHistoryFilter] = useState<HistoryFilterKey>('all');
-  // Seed the search input from a ?q= query param (e.g. when arriving from a
-  // mission detail page's "N runs" link).
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const [search, setSearch] = useState(() => searchParams.get('q') ?? '');
 
   const { data: instance, isLoading } = useQuery({
@@ -89,14 +90,31 @@ export function MissionsPage() {
   });
 
   // Poll every 3s so running / just-finished missions light up (and stop
-  // breathing) quickly enough to feel live.
-  const { data: history } = useQuery({
-    queryKey: ['history', id],
-    queryFn: () => getMissionHistory(id!),
+  // breathing) quickly enough to feel live. Infinite paging drives history scroll.
+  const {
+    data: historyData,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ['history-infinite', id],
+    queryFn: ({ pageParam }) => getMissionHistory(id!, pageParam as number, HISTORY_PAGE_SIZE),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((n, p) => n + p.missions.length, 0);
+      return loaded < lastPage.total ? loaded : undefined;
+    },
     enabled: !!id && !!instance?.connected,
     refetchInterval: 3000,
     refetchIntervalInBackground: false,
   });
+
+  const history = useMemo(() => {
+    if (!historyData) return undefined;
+    const missions = historyData.pages.flatMap((p) => p.missions);
+    const total = historyData.pages[historyData.pages.length - 1]?.total ?? 0;
+    return { missions, total };
+  }, [historyData]);
 
   const missions = useMemo(() => instance?.config.missions ?? [], [instance]);
 
@@ -172,6 +190,22 @@ export function MissionsPage() {
     });
   }, [runs, historyFilter, search]);
 
+  useEffect(() => {
+    if (view !== 'history') return;
+    const el = loadMoreRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting) && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage();
+        }
+      },
+      { rootMargin: '300px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [view, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
   const handleRun = async (mission: MissionInfo) => {
     if (!id) return;
     if (mission.inputs && mission.inputs.length > 0) {
@@ -183,8 +217,11 @@ export function MissionsPage() {
       const result = await runMission(id, mission.name, {});
       // Kick an immediate refetch so the breathing card appears without
       // waiting for the next poll interval.
+      queryClient.invalidateQueries({ queryKey: ['history-infinite', id] });
       queryClient.invalidateQueries({ queryKey: ['history', id] });
-      navigate(`/instances/${id}/runs/${result.missionId}`);
+      navigate(`/instances/${id}/runs/${result.missionId}`, {
+        state: { from: { kind: 'history' } },
+      });
     } catch {
       setRunningMission(null);
     }
@@ -334,7 +371,7 @@ export function MissionsPage() {
                       <TableRow
                         key={m.id}
                         className="cursor-pointer border-border/40 hover:bg-accent/20 transition-colors"
-                        onClick={() => navigate(`/instances/${id}/runs/${m.id}`)}
+                        onClick={() => navigate(`/instances/${id}/runs/${m.id}`, { state: { from: { kind: 'history' } } })}
                       >
                         <TableCell className="font-mono text-[13px] font-medium truncate">{m.name}</TableCell>
                         <TableCell>
@@ -353,8 +390,10 @@ export function MissionsPage() {
               </div>
             )}
 
+            <div ref={loadMoreRef} className="h-8" />
             <p className="font-mono text-[10.5px] text-muted-foreground/70 mt-3 tracking-[0.2px]">
               Showing {visibleRuns.length} of {totalRuns} run{totalRuns !== 1 ? 's' : ''}
+              {isFetchingNextPage && ' · loading more...'}
             </p>
           </>
         )
