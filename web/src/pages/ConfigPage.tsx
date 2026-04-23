@@ -4,6 +4,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { listConfigFiles, getConfigFile, writeConfigFile, reloadConfig, validateConfig, getInstance } from '@/api/client';
 import { Button } from '@/components/ui/button';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { cn } from '@/lib/utils';
 import { buildNewFilePath, validateNewFileName } from '@/lib/config-files';
 import { FileCode, FilePlus, Save, RefreshCw, Undo2, CheckCircle, X, ChevronRight, ChevronDown, Eye, EyeOff, Code } from 'lucide-react';
@@ -223,11 +231,6 @@ export function ConfigPage() {
   const [addingFile, setAddingFile] = useState<{ dir: string } | null>(null);
   const [newFileName, setNewFileName] = useState('');
   const [creatingFile, setCreatingFile] = useState(false);
-  const [contextMenu, setContextMenu] = useState<
-    | { x: number; y: number; type: 'root' }
-    | { x: number; y: number; type: 'folder'; dir: string }
-    | null
-  >(null);
   const [codeOpen, setCodeOpen] = useState(true);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewContent, setPreviewContent] = useState('');
@@ -502,22 +505,6 @@ export function ConfigPage() {
         ? 'File already exists'
         : null;
 
-  // Close context menu on any outside interaction
-  useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    window.addEventListener('click', close);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    window.addEventListener('blur', close);
-    return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
-      window.removeEventListener('blur', close);
-    };
-  }, [contextMenu]);
-
   const startAddingFile = useCallback((dir: string) => {
     setNewFileName('');
     setAddingFile({ dir });
@@ -669,52 +656,19 @@ export function ConfigPage() {
       </div>
 
 
-      {contextMenu && (
-        <div
-          className="fixed z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md py-1"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onClick={e => e.stopPropagation()}
-          onContextMenu={e => e.preventDefault()}
-        >
-          {contextMenu.type === 'root' && (
-            <button
-              className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
-              onClick={() => { setContextMenu(null); startAddingFile(''); }}
-            >
-              <FilePlus className="h-3.5 w-3.5" />
-              Add file
-            </button>
-          )}
-          {contextMenu.type === 'folder' && (
-            <>
-              <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground font-mono truncate">
-                {contextMenu.dir}
-              </div>
-              <button
-                className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
-                onClick={() => { const d = contextMenu.dir; setContextMenu(null); startAddingFile(d); }}
-              >
-                <FilePlus className="h-3.5 w-3.5" />
-                Add file to folder
-              </button>
-            </>
-          )}
-        </div>
-      )}
-
       {/* Content */}
       <div className="flex flex-1 min-h-0">
         {/* File tree */}
-        <div
-          className="shrink-0 border-r border-border/60 overflow-y-auto bg-background"
-          style={{ width: fileTreeWidth }}
-          onContextMenu={e => {
-            if (!allowEdit) return;
-            e.preventDefault();
-            setContextMenu({ x: e.clientX, y: e.clientY, type: 'root' });
-          }}
-        >
-          <div className="px-1.5 py-1.5 min-h-full">
+        <ContextMenu>
+          <ContextMenuTrigger
+            asChild
+            disabled={!allowEdit}
+          >
+            <div
+              className="shrink-0 border-r border-border/60 overflow-y-auto bg-background"
+              style={{ width: fileTreeWidth }}
+            >
+              <div className="px-1.5 py-1.5 min-h-full">
             {(() => {
               // Sort files: root files first, then grouped by directory
               const sorted = [...fileList.files].sort((a, b) => {
@@ -759,7 +713,6 @@ export function ConfigPage() {
                       // No file-level actions available yet; suppress root menu but don't open anything.
                       e.preventDefault();
                       e.stopPropagation();
-                      setContextMenu(null);
                     }}
                     className={cn(
                       'flex items-center gap-1.5 w-full px-2 py-[3px] rounded-sm font-mono text-[12px] leading-tight text-left transition-colors',
@@ -821,22 +774,31 @@ export function ConfigPage() {
                     const isAddingHere = addingFile?.dir === dir;
                     return (
                       <div key={dir}>
-                        <button
-                          onClick={() => toggleDir(dir)}
-                          onContextMenu={e => {
-                            if (!allowEdit) return;
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setContextMenu({ x: e.clientX, y: e.clientY, type: 'folder', dir });
-                          }}
-                          className="flex items-center gap-1 w-full px-2 py-[3px] mt-1 first:mt-0 rounded-sm font-mono text-[10px] uppercase tracking-[0.1em] leading-tight text-left hover:bg-accent/25 text-muted-foreground/70 hover:text-foreground transition-colors"
-                        >
-                          {isOpen
-                            ? <ChevronDown className="h-2.5 w-2.5 shrink-0 opacity-70" />
-                            : <ChevronRight className="h-2.5 w-2.5 shrink-0 opacity-70" />
-                          }
-                          <span className="truncate">{dir}</span>
-                        </button>
+                        <ContextMenu>
+                          <ContextMenuTrigger asChild disabled={!allowEdit}>
+                            <button
+                              onClick={() => toggleDir(dir)}
+                              onContextMenu={e => e.stopPropagation()}
+                              className="flex items-center gap-1 w-full px-2 py-[3px] mt-1 first:mt-0 rounded-sm font-mono text-[10px] uppercase tracking-[0.1em] leading-tight text-left hover:bg-accent/25 text-muted-foreground/70 hover:text-foreground transition-colors"
+                            >
+                              {isOpen
+                                ? <ChevronDown className="h-2.5 w-2.5 shrink-0 opacity-70" />
+                                : <ChevronRight className="h-2.5 w-2.5 shrink-0 opacity-70" />
+                              }
+                              <span className="truncate">{dir}</span>
+                            </button>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent className="!rounded-[6px] min-w-[11rem] [&_[data-slot=context-menu-item]]:!rounded-[4px]">
+                            <ContextMenuLabel className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground truncate max-w-[240px]">
+                              {dir}
+                            </ContextMenuLabel>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem onSelect={() => startAddingFile(dir)}>
+                              <FilePlus className="h-3.5 w-3.5" />
+                              Add file to folder
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
                         {(isOpen || isAddingHere) && (
                           <div className="ml-[13px] pl-px border-l border-border/60">
                             {files.map(f => renderFile(f, true))}
@@ -849,8 +811,16 @@ export function ConfigPage() {
                 </>
               );
             })()}
-          </div>
-        </div>
+              </div>
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="!rounded-[6px] min-w-[11rem] [&_[data-slot=context-menu-item]]:!rounded-[4px] [&_[data-slot=context-menu-label]]:!rounded-[4px]">
+            <ContextMenuItem onSelect={() => startAddingFile('')}>
+              <FilePlus className="h-3.5 w-3.5" />
+              Add file
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
 
         {/* Resize handle */}
         <div
