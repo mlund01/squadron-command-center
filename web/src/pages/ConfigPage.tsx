@@ -13,7 +13,20 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import { cn } from '@/lib/utils';
-import { buildNewFilePath, validateNewFileName } from '@/lib/config-files';
+import { buildNewFilePath, splitDirAndBase, validateNewFileName } from '@/lib/config-files';
+
+const NEW_FILE_ERROR_MESSAGES = {
+  'invalid-path': 'Invalid path',
+  'already-exists': 'File already exists',
+} as const;
+
+// Shared styling for the two ContextMenu popovers in this page. The project's
+// --radius token is ~18px, which makes the stock shadcn menu render as a
+// pill; tighten corners here only.
+const MENU_CONTENT_CLASS =
+  '!rounded-[6px] min-w-[11rem] [&_[data-slot=context-menu-item]]:!rounded-[4px]';
+const MENU_CONTENT_CLASS_WITH_LABEL = `${MENU_CONTENT_CLASS} [&_[data-slot=context-menu-label]]:!rounded-[4px]`;
+const preventDefault = (e: Event) => e.preventDefault();
 import { FileCode, FilePlus, Save, RefreshCw, Undo2, CheckCircle, X, ChevronRight, ChevronDown, Eye, EyeOff, Code } from 'lucide-react';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
 import { useHorizontalResize } from '@/hooks/use-horizontal-resize';
@@ -248,6 +261,7 @@ export function ConfigPage() {
 
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const addFileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: instance } = useQuery({
     queryKey: ['instance', id],
@@ -498,12 +512,14 @@ export function ConfigPage() {
   const newFileErrorCode = addingFile
     ? validateNewFileName(addingFile.dir, newFileName, existingNames)
     : null;
-  const newFileError =
-    newFileErrorCode === 'invalid-path'
-      ? 'Invalid path'
-      : newFileErrorCode === 'already-exists'
-        ? 'File already exists'
-        : null;
+  const newFileError = newFileErrorCode ? NEW_FILE_ERROR_MESSAGES[newFileErrorCode] : null;
+
+  // Radix ContextMenu would normally restore focus to its trigger when the
+  // menu closes; each ContextMenuContent below calls preventDefault on
+  // onCloseAutoFocus so this focus call isn't clobbered.
+  useEffect(() => {
+    if (addingFile) addFileInputRef.current?.focus();
+  }, [addingFile]);
 
   const startAddingFile = useCallback((dir: string) => {
     setNewFileName('');
@@ -531,8 +547,7 @@ export function ConfigPage() {
     try {
       await writeConfigFile(id, name, '');
       toast.success(`Created ${name}`);
-      setAddingFile(null);
-      setNewFileName('');
+      cancelAddingFile();
       await queryClient.invalidateQueries({ queryKey: ['configFiles', id] });
       setSelectedFile(name);
     } catch (err: unknown) {
@@ -541,7 +556,7 @@ export function ConfigPage() {
     } finally {
       setCreatingFile(false);
     }
-  }, [id, creatingFile, addingFile, newFileFullPath, trimmedNewName, newFileError, queryClient]);
+  }, [id, creatingFile, addingFile, newFileFullPath, trimmedNewName, newFileError, queryClient, cancelAddingFile]);
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -672,8 +687,8 @@ export function ConfigPage() {
             {(() => {
               // Sort files: root files first, then grouped by directory
               const sorted = [...fileList.files].sort((a, b) => {
-                const aDir = a.name.includes('/') ? a.name.substring(0, a.name.lastIndexOf('/')) : '';
-                const bDir = b.name.includes('/') ? b.name.substring(0, b.name.lastIndexOf('/')) : '';
+                const aDir = splitDirAndBase(a.name).dir;
+                const bDir = splitDirAndBase(b.name).dir;
                 if (aDir === bDir) return a.name.localeCompare(b.name);
                 if (aDir === '') return -1;
                 if (bDir === '') return 1;
@@ -684,7 +699,7 @@ export function ConfigPage() {
               const rootFiles: typeof sorted = [];
               const dirGroups = new Map<string, typeof sorted>();
               for (const file of sorted) {
-                const dir = file.name.includes('/') ? file.name.substring(0, file.name.lastIndexOf('/')) : '';
+                const dir = splitDirAndBase(file.name).dir;
                 if (!dir) {
                   rootFiles.push(file);
                 } else {
@@ -704,7 +719,7 @@ export function ConfigPage() {
 
               const renderFile = (file: typeof sorted[0], _indented?: boolean) => {
                 const isModified = pendingChanges.has(file.name);
-                const basename = file.name.includes('/') ? file.name.substring(file.name.lastIndexOf('/') + 1) : file.name;
+                const basename = splitDirAndBase(file.name).base;
                 return (
                   <button
                     key={file.name}
@@ -734,7 +749,7 @@ export function ConfigPage() {
                 <div className="flex items-center gap-2 px-2 py-1">
                   <FileCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <input
-                    autoFocus
+                    ref={addFileInputRef}
                     type="text"
                     value={newFileName}
                     disabled={creatingFile}
@@ -788,7 +803,7 @@ export function ConfigPage() {
                               <span className="truncate">{dir}</span>
                             </button>
                           </ContextMenuTrigger>
-                          <ContextMenuContent className="!rounded-[6px] min-w-[11rem] [&_[data-slot=context-menu-item]]:!rounded-[4px]">
+                          <ContextMenuContent onCloseAutoFocus={preventDefault} className={MENU_CONTENT_CLASS}>
                             <ContextMenuLabel className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground truncate max-w-[240px]">
                               {dir}
                             </ContextMenuLabel>
@@ -814,7 +829,7 @@ export function ConfigPage() {
               </div>
             </div>
           </ContextMenuTrigger>
-          <ContextMenuContent className="!rounded-[6px] min-w-[11rem] [&_[data-slot=context-menu-item]]:!rounded-[4px] [&_[data-slot=context-menu-label]]:!rounded-[4px]">
+          <ContextMenuContent onCloseAutoFocus={preventDefault} className={MENU_CONTENT_CLASS_WITH_LABEL}>
             <ContextMenuItem onSelect={() => startAddingFile('')}>
               <FilePlus className="h-3.5 w-3.5" />
               Add file

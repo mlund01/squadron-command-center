@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildNewFilePath, validateNewFileName } from './config-files';
+import { buildNewFilePath, splitDirAndBase, validateNewFileName } from './config-files';
 
 describe('buildNewFilePath', () => {
   it('returns the trimmed name when dir is empty (root)', () => {
@@ -22,6 +22,26 @@ describe('buildNewFilePath', () => {
 
   it('handles nested directory prefixes verbatim', () => {
     expect(buildNewFilePath('agents/sub', 'x.md')).toBe('agents/sub/x.md');
+  });
+
+  it('strips a leading "./" from the name', () => {
+    expect(buildNewFilePath('', './foo.md')).toBe('foo.md');
+    expect(buildNewFilePath('agents', './foo.md')).toBe('agents/foo.md');
+  });
+});
+
+describe('splitDirAndBase', () => {
+  it('returns empty dir for a root-level path', () => {
+    expect(splitDirAndBase('file.md')).toEqual({ dir: '', base: 'file.md' });
+  });
+
+  it('splits a nested path on the last slash', () => {
+    expect(splitDirAndBase('agents/a.md')).toEqual({ dir: 'agents', base: 'a.md' });
+    expect(splitDirAndBase('a/b/c.md')).toEqual({ dir: 'a/b', base: 'c.md' });
+  });
+
+  it('handles an empty string', () => {
+    expect(splitDirAndBase('')).toEqual({ dir: '', base: '' });
   });
 });
 
@@ -71,5 +91,12 @@ describe('validateNewFileName', () => {
   it('ignores surrounding whitespace when checking collisions', () => {
     const existing = new Set(['config.md']);
     expect(validateNewFileName('', '  config.md  ', existing)).toBe('already-exists');
+  });
+
+  it('accepts a leading "./" and normalizes it for collision checks', () => {
+    const existing = new Set(['config.md', 'agents/a.md']);
+    expect(validateNewFileName('', './new.md', existing)).toBeNull();
+    expect(validateNewFileName('', './config.md', existing)).toBe('already-exists');
+    expect(validateNewFileName('agents', './a.md', existing)).toBe('already-exists');
   });
 });
