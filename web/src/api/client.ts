@@ -80,8 +80,12 @@ export async function resumeMission(instanceId: string, missionId: string, missi
   });
 }
 
-export async function getMissionHistory(instanceId: string): Promise<MissionHistoryResponse> {
-  return fetchJSON<MissionHistoryResponse>(`/instances/${instanceId}/history`);
+export async function getMissionHistory(instanceId: string, offset = 0, limit = 50): Promise<MissionHistoryResponse> {
+  const params = new URLSearchParams();
+  if (offset) params.set('offset', String(offset));
+  if (limit !== 50) params.set('limit', String(limit));
+  const qs = params.toString();
+  return fetchJSON<MissionHistoryResponse>(`/instances/${instanceId}/history${qs ? '?' + qs : ''}`);
 }
 
 export async function sendChatMessage(instanceId: string, agentName: string, message: string, sessionId?: string): Promise<ChatMessageResponse> {

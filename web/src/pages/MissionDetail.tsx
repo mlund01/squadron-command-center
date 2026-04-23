@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   ReactFlow,
@@ -23,13 +23,17 @@ import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { useResizablePanel } from '@/hooks/use-resizable-panel';
 import { ZoomControls } from '@/components/zoom-controls';
 import { NodeChip } from '@/components/node-chip';
 import { RunMissionDialog } from '@/components/RunMissionDialog';
-import type { TaskInfo, AgentInfo, DatasetInfo, MissionInfo, ScheduleInfo, TriggerInfo } from '@/api/types';
+import { StatusBadge, formatTime, formatDuration } from '@/lib/mission-utils';
+import type { TaskInfo, AgentInfo, DatasetInfo, MissionInfo, MissionRecordInfo, ScheduleInfo, TriggerInfo } from '@/api/types';
 import { RouterEdge } from '@/components/RouterEdge';
+
+const RUNS_PAGE_SIZE = 10;
 
 const NODE_WIDTH = 260;
 const NODE_HEIGHT = 100;
@@ -549,6 +553,90 @@ function AgentsTabContent({
   );
 }
 
+function RunsTabContent({
+  runs,
+  page,
+  onPageChange,
+  onSelectRun,
+}: {
+  runs: MissionRecordInfo[];
+  page: number;
+  onPageChange: (page: number) => void;
+  onSelectRun: (runId: string) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(runs.length / RUNS_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages - 1);
+  const start = currentPage * RUNS_PAGE_SIZE;
+  const pageRuns = runs.slice(start, start + RUNS_PAGE_SIZE);
+
+  if (runs.length === 0) {
+    return <p className="text-sm text-muted-foreground p-4">No runs yet for this mission.</p>;
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-y-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-32">Status</TableHead>
+              <TableHead>Started</TableHead>
+              <TableHead className="w-32 text-right">Duration</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {pageRuns.map((r) => (
+              <TableRow
+                key={r.id}
+                className="cursor-pointer"
+                onClick={() => onSelectRun(r.id)}
+              >
+                <TableCell>
+                  <StatusBadge status={r.status} />
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {formatTime(r.startedAt)}
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground tabular-nums text-right">
+                  {r.finishedAt ? formatDuration(r.startedAt, r.finishedAt) : '—'}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <div className="shrink-0 flex items-center justify-between px-4 py-2 border-t text-xs text-muted-foreground">
+        <span>
+          Showing {start + 1}–{Math.min(start + RUNS_PAGE_SIZE, runs.length)} of {runs.length}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2"
+            disabled={currentPage === 0}
+            onClick={() => onPageChange(currentPage - 1)}
+          >
+            <ChevronLeft className="size-3.5" />
+          </Button>
+          <span className="tabular-nums">
+            Page {currentPage + 1} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2"
+            disabled={currentPage >= totalPages - 1}
+            onClick={() => onPageChange(currentPage + 1)}
+          >
+            <ChevronRight className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Main page component ── */
 
 export function MissionDetail() {
@@ -562,6 +650,7 @@ export function MissionDetail() {
   const [activeTab, setActiveTab] = useState('general');
   const [runningMission, setRunningMission] = useState(false);
   const [showRunDialog, setShowRunDialog] = useState(false);
+  const [runsPage, setRunsPage] = useState(0);
 
   const {
     panelHeight,
@@ -589,7 +678,13 @@ export function MissionDetail() {
   });
 
   const mission = instance?.config.missions?.find((m) => m.name === name);
-  const runCount = history?.missions?.filter((m) => m.name === name).length ?? 0;
+  const missionRuns = useMemo(() => {
+    return (history?.missions ?? [])
+      .filter((m) => m.name === name)
+      .slice()
+      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+  }, [history?.missions, name]);
+  const runCount = missionRuns.length;
   const missionAgentNames = new Set(mission?.agents ?? []);
   const agents = instance?.config.agents?.filter((a) => missionAgentNames.has(a.name));
 
@@ -627,7 +722,9 @@ export function MissionDetail() {
     setRunningMission(true);
     try {
       const result = await runMission(id, name, {});
-      navigate(`/instances/${id}/runs/${result.missionId}`);
+      navigate(`/instances/${id}/runs/${result.missionId}`, {
+        state: { from: { kind: 'mission', name } },
+      });
     } catch {
       setRunningMission(false);
     }
@@ -656,13 +753,6 @@ export function MissionDetail() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {runCount > 0 && (
-              <Button asChild variant="outline" size="sm">
-                <Link to={`/instances/${id}/missions?view=history&q=${encodeURIComponent(mission.name)}`}>
-                  {runCount} {runCount === 1 ? 'run' : 'runs'}
-                </Link>
-              </Button>
-            )}
             <ScheduleTriggerPopover mission={mission} instanceName={instance.name} />
             <Button
               variant={instance.connected ? 'default' : 'secondary'}
@@ -743,6 +833,12 @@ export function MissionDetail() {
                   {agents?.length ?? 0}
                 </Badge>
               </TabsTrigger>
+              <TabsTrigger value="runs">
+                History
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 ml-0.5">
+                  {runCount}
+                </Badge>
+              </TabsTrigger>
             </TabsList>
             <div className="ml-auto">
               <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={togglePanel}>
@@ -808,6 +904,18 @@ export function MissionDetail() {
                 agents={agents ?? []}
                 selectedAgent={selectedAgent}
                 onSelectAgent={setSelectedAgent}
+              />
+            </TabsContent>
+            <TabsContent value="runs" className="h-full m-0">
+              <RunsTabContent
+                runs={missionRuns}
+                page={runsPage}
+                onPageChange={setRunsPage}
+                onSelectRun={(runId) =>
+                  navigate(`/instances/${id}/runs/${runId}`, {
+                    state: { from: { kind: 'mission', name: mission.name } },
+                  })
+                }
               />
             </TabsContent>
           </div>

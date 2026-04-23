@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/mlund01/squadron-wire/protocol"
@@ -475,9 +476,22 @@ func handleMissionHistory(h *hub.Hub) http.HandlerFunc {
 			return
 		}
 
+		limit := 50
+		offset := 0
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+				limit = n
+			}
+		}
+		if v := r.URL.Query().Get("offset"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				offset = n
+			}
+		}
+
 		req, err := protocol.NewRequest(protocol.TypeGetMissions, &protocol.GetMissionsPayload{
-			Limit:  50,
-			Offset: 0,
+			Limit:  limit,
+			Offset: offset,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
