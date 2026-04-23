@@ -4,8 +4,30 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { listConfigFiles, getConfigFile, writeConfigFile, reloadConfig, validateConfig, getInstance } from '@/api/client';
 import { Button } from '@/components/ui/button';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { cn } from '@/lib/utils';
-import { FileCode, Save, RefreshCw, Undo2, CheckCircle, X, ChevronRight, ChevronDown, Eye, EyeOff, Code } from 'lucide-react';
+import { buildNewFilePath, splitDirAndBase, validateNewFileName } from '@/lib/config-files';
+
+const NEW_FILE_ERROR_MESSAGES = {
+  'invalid-path': 'Invalid path',
+  'already-exists': 'File already exists',
+} as const;
+
+// Shared styling for the two ContextMenu popovers in this page. The project's
+// --radius token is ~18px, which makes the stock shadcn menu render as a
+// pill; tighten corners here only.
+const MENU_CONTENT_CLASS =
+  '!rounded-[6px] min-w-[11rem] [&_[data-slot=context-menu-item]]:!rounded-[4px]';
+const MENU_CONTENT_CLASS_WITH_LABEL = `${MENU_CONTENT_CLASS} [&_[data-slot=context-menu-label]]:!rounded-[4px]`;
+const preventDefault = (e: Event) => e.preventDefault();
+import { FileCode, FilePlus, Save, RefreshCw, Undo2, CheckCircle, X, ChevronRight, ChevronDown, Eye, EyeOff, Code } from 'lucide-react';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
 import { useHorizontalResize } from '@/hooks/use-horizontal-resize';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, gutter, GutterMarker } from '@codemirror/view';
@@ -219,6 +241,9 @@ export function ConfigPage() {
   const [validating, setValidating] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
+  const [addingFile, setAddingFile] = useState<{ dir: string } | null>(null);
+  const [newFileName, setNewFileName] = useState('');
+  const [creatingFile, setCreatingFile] = useState(false);
   const [codeOpen, setCodeOpen] = useState(true);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewContent, setPreviewContent] = useState('');
@@ -236,6 +261,7 @@ export function ConfigPage() {
 
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const addFileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: instance } = useQuery({
     queryKey: ['instance', id],
@@ -476,6 +502,62 @@ export function ConfigPage() {
     }
   }, [id, reloading, selectedFile, queryClient]);
 
+  const existingNames = useMemo(
+    () => new Set((fileList?.files ?? []).map(f => f.name)),
+    [fileList],
+  );
+
+  const trimmedNewName = newFileName.trim();
+  const newFileFullPath = addingFile ? buildNewFilePath(addingFile.dir, newFileName) : '';
+  const newFileErrorCode = addingFile
+    ? validateNewFileName(addingFile.dir, newFileName, existingNames)
+    : null;
+  const newFileError = newFileErrorCode ? NEW_FILE_ERROR_MESSAGES[newFileErrorCode] : null;
+
+  // Radix ContextMenu would normally restore focus to its trigger when the
+  // menu closes; each ContextMenuContent below calls preventDefault on
+  // onCloseAutoFocus so this focus call isn't clobbered.
+  useEffect(() => {
+    if (addingFile) addFileInputRef.current?.focus();
+  }, [addingFile]);
+
+  const startAddingFile = useCallback((dir: string) => {
+    setNewFileName('');
+    setAddingFile({ dir });
+    if (dir) {
+      setOpenDirs(prev => {
+        if (prev.has(dir)) return prev;
+        const next = new Set(prev);
+        next.add(dir);
+        return next;
+      });
+    }
+  }, []);
+
+  const cancelAddingFile = useCallback(() => {
+    setAddingFile(null);
+    setNewFileName('');
+  }, []);
+
+  const handleCreateFile = useCallback(async () => {
+    if (!id || creatingFile || !addingFile) return;
+    if (!trimmedNewName || newFileError) return;
+    const name = newFileFullPath;
+    setCreatingFile(true);
+    try {
+      await writeConfigFile(id, name, '');
+      toast.success(`Created ${name}`);
+      cancelAddingFile();
+      await queryClient.invalidateQueries({ queryKey: ['configFiles', id] });
+      setSelectedFile(name);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to create file';
+      toast.error('Create failed', { description: msg });
+    } finally {
+      setCreatingFile(false);
+    }
+  }, [id, creatingFile, addingFile, newFileFullPath, trimmedNewName, newFileError, queryClient, cancelAddingFile]);
+
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     resizing.current = true;
@@ -588,16 +670,25 @@ export function ConfigPage() {
         </div>
       </div>
 
+
       {/* Content */}
       <div className="flex flex-1 min-h-0">
         {/* File tree */}
-        <div className="shrink-0 border-r border-border/60 overflow-y-auto bg-background" style={{ width: fileTreeWidth }}>
-          <div className="px-1.5 py-1.5">
+        <ContextMenu>
+          <ContextMenuTrigger
+            asChild
+            disabled={!allowEdit}
+          >
+            <div
+              className="shrink-0 border-r border-border/60 overflow-y-auto bg-background"
+              style={{ width: fileTreeWidth }}
+            >
+              <div className="px-1.5 py-1.5 min-h-full">
             {(() => {
               // Sort files: root files first, then grouped by directory
               const sorted = [...fileList.files].sort((a, b) => {
-                const aDir = a.name.includes('/') ? a.name.substring(0, a.name.lastIndexOf('/')) : '';
-                const bDir = b.name.includes('/') ? b.name.substring(0, b.name.lastIndexOf('/')) : '';
+                const aDir = splitDirAndBase(a.name).dir;
+                const bDir = splitDirAndBase(b.name).dir;
                 if (aDir === bDir) return a.name.localeCompare(b.name);
                 if (aDir === '') return -1;
                 if (bDir === '') return 1;
@@ -608,7 +699,7 @@ export function ConfigPage() {
               const rootFiles: typeof sorted = [];
               const dirGroups = new Map<string, typeof sorted>();
               for (const file of sorted) {
-                const dir = file.name.includes('/') ? file.name.substring(0, file.name.lastIndexOf('/')) : '';
+                const dir = splitDirAndBase(file.name).dir;
                 if (!dir) {
                   rootFiles.push(file);
                 } else {
@@ -628,11 +719,16 @@ export function ConfigPage() {
 
               const renderFile = (file: typeof sorted[0], _indented?: boolean) => {
                 const isModified = pendingChanges.has(file.name);
-                const basename = file.name.includes('/') ? file.name.substring(file.name.lastIndexOf('/') + 1) : file.name;
+                const basename = splitDirAndBase(file.name).base;
                 return (
                   <button
                     key={file.name}
                     onClick={() => { setSelectedFile(file.name); setShowDiff(false); }}
+                    onContextMenu={e => {
+                      // No file-level actions available yet; suppress root menu but don't open anything.
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
                     className={cn(
                       'flex items-center gap-1.5 w-full px-2 py-[3px] rounded-sm font-mono text-[12px] leading-tight text-left transition-colors',
                       selectedFile === file.name
@@ -649,26 +745,79 @@ export function ConfigPage() {
                 );
               };
 
+              const renderInlineInput = () => (
+                <div className="flex items-center gap-2 px-2 py-1">
+                  <FileCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <input
+                    ref={addFileInputRef}
+                    type="text"
+                    value={newFileName}
+                    disabled={creatingFile}
+                    placeholder="filename.md"
+                    onChange={e => setNewFileName(e.target.value)}
+                    onClick={e => e.stopPropagation()}
+                    onContextMenu={e => e.stopPropagation()}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (trimmedNewName && !newFileError && !creatingFile) handleCreateFile();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        cancelAddingFile();
+                      }
+                    }}
+                    onBlur={() => {
+                      // Small delay so click on the input doesn't insta-cancel
+                      setTimeout(() => {
+                        if (!creatingFile) cancelAddingFile();
+                      }, 100);
+                    }}
+                    className={cn(
+                      'flex-1 min-w-0 bg-background border rounded px-1.5 py-0.5 text-xs outline-none focus:ring-1 focus:ring-ring',
+                      newFileError && 'border-destructive focus:ring-destructive',
+                    )}
+                  />
+                </div>
+              );
+
               return (
                 <>
                   {rootFiles.map(f => renderFile(f))}
+                  {addingFile && addingFile.dir === '' && renderInlineInput()}
                   {[...dirGroups.entries()].map(([dir, files]) => {
                     const isOpen = openDirs.has(dir);
+                    const isAddingHere = addingFile?.dir === dir;
                     return (
                       <div key={dir}>
-                        <button
-                          onClick={() => toggleDir(dir)}
-                          className="flex items-center gap-1 w-full px-2 py-[3px] mt-1 first:mt-0 rounded-sm font-mono text-[10px] uppercase tracking-[0.1em] leading-tight text-left hover:bg-accent/25 text-muted-foreground/70 hover:text-foreground transition-colors"
-                        >
-                          {isOpen
-                            ? <ChevronDown className="h-2.5 w-2.5 shrink-0 opacity-70" />
-                            : <ChevronRight className="h-2.5 w-2.5 shrink-0 opacity-70" />
-                          }
-                          <span className="truncate">{dir}</span>
-                        </button>
-                        {isOpen && (
+                        <ContextMenu>
+                          <ContextMenuTrigger asChild disabled={!allowEdit}>
+                            <button
+                              onClick={() => toggleDir(dir)}
+                              onContextMenu={e => e.stopPropagation()}
+                              className="flex items-center gap-1 w-full px-2 py-[3px] mt-1 first:mt-0 rounded-sm font-mono text-[10px] uppercase tracking-[0.1em] leading-tight text-left hover:bg-accent/25 text-muted-foreground/70 hover:text-foreground transition-colors"
+                            >
+                              {isOpen
+                                ? <ChevronDown className="h-2.5 w-2.5 shrink-0 opacity-70" />
+                                : <ChevronRight className="h-2.5 w-2.5 shrink-0 opacity-70" />
+                              }
+                              <span className="truncate">{dir}</span>
+                            </button>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent onCloseAutoFocus={preventDefault} className={MENU_CONTENT_CLASS}>
+                            <ContextMenuLabel className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground truncate max-w-[240px]">
+                              {dir}
+                            </ContextMenuLabel>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem onSelect={() => startAddingFile(dir)}>
+                              <FilePlus className="h-3.5 w-3.5" />
+                              Add file to folder
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
+                        {(isOpen || isAddingHere) && (
                           <div className="ml-[13px] pl-px border-l border-border/60">
                             {files.map(f => renderFile(f, true))}
+                            {isAddingHere && renderInlineInput()}
                           </div>
                         )}
                       </div>
@@ -677,8 +826,16 @@ export function ConfigPage() {
                 </>
               );
             })()}
-          </div>
-        </div>
+              </div>
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent onCloseAutoFocus={preventDefault} className={MENU_CONTENT_CLASS_WITH_LABEL}>
+            <ContextMenuItem onSelect={() => startAddingFile('')}>
+              <FilePlus className="h-3.5 w-3.5" />
+              Add file
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
 
         {/* Resize handle */}
         <div
