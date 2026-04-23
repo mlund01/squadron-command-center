@@ -79,8 +79,6 @@ export function MissionsPage() {
   const [filter, setFilter] = useState<FilterKey>('all');
   const [historyFilter, setHistoryFilter] = useState<HistoryFilterKey>('all');
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  // Seed the search input from a ?q= query param (e.g. when arriving from a
-  // mission detail page's "N runs" link).
   const [search, setSearch] = useState(() => searchParams.get('q') ?? '');
 
   const { data: instance, isLoading } = useQuery({

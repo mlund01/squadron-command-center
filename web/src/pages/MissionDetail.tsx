@@ -679,10 +679,7 @@ export function MissionDetail() {
 
   const mission = instance?.config.missions?.find((m) => m.name === name);
   const missionRuns = useMemo(() => {
-    return (history?.missions ?? [])
-      .filter((m) => m.name === name)
-      .slice()
-      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+    return (history?.missions ?? []).filter((m) => m.name === name);
   }, [history?.missions, name]);
   const runCount = missionRuns.length;
   const missionAgentNames = new Set(mission?.agents ?? []);
@@ -833,7 +830,7 @@ export function MissionDetail() {
                   {agents?.length ?? 0}
                 </Badge>
               </TabsTrigger>
-              <TabsTrigger value="runs">
+              <TabsTrigger value="history">
                 History
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0 ml-0.5">
                   {runCount}
@@ -906,7 +903,7 @@ export function MissionDetail() {
                 onSelectAgent={setSelectedAgent}
               />
             </TabsContent>
-            <TabsContent value="runs" className="h-full m-0">
+            <TabsContent value="history" className="h-full m-0">
               <RunsTabContent
                 runs={missionRuns}
                 page={runsPage}
