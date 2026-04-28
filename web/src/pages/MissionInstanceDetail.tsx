@@ -32,6 +32,8 @@ import { ZoomControls } from '@/components/zoom-controls';
 import type { TaskInfo, MissionEvent, MissionTaskRecord, ToolResultDTO, TaskOutputInfo, SubtaskInfo, DatasetItemInfo } from '@/api/types';
 import { RouterEdge } from '@/components/RouterEdge';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
+import { HumanInputCard } from '@/components/HumanInputCard';
+import { useHumanInputs } from '@/hooks/use-human-inputs';
 import { ImageCarousel, extractImages } from '@/components/ImageCarousel';
 import { useTheme } from '@/components/ThemeProvider';
 
@@ -388,6 +390,26 @@ function getEventExpandableContent(eventType: string, d: Record<string, unknown>
     return String(d.instruction);
   }
   return null;
+}
+
+/* ── Pending human-input questions for this mission ── */
+
+function MissionPendingQuestions({ instanceId, missionId }: { instanceId: string; missionId: string }) {
+  const { humanInputs } = useHumanInputs({ state: 'open', instanceId, missionId });
+  if (humanInputs.length === 0) return null;
+  return (
+    <div className="shrink-0 border-b bg-amber-50/50 dark:bg-amber-950/20 px-8 py-4 space-y-2">
+      <div className="flex items-center gap-2 text-xs font-medium text-amber-900 dark:text-amber-200">
+        <HelpCircle className="h-3.5 w-3.5" />
+        {humanInputs.length === 1
+          ? 'An agent is waiting on a response'
+          : `${humanInputs.length} questions waiting on a response`}
+      </div>
+      {humanInputs.map((r) => (
+        <HumanInputCard key={r.toolCallId} instanceId={instanceId} request={r} compact />
+      ))}
+    </div>
+  );
 }
 
 /* ── General Tab ── */
@@ -3210,6 +3232,29 @@ export function MissionInstanceDetail() {
     });
   }, [mission?.configJson, taskRecords]);
 
+  // Whether the bottom panel should expose Inputs / Datasets tabs.
+  // Hidden when the mission has none — saves a click and avoids
+  // empty-state tabs that confuse new operators.
+  const hasInputs = useMemo(() => {
+    if (!mission?.inputsJson) return false;
+    try {
+      const v = JSON.parse(mission.inputsJson) as Record<string, unknown>;
+      return v && typeof v === 'object' && Object.keys(v).length > 0;
+    } catch {
+      return false;
+    }
+  }, [mission?.inputsJson]);
+
+  const hasDatasets = useMemo(() => {
+    if (!mission?.configJson) return false;
+    try {
+      const cfg = JSON.parse(mission.configJson) as { datasets?: unknown[] };
+      return Array.isArray(cfg.datasets) && cfg.datasets.length > 0;
+    } catch {
+      return false;
+    }
+  }, [mission?.configJson]);
+
   // Build status map from task records + live statuses
   const statusMap = useMemo(() => {
     const map: Record<string, { status: string; error?: string }> = {};
@@ -3364,6 +3409,8 @@ export function MissionInstanceDetail() {
         </div>
       </div>
 
+      <MissionPendingQuestions instanceId={id!} missionId={mid!} />
+
       {/* ReactFlow canvas */}
       <div className="flex-1 min-h-0 p-4">
         <div className="relative h-full rounded-lg border bg-card overflow-hidden">
@@ -3405,10 +3452,8 @@ export function MissionInstanceDetail() {
           >
             <TabsList variant="line">
               <TabsTrigger value="general">General</TabsTrigger>
-              {mission.inputsJson && (
-                <TabsTrigger value="inputs">Inputs</TabsTrigger>
-              )}
-              <TabsTrigger value="datasets">Datasets</TabsTrigger>
+              {hasInputs && <TabsTrigger value="inputs">Inputs</TabsTrigger>}
+              {hasDatasets && <TabsTrigger value="datasets">Datasets</TabsTrigger>}
               <TabsTrigger value="tasks">
                 Tasks
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0 ml-0.5">{taskRecords.length}</Badge>
@@ -3427,7 +3472,7 @@ export function MissionInstanceDetail() {
             <TabsContent value="general" className="h-full m-0">
               <GeneralTab mission={mission} tasks={taskRecords} />
             </TabsContent>
-            {mission.inputsJson && (
+            {hasInputs && (
               <TabsContent value="inputs" className="h-full m-0">
                 <div className="overflow-y-auto p-4 h-full">
                   <div className="space-y-3 max-w-2xl">
@@ -3472,9 +3517,11 @@ export function MissionInstanceDetail() {
                 </div>
               </TabsContent>
             )}
-            <TabsContent value="datasets" className="h-full m-0">
-              <DatasetsTab instanceId={id!} missionId={mid!} isRunning={isRunning} />
-            </TabsContent>
+            {hasDatasets && (
+              <TabsContent value="datasets" className="h-full m-0">
+                <DatasetsTab instanceId={id!} missionId={mid!} isRunning={isRunning} />
+              </TabsContent>
+            )}
             <TabsContent value="tasks" className="h-full m-0">
               <TasksTab instanceId={id!} tasks={taskRecords} allTasks={parsedTasks} missionId={mid!} isRunning={isRunning} chosenRoutes={chosenRoutes} selectedTaskName={selectedTask} onSelectTaskName={setSelectedTask} />
             </TabsContent>

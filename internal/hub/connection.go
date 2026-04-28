@@ -37,6 +37,13 @@ type Connection struct {
 	chatMu     sync.Mutex
 	chatSubs   map[string][]chan *protocol.ChatEventPayload // sessionID → subscriber channels
 	chatBuffer map[string][]*protocol.ChatEventPayload      // buffered events before first subscriber
+
+	// Instance-wide human-input event fan-out. Every mission event of
+	// type human_input_requested or human_input_resolved is pushed to
+	// all listeners on this slice. The SSE endpoint exposes this so the
+	// browser gets an instant notification — no polling, no throttling.
+	humanInputMu   sync.Mutex
+	humanInputSubs []chan *protocol.MissionEventPayload
 }
 
 // NewConnection creates a new Connection wrapping a WebSocket.
@@ -194,6 +201,15 @@ func (c *Connection) fanOutMissionEvent(env *protocol.Envelope) {
 		return
 	}
 
+	// Feed the instance-wide human-input stream whenever one of those
+	// events comes through. Unlike the per-mission path this one never
+	// buffers — if no one's listening the event is dropped; if someone
+	// is, everyone gets a copy immediately.
+	if payload.EventType == protocol.EventHumanInputRequested ||
+		payload.EventType == protocol.EventHumanInputResolved {
+		c.fanOutHumanInputEvent(&payload)
+	}
+
 	c.eventMu.Lock()
 	subs := c.eventSubs[payload.MissionID]
 	if len(subs) == 0 {
@@ -209,6 +225,45 @@ func (c *Connection) fanOutMissionEvent(env *protocol.Envelope) {
 		case ch <- &payload:
 		default:
 			// Subscriber too slow, drop event
+		}
+	}
+}
+
+// SubscribeHumanInputEvents registers a channel that receives every
+// human_input_requested / human_input_resolved mission event for this
+// instance. Used by the SSE endpoint to push alerts to browsers with
+// no polling involvement. Call the returned cancel func to unsubscribe.
+func (c *Connection) SubscribeHumanInputEvents() (chan *protocol.MissionEventPayload, func()) {
+	ch := make(chan *protocol.MissionEventPayload, 32)
+	c.humanInputMu.Lock()
+	c.humanInputSubs = append(c.humanInputSubs, ch)
+	c.humanInputMu.Unlock()
+
+	cleanup := func() {
+		c.humanInputMu.Lock()
+		defer c.humanInputMu.Unlock()
+		for i, sub := range c.humanInputSubs {
+			if sub == ch {
+				c.humanInputSubs = append(c.humanInputSubs[:i], c.humanInputSubs[i+1:]...)
+				break
+			}
+		}
+		close(ch)
+	}
+	return ch, cleanup
+}
+
+func (c *Connection) fanOutHumanInputEvent(payload *protocol.MissionEventPayload) {
+	// Hold the lock for the whole fan-out so a concurrent unsubscribe
+	// can't close a channel mid-send. Channels are buffered + the send
+	// uses a default branch, so iteration stays bounded.
+	c.humanInputMu.Lock()
+	defer c.humanInputMu.Unlock()
+	for _, ch := range c.humanInputSubs {
+		select {
+		case ch <- payload:
+		default:
+			// Slow subscriber — drop rather than block the hub.
 		}
 	}
 }

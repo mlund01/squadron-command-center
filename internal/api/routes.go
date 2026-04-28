@@ -104,6 +104,12 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, ka *keepalive.KeepAlive) {
 	mux.HandleFunc("GET /api/instances/{id}/agents/{name}/chats", handleChatHistory(h))
 	mux.HandleFunc("GET /api/instances/{id}/chats/{sessionId}/messages", handleChatMessages(h))
 	mux.HandleFunc("DELETE /api/instances/{id}/chats/{sessionId}", handleArchiveChat(h))
+
+	// Human-in-the-loop (ask_human) endpoints — commander proxies to
+	// the squadron that owns the records.
+	mux.HandleFunc("GET /api/instances/{id}/human-inputs", handleListHumanInputs(h))
+	mux.HandleFunc("GET /api/instances/{id}/human-inputs/stream", handleStreamHumanInputs(h))
+	mux.HandleFunc("POST /api/instances/{id}/human-inputs/{callId}/resolve", handleResolveHumanInput(h))
 }
 
 func handleListInstances(h *hub.Hub) http.HandlerFunc {

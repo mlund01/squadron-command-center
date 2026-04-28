@@ -28,8 +28,10 @@ import {
   KeyRound,
   FileCode,
   FolderOpen,
+  Inbox,
   type LucideIcon,
 } from 'lucide-react';
+import { useOpenHumanInputCount } from '@/hooks/use-human-inputs';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { cn } from '@/lib/utils';
@@ -50,6 +52,7 @@ function StatusDot({ tone, live = false, size = 6 }: { tone: 'running' | 'comple
 
 const staticNavItems: { label: string; path: string; icon: LucideIcon }[] = [
   { label: 'Missions',  path: 'missions',  icon: Rocket },
+  { label: 'Inbox',     path: 'inbox',     icon: Inbox },
   { label: 'Agents',    path: 'agents',    icon: Bot },
   { label: 'Skills',    path: 'skills',    icon: Sparkles },
   { label: 'Tools',     path: 'tools',     icon: Puzzle },
@@ -121,6 +124,8 @@ export function AppSidebar() {
   const navItems = currentInstance?.config?.sharedFolders?.length
     ? [...staticNavItems, { label: 'Folders', path: 'files', icon: FolderOpen }]
     : staticNavItems;
+
+  const inboxCount = useOpenHumanInputCount(id);
 
   const activePath = location.pathname.split('/').at(-1) ?? '';
   const activeSection = location.pathname.includes('/missions/') && location.pathname.includes('/run')
@@ -198,8 +203,14 @@ export function AppSidebar() {
         <nav className="flex flex-col">
           {navItems.map((item) => {
             const isActive = activeSection === item.path;
-            const count = getNavCount(item.path, currentInstance?.config);
+            const count =
+              item.path === 'inbox'
+                ? inboxCount > 0
+                  ? inboxCount
+                  : undefined
+                : getNavCount(item.path, currentInstance?.config);
             const Icon = item.icon;
+            const isAlert = item.path === 'inbox' && inboxCount > 0;
             return (
               <Link
                 key={item.path}
@@ -219,7 +230,14 @@ export function AppSidebar() {
                 />
                 <span className="flex-1 truncate">{item.label}</span>
                 {count !== undefined && (
-                  <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground/70">
+                  <span
+                    className={cn(
+                      'font-mono text-[10.5px] tabular-nums',
+                      isAlert
+                        ? 'bg-primary text-primary-foreground rounded-full px-1.5 py-px'
+                        : 'text-muted-foreground/70',
+                    )}
+                  >
                     {count}
                   </span>
                 )}
