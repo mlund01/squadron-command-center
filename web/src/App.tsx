@@ -16,6 +16,7 @@ import { FileViewerPage } from './pages/FileViewerPage'
 import { VariablesPage } from './pages/VariablesPage'
 import { SkillsPage } from './pages/SkillsPage'
 import { SkillDetail } from './pages/SkillDetail'
+import { InboxPage } from './pages/InboxPage'
 
 function App() {
   return (
@@ -39,6 +40,7 @@ function App() {
         <Route path="variables" element={<VariablesPage />} />
         <Route path="files" element={<FileBrowserPage />} />
         <Route path="files/view" element={<FileViewerPage />} />
+        <Route path="inbox" element={<InboxPage />} />
       </Route>
     </Routes>
     </ThemeProvider>

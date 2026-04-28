@@ -248,3 +248,43 @@ export async function getCostSummary(instanceId: string, from?: string, to?: str
   const qs = params.toString();
   return fetchJSON<CostSummaryResponse>(`/instances/${instanceId}/costs${qs ? '?' + qs : ''}`);
 }
+
+// Human-in-the-loop (ask_human) API — commander proxies to the squadron
+// that owns the records. All endpoints are instance-scoped.
+
+export interface ListHumanInputsOptions {
+  state?: 'open' | 'resolved';
+  missionId?: string;
+  order?: 'oldest' | 'newest';
+  limit?: number;
+  offset?: number;
+}
+
+export async function listHumanInputs(
+  instanceId: string,
+  opts: ListHumanInputsOptions = {},
+): Promise<import('./types').ListHumanInputsResponse> {
+  const params = new URLSearchParams();
+  if (opts.state) params.set('state', opts.state);
+  if (opts.missionId) params.set('missionId', opts.missionId);
+  if (opts.order) params.set('order', opts.order);
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.offset) params.set('offset', String(opts.offset));
+  const qs = params.toString();
+  return fetchJSON(`/instances/${instanceId}/human-inputs${qs ? '?' + qs : ''}`);
+}
+
+export async function resolveHumanInput(
+  instanceId: string,
+  toolCallId: string,
+  response: string,
+): Promise<import('./types').ResolveHumanInputResponse> {
+  return fetchJSON<import('./types').ResolveHumanInputResponse>(
+    `/instances/${instanceId}/human-inputs/${toolCallId}/resolve`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ response }),
+    },
+  );
+}

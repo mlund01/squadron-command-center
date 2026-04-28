@@ -419,3 +419,37 @@ export interface WriteBrowseFileResponse {
 export interface ListSharedFoldersResponse {
   folders: SharedFolderInfo[];
 }
+
+// Human-in-the-loop (ask_human) types
+
+export interface HumanInputRequestDTO {
+  id: string;
+  missionId?: string;
+  missionName?: string;
+  taskId?: string;
+  taskName?: string;
+  toolCallId: string;
+  question: string;
+  shortSummary?: string;
+  additionalContext?: string;
+  choices?: string[];
+  // multiSelect=true means the human picks 1+ choices instead of one.
+  // The submitted response is then a JSON-encoded array of strings
+  // (e.g. `["A","C"]`); the agent / API contract is single string in
+  // both cases.
+  multiSelect?: boolean;
+  state: 'open' | 'resolved';
+  requestedAt: string;
+  resolvedAt?: string;
+  response?: string;
+  responderUserId?: string;
+}
+
+export interface ListHumanInputsResponse {
+  humanInputs: HumanInputRequestDTO[];
+  total: number;
+}
+
+export interface ResolveHumanInputResponse {
+  humanInput: HumanInputRequestDTO;
+}
