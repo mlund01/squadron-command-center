@@ -3478,7 +3478,7 @@ export function MissionInstanceDetail() {
                   <div className="space-y-3 max-w-2xl">
                     {(() => {
                       try {
-                        const values = JSON.parse(mission.inputsJson) as Record<string, string>;
+                        const values = JSON.parse(mission.inputsJson ?? "{}") as Record<string, string>;
                         // Get input definitions from config snapshot for descriptions
                         let defs: Record<string, { description?: string; type?: string; protected?: boolean }> = {};
                         if (mission.configJson) {
