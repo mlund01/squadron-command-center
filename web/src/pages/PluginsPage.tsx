@@ -121,7 +121,7 @@ export function PluginsPage() {
         <Alert className="mb-4 border-blue-500/30 bg-blue-500/5 text-blue-200 [&>svg]:text-blue-400">
           <Info className="h-4 w-4" />
           <AlertDescription>
-            File management tools are automatically available to commanders when shared folders are configured.
+            File management tools are automatically available to commanders when shared memory is configured.
           </AlertDescription>
         </Alert>
       )}
