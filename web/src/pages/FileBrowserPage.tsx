@@ -168,7 +168,7 @@ export function FileBrowserPage() {
   if (browsers.length === 0) {
     return (
       <div className="px-8 py-7 text-muted-foreground">
-        No folders available. Add a <code className="text-xs bg-muted px-1 py-0.5 rounded">shared_folder</code> block or a mission <code className="text-xs bg-muted px-1 py-0.5 rounded">folder</code> block to your config.
+        No memory available. Add a <code className="text-xs bg-muted px-1 py-0.5 rounded">shared_memory</code> block or a mission <code className="text-xs bg-muted px-1 py-0.5 rounded">memory</code> block to your config.
       </div>
     );
   }
@@ -182,7 +182,7 @@ export function FileBrowserPage() {
       <div className="px-8 pt-7 pb-4 shrink-0">
         <div className="flex items-end gap-4 mb-5">
           <div className="flex flex-col gap-1">
-            <h1 className="text-[22px] font-semibold tracking-tight leading-none">Folders</h1>
+            <h1 className="text-[22px] font-semibold tracking-tight leading-none">Memory</h1>
             <span className="font-mono text-[11px] text-muted-foreground/70 tracking-[0.2px]">
               {instance?.name ?? '—'} · {browsers.length} source{browsers.length !== 1 ? 's' : ''}
             </span>

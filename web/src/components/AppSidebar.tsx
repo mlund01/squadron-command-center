@@ -122,7 +122,7 @@ export function AppSidebar() {
   };
 
   const navItems = currentInstance?.config?.sharedFolders?.length
-    ? [...staticNavItems, { label: 'Folders', path: 'files', icon: FolderOpen }]
+    ? [...staticNavItems, { label: 'Memory', path: 'files', icon: FolderOpen }]
     : staticNavItems;
 
   const inboxCount = useOpenHumanInputCount(id);
