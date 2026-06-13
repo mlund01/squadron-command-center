@@ -44,7 +44,17 @@ type Connection struct {
 	// browser gets an instant notification — no polling, no throttling.
 	humanInputMu   sync.Mutex
 	humanInputSubs []chan *protocol.MissionEventPayload
+
+	// Instance-wide mission-lifecycle notification fan-out + a small ring
+	// buffer of the most recent notifications so a freshly-opened browser
+	// can backfill without a database.
+	notifyMu     sync.Mutex
+	notifySubs   []chan *protocol.NotificationPayload
+	notifyRecent []*protocol.NotificationPayload
 }
+
+// maxRecentNotifications caps the per-instance recent-notification ring buffer.
+const maxRecentNotifications = 100
 
 // NewConnection creates a new Connection wrapping a WebSocket.
 func NewConnection(hub *Hub, ws *websocket.Conn) *Connection {
@@ -268,6 +278,58 @@ func (c *Connection) fanOutHumanInputEvent(payload *protocol.MissionEventPayload
 	}
 }
 
+// SubscribeNotifications returns a channel receiving every mission-lifecycle
+// notification for this instance, plus a cleanup func.
+func (c *Connection) SubscribeNotifications() (chan *protocol.NotificationPayload, func()) {
+	ch := make(chan *protocol.NotificationPayload, 32)
+	c.notifyMu.Lock()
+	c.notifySubs = append(c.notifySubs, ch)
+	c.notifyMu.Unlock()
+
+	cleanup := func() {
+		c.notifyMu.Lock()
+		defer c.notifyMu.Unlock()
+		for i, sub := range c.notifySubs {
+			if sub == ch {
+				c.notifySubs = append(c.notifySubs[:i], c.notifySubs[i+1:]...)
+				break
+			}
+		}
+		close(ch)
+	}
+	return ch, cleanup
+}
+
+// RecentNotifications returns a copy of the recent-notification ring buffer,
+// newest last.
+func (c *Connection) RecentNotifications() []*protocol.NotificationPayload {
+	c.notifyMu.Lock()
+	defer c.notifyMu.Unlock()
+	return append([]*protocol.NotificationPayload(nil), c.notifyRecent...)
+}
+
+func (c *Connection) fanOutNotification(env *protocol.Envelope) {
+	var payload protocol.NotificationPayload
+	if err := protocol.DecodePayload(env, &payload); err != nil {
+		log.Printf("Invalid notification payload: %v", err)
+		return
+	}
+
+	c.notifyMu.Lock()
+	c.notifyRecent = append(c.notifyRecent, &payload)
+	if len(c.notifyRecent) > maxRecentNotifications {
+		c.notifyRecent = c.notifyRecent[len(c.notifyRecent)-maxRecentNotifications:]
+	}
+	for _, ch := range c.notifySubs {
+		select {
+		case ch <- &payload:
+		default:
+			// Slow subscriber — drop rather than block the hub.
+		}
+	}
+	c.notifyMu.Unlock()
+}
+
 func (c *Connection) fanOutMissionComplete(env *protocol.Envelope) {
 	var payload protocol.MissionCompletePayload
 	if err := protocol.DecodePayload(env, &payload); err != nil {
@@ -426,6 +488,8 @@ func (c *Connection) dispatch(env *protocol.Envelope) {
 		c.fanOutChatEvent(env)
 	case protocol.TypeChatComplete:
 		c.fanOutChatComplete(env)
+	case protocol.TypeNotification:
+		c.fanOutNotification(env)
 	default:
 		log.Printf("Unhandled message type: %s", env.Type)
 	}

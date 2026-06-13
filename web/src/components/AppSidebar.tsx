@@ -34,6 +34,7 @@ import {
 import { useOpenHumanInputCount } from '@/hooks/use-human-inputs';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { NotificationsBell } from '@/components/NotificationsBell';
 import { cn } from '@/lib/utils';
 
 function StatusDot({ tone, live = false, size = 6 }: { tone: 'running' | 'completed' | 'failed' | 'idle'; live?: boolean; size?: number }) {
@@ -143,9 +144,12 @@ export function AppSidebar() {
   return (
     <Sidebar>
       {/* Brand header */}
-      <SidebarHeader className="h-11 px-3.5 py-0 flex-row items-center justify-center gap-2 border-b border-sidebar-border">
+      <SidebarHeader className="h-11 px-3.5 py-0 flex-row items-center gap-2 border-b border-sidebar-border">
         <img src="/squadron-logo.svg" alt="Squadron" className="size-[18px] shrink-0" />
         <span className="sqd-brand text-[14px] uppercase leading-none">Squadron</span>
+        <div className="ml-auto">
+          <NotificationsBell instanceId={id} />
+        </div>
       </SidebarHeader>
 
       {/* Workspace picker */}

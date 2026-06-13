@@ -453,3 +453,21 @@ export interface ListHumanInputsResponse {
 export interface ResolveHumanInputResponse {
   humanInput: HumanInputRequestDTO;
 }
+
+// NotificationItem is a mission-lifecycle notification (mission_completed /
+// mission_failed / mission_stopped) delivered to the command center.
+export interface NotificationItem {
+  missionId: string;
+  missionName: string;
+  event: 'mission_completed' | 'mission_failed' | 'mission_stopped';
+  title: string;
+  message?: string;
+  occurredAt: string;
+  error?: string;
+  // Outputs is the aggregated task-output map, present for mission_completed.
+  outputs?: unknown;
+}
+
+export interface ListNotificationsResponse {
+  notifications: NotificationItem[];
+}
