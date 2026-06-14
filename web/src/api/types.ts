@@ -465,8 +465,6 @@ export interface NotificationItem {
   message?: string;
   occurredAt: string;
   error?: string;
-  // Outputs is the aggregated task-output map, present for mission_completed.
-  outputs?: unknown;
 }
 
 export interface ListNotificationsResponse {

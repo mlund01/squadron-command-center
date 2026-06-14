@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bell, CheckCircle2, XCircle, StopCircle, ChevronRight, Maximize2, X } from 'lucide-react';
+import { Bell, CheckCircle2, XCircle, StopCircle, Maximize2, X } from 'lucide-react';
 
 import {
   DropdownMenu,
@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils';
 
 // NotificationsBell renders a bell with an unread badge and a dropdown of the
 // most recent mission-lifecycle notifications. The dropdown can be expanded
-// into a roomier modal for reading outputs.
+// into a roomier modal.
 export function NotificationsBell({ instanceId }: { instanceId: string | undefined }) {
   const { notifications, unreadCount, markAllRead, dismiss } = useNotifications(instanceId);
   const [modalOpen, setModalOpen] = useState(false);
@@ -94,7 +94,6 @@ export function NotificationsBell({ instanceId }: { instanceId: string | undefin
                   key={`m-${n.id || `${n.missionId}-${n.occurredAt}-${i}`}`}
                   item={n}
                   roomy
-                  defaultExpanded
                   onDismiss={() => dismiss(n.id)}
                 />
               ))
@@ -109,16 +108,12 @@ export function NotificationsBell({ instanceId }: { instanceId: string | undefin
 function NotificationRow({
   item,
   roomy = false,
-  defaultExpanded = false,
   onDismiss,
 }: {
   item: NotificationItem;
   roomy?: boolean;
-  defaultExpanded?: boolean;
   onDismiss?: () => void;
 }) {
-  const hasOutputs = item.event === 'mission_completed' && item.outputs != null;
-  const [expanded, setExpanded] = useState(defaultExpanded && hasOutputs);
   const detail = item.error || item.message;
 
   return (
@@ -158,28 +153,6 @@ function NotificationRow({
             >
               {detail}
             </p>
-          )}
-          {hasOutputs && (
-            <>
-              <button
-                type="button"
-                onClick={() => setExpanded((v) => !v)}
-                className="mt-0.5 inline-flex items-center gap-0.5 text-[11px] text-muted-foreground hover:text-foreground"
-              >
-                <ChevronRight className={cn('size-3 transition-transform', expanded && 'rotate-90')} />
-                Outputs
-              </button>
-              {expanded && (
-                <pre
-                  className={cn(
-                    'mt-1 overflow-auto rounded-sm bg-muted/50 p-2 font-mono leading-snug whitespace-pre-wrap break-all',
-                    roomy ? 'max-h-80 text-[11px]' : 'max-h-48 text-[10.5px]',
-                  )}
-                >
-                  {JSON.stringify(item.outputs, null, 2)}
-                </pre>
-              )}
-            </>
           )}
         </div>
       </div>
