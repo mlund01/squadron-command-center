@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bell, CheckCircle2, XCircle, StopCircle, ChevronRight } from 'lucide-react';
+import { Bell, CheckCircle2, XCircle, StopCircle, ChevronRight, Maximize2, X } from 'lucide-react';
 
 import {
   DropdownMenu,
@@ -8,68 +8,157 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { useNotifications } from '@/hooks/use-notifications';
 import type { NotificationItem } from '@/api/types';
 import { cn } from '@/lib/utils';
 
 // NotificationsBell renders a bell with an unread badge and a dropdown of the
-// most recent mission-lifecycle notifications. Completed-mission entries are
-// expandable to reveal their outputs.
+// most recent mission-lifecycle notifications. The dropdown can be expanded
+// into a roomier modal for reading outputs.
 export function NotificationsBell({ instanceId }: { instanceId: string | undefined }) {
-  const { notifications, unreadCount, markAllRead } = useNotifications(instanceId);
+  const { notifications, unreadCount, markAllRead, dismiss } = useNotifications(instanceId);
+  const [modalOpen, setModalOpen] = useState(false);
 
   return (
-    <DropdownMenu
-      onOpenChange={(open) => {
-        if (open) markAllRead();
-      }}
-    >
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label="Notifications"
-          className="relative inline-flex size-7 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/25 transition-colors"
-        >
-          <Bell className="size-3.5" strokeWidth={1.75} />
-          {unreadCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-1 rounded-full bg-primary text-primary-foreground font-mono text-[9px] leading-[14px] text-center tabular-nums">
-              {unreadCount > 99 ? '99+' : unreadCount}
-            </span>
+    <>
+      <DropdownMenu
+        onOpenChange={(open) => {
+          if (open) markAllRead();
+        }}
+      >
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label="Notifications"
+            className="relative inline-flex size-7 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/25 transition-colors"
+          >
+            <Bell className="size-3.5" strokeWidth={1.75} />
+            {unreadCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-1 rounded-full bg-primary text-primary-foreground font-mono text-[9px] leading-[14px] text-center tabular-nums">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" side="right" className="w-80 max-h-[70vh] overflow-y-auto">
+          <div className="flex items-center justify-between pr-1">
+            <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              Notifications
+            </DropdownMenuLabel>
+            {notifications.length > 0 && (
+              <button
+                type="button"
+                aria-label="Expand notifications"
+                title="Expand"
+                onClick={() => setModalOpen(true)}
+                className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              >
+                <Maximize2 className="size-3" />
+              </button>
+            )}
+          </div>
+          <DropdownMenuSeparator />
+          {notifications.length === 0 ? (
+            <div className="px-2 py-6 text-center text-[12px] text-muted-foreground">No notifications yet</div>
+          ) : (
+            notifications.map((n, i) => (
+              <NotificationRow
+                key={n.id || `${n.missionId}-${n.occurredAt}-${i}`}
+                item={n}
+                onDismiss={() => dismiss(n.id)}
+              />
+            ))
           )}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="right" className="w-80 max-h-[70vh] overflow-y-auto">
-        <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
-          Notifications
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {notifications.length === 0 ? (
-          <div className="px-2 py-6 text-center text-[12px] text-muted-foreground">No notifications yet</div>
-        ) : (
-          notifications.map((n, i) => <NotificationRow key={`${n.missionId}-${n.occurredAt}-${i}`} item={n} />)
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Notifications</DialogTitle>
+            <DialogDescription>Recent mission-lifecycle notifications for this instance.</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-1">
+            {notifications.length === 0 ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">No notifications yet</div>
+            ) : (
+              notifications.map((n, i) => (
+                <NotificationRow
+                  key={`m-${n.id || `${n.missionId}-${n.occurredAt}-${i}`}`}
+                  item={n}
+                  roomy
+                  defaultExpanded
+                  onDismiss={() => dismiss(n.id)}
+                />
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
-function NotificationRow({ item }: { item: NotificationItem }) {
-  const [expanded, setExpanded] = useState(false);
+function NotificationRow({
+  item,
+  roomy = false,
+  defaultExpanded = false,
+  onDismiss,
+}: {
+  item: NotificationItem;
+  roomy?: boolean;
+  defaultExpanded?: boolean;
+  onDismiss?: () => void;
+}) {
   const hasOutputs = item.event === 'mission_completed' && item.outputs != null;
+  const [expanded, setExpanded] = useState(defaultExpanded && hasOutputs);
   const detail = item.error || item.message;
 
   return (
-    <div className="px-2 py-1.5 rounded-sm hover:bg-sidebar-accent/25">
+    <div className={cn('group rounded-sm hover:bg-sidebar-accent/25', roomy ? 'px-3 py-2' : 'px-2 py-1.5')}>
       <div className="flex items-start gap-2">
         <EventIcon event={item.event} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <span className="truncate text-[12.5px] font-medium">{item.title || item.missionName}</span>
+            <span className={cn('truncate font-medium', roomy ? 'text-sm' : 'text-[12.5px]')}>
+              {item.title || item.missionName}
+            </span>
             <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground/70">
               {timeAgo(item.occurredAt)}
             </span>
+            {onDismiss && (
+              <button
+                type="button"
+                aria-label="Dismiss notification"
+                title="Dismiss"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onDismiss();
+                }}
+                className="shrink-0 inline-flex size-4 items-center justify-center rounded-sm text-muted-foreground/60 opacity-0 transition-opacity hover:text-foreground hover:bg-accent group-hover:opacity-100"
+              >
+                <X className="size-3" />
+              </button>
+            )}
           </div>
-          {detail && <p className="mt-0.5 text-[11px] text-muted-foreground line-clamp-2 leading-snug">{detail}</p>}
+          {detail && (
+            <p
+              className={cn(
+                'mt-0.5 text-muted-foreground leading-snug',
+                roomy ? 'text-xs' : 'text-[11px] line-clamp-2',
+              )}
+            >
+              {detail}
+            </p>
+          )}
           {hasOutputs && (
             <>
               <button
@@ -81,7 +170,12 @@ function NotificationRow({ item }: { item: NotificationItem }) {
                 Outputs
               </button>
               {expanded && (
-                <pre className="mt-1 max-h-48 overflow-auto rounded-sm bg-muted/50 p-2 font-mono text-[10.5px] leading-snug whitespace-pre-wrap break-all">
+                <pre
+                  className={cn(
+                    'mt-1 overflow-auto rounded-sm bg-muted/50 p-2 font-mono leading-snug whitespace-pre-wrap break-all',
+                    roomy ? 'max-h-80 text-[11px]' : 'max-h-48 text-[10.5px]',
+                  )}
+                >
                   {JSON.stringify(item.outputs, null, 2)}
                 </pre>
               )}

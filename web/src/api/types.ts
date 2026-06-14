@@ -457,6 +457,7 @@ export interface ResolveHumanInputResponse {
 // NotificationItem is a mission-lifecycle notification (mission_completed /
 // mission_failed / mission_stopped) delivered to the command center.
 export interface NotificationItem {
+  id: string;
   missionId: string;
   missionName: string;
   event: 'mission_completed' | 'mission_failed' | 'mission_stopped';

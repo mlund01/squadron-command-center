@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
-import { getNotifications } from '@/api/client';
+import { getNotifications, dismissNotification } from '@/api/client';
 import type { NotificationItem } from '@/api/types';
 
 const MAX_ITEMS = 100;
@@ -10,6 +10,7 @@ export interface UseNotificationsResult {
   notifications: NotificationItem[];
   unreadCount: number;
   markAllRead: () => void;
+  dismiss: (id: string) => void;
 }
 
 // useNotifications seeds the recent mission-lifecycle notifications from the
@@ -66,10 +67,21 @@ export function useNotifications(instanceId: string | undefined): UseNotificatio
     };
   }, [instanceId]);
 
+  const dismiss = (id: string) => {
+    // Optimistic: drop it locally, then tell squadron to delete it.
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+    if (instanceId) {
+      dismissNotification(instanceId, id).catch(() => {
+        // On failure the next reload will resurface it.
+      });
+    }
+  };
+
   return {
     notifications,
     unreadCount,
     markAllRead: () => setUnreadCount(0),
+    dismiss,
   };
 }
 

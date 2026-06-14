@@ -25,6 +25,23 @@ func handleListNotifications(h *hub.Hub) http.HandlerFunc {
 	}
 }
 
+// handleDismissNotification removes a notification from the command center's
+// in-memory buffer for this instance. Session-scoped — durable dismissal is a
+// future command-center concern.
+func handleDismissNotification(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		instanceID := r.PathValue("id")
+		notifID := r.PathValue("nid")
+		conn := h.GetConnection(instanceID)
+		if conn == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "instance disconnected"})
+			return
+		}
+		conn.DismissNotification(notifID)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}
+}
+
 // handleStreamNotifications is an SSE endpoint pushing every mission-lifecycle
 // notification for the given squadron to the browser as it happens.
 func handleStreamNotifications(h *hub.Hub) http.HandlerFunc {

@@ -62,6 +62,12 @@ export async function getNotifications(id: string): Promise<ListNotificationsRes
   return fetchJSON<ListNotificationsResponse>(`/instances/${id}/notifications`);
 }
 
+export async function dismissNotification(id: string, notificationId: string): Promise<void> {
+  await fetchJSON<{ ok: boolean }>(`/instances/${id}/notifications/${encodeURIComponent(notificationId)}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function runMission(instanceId: string, missionName: string, inputs: Record<string, string>): Promise<RunMissionResponse> {
   return fetchJSON<RunMissionResponse>(`/instances/${instanceId}/missions/${missionName}/run`, {
     method: 'POST',
