@@ -110,6 +110,11 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, ka *keepalive.KeepAlive) {
 	mux.HandleFunc("GET /api/instances/{id}/human-inputs", handleListHumanInputs(h))
 	mux.HandleFunc("GET /api/instances/{id}/human-inputs/stream", handleStreamHumanInputs(h))
 	mux.HandleFunc("POST /api/instances/{id}/human-inputs/{callId}/resolve", handleResolveHumanInput(h))
+
+	// Mission-lifecycle notifications (in-memory; dismiss is session-scoped)
+	mux.HandleFunc("GET /api/instances/{id}/notifications", handleListNotifications(h))
+	mux.HandleFunc("GET /api/instances/{id}/notifications/stream", handleStreamNotifications(h))
+	mux.HandleFunc("DELETE /api/instances/{id}/notifications/{nid}", handleDismissNotification(h))
 }
 
 func handleListInstances(h *hub.Hub) http.HandlerFunc {

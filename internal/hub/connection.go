@@ -44,6 +44,27 @@ type Connection struct {
 	// browser gets an instant notification — no polling, no throttling.
 	humanInputMu   sync.Mutex
 	humanInputSubs []chan *protocol.MissionEventPayload
+
+	// Instance-wide mission-lifecycle notification fan-out + a small ring
+	// buffer of recent notifications so a freshly-opened browser can backfill.
+	// In-memory only — durable persistence is a future command-center concern.
+	// The command center assigns each notification a session-local id so it can
+	// be dismissed; the id is not part of the wire protocol.
+	notifyMu      sync.Mutex
+	notifySubs    []chan *NotificationView
+	notifyRecent  []*NotificationView
+	notifyCounter uint64
+}
+
+// maxRecentNotifications caps the per-instance recent-notification ring buffer.
+const maxRecentNotifications = 100
+
+// NotificationView is a mission-lifecycle notification augmented with a
+// command-center-assigned id for dismissal. The embedded payload's fields are
+// flattened into the JSON the browser receives.
+type NotificationView struct {
+	ID string `json:"id"`
+	*protocol.NotificationPayload
 }
 
 // NewConnection creates a new Connection wrapping a WebSocket.
@@ -268,6 +289,77 @@ func (c *Connection) fanOutHumanInputEvent(payload *protocol.MissionEventPayload
 	}
 }
 
+// SubscribeNotifications returns a channel receiving every mission-lifecycle
+// notification for this instance, plus a cleanup func.
+func (c *Connection) SubscribeNotifications() (chan *NotificationView, func()) {
+	ch := make(chan *NotificationView, 32)
+	c.notifyMu.Lock()
+	c.notifySubs = append(c.notifySubs, ch)
+	c.notifyMu.Unlock()
+
+	cleanup := func() {
+		c.notifyMu.Lock()
+		defer c.notifyMu.Unlock()
+		for i, sub := range c.notifySubs {
+			if sub == ch {
+				c.notifySubs = append(c.notifySubs[:i], c.notifySubs[i+1:]...)
+				break
+			}
+		}
+		close(ch)
+	}
+	return ch, cleanup
+}
+
+// RecentNotifications returns a copy of the recent-notification ring buffer,
+// newest last.
+func (c *Connection) RecentNotifications() []*NotificationView {
+	c.notifyMu.Lock()
+	defer c.notifyMu.Unlock()
+	out := make([]*NotificationView, 0, len(c.notifyRecent))
+	return append(out, c.notifyRecent...)
+}
+
+// DismissNotification removes a notification from the in-memory buffer by id.
+// Session-scoped: it clears the operator's current view, not durable state.
+func (c *Connection) DismissNotification(id string) {
+	c.notifyMu.Lock()
+	defer c.notifyMu.Unlock()
+	for i, n := range c.notifyRecent {
+		if n.ID == id {
+			c.notifyRecent = append(c.notifyRecent[:i], c.notifyRecent[i+1:]...)
+			return
+		}
+	}
+}
+
+func (c *Connection) fanOutNotification(env *protocol.Envelope) {
+	var payload protocol.NotificationPayload
+	if err := protocol.DecodePayload(env, &payload); err != nil {
+		log.Printf("Invalid notification payload: %v", err)
+		return
+	}
+
+	c.notifyMu.Lock()
+	c.notifyCounter++
+	view := &NotificationView{
+		ID:                  fmt.Sprintf("n-%d", c.notifyCounter),
+		NotificationPayload: &payload,
+	}
+	c.notifyRecent = append(c.notifyRecent, view)
+	if len(c.notifyRecent) > maxRecentNotifications {
+		c.notifyRecent = c.notifyRecent[len(c.notifyRecent)-maxRecentNotifications:]
+	}
+	for _, ch := range c.notifySubs {
+		select {
+		case ch <- view:
+		default:
+			// Slow subscriber — drop rather than block the hub.
+		}
+	}
+	c.notifyMu.Unlock()
+}
+
 func (c *Connection) fanOutMissionComplete(env *protocol.Envelope) {
 	var payload protocol.MissionCompletePayload
 	if err := protocol.DecodePayload(env, &payload); err != nil {
@@ -426,6 +518,8 @@ func (c *Connection) dispatch(env *protocol.Envelope) {
 		c.fanOutChatEvent(env)
 	case protocol.TypeChatComplete:
 		c.fanOutChatComplete(env)
+	case protocol.TypeNotification:
+		c.fanOutNotification(env)
 	default:
 		log.Printf("Unhandled message type: %s", env.Type)
 	}

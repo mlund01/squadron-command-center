@@ -5,7 +5,7 @@ go 1.25.4
 require (
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/mlund01/squadron-wire v0.0.41
+	github.com/mlund01/squadron-wire v0.0.42
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
 	golang.org/x/crypto v0.50.0

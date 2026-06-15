@@ -1,4 +1,4 @@
-import type { InstanceState, InstanceConfig, MissionHistoryResponse, RunMissionResponse, ChatMessageResponse, ChatHistoryResponse, ChatMessagesResponse, ReloadConfigResponse, GetMissionDetailResponse, GetMissionEventsResponse, TaskDetailResponse, GetDatasetsResponse, GetDatasetItemsResponse, ListConfigFilesResponse, GetConfigFileResponse, WriteConfigFileResponse, ValidateConfigResponse, ListSharedFoldersResponse, BrowseDirectoryResponse, ReadBrowseFileResponse, WriteBrowseFileResponse, GetVariablesResponse } from './types';
+import type { InstanceState, InstanceConfig, MissionHistoryResponse, RunMissionResponse, ChatMessageResponse, ChatHistoryResponse, ChatMessagesResponse, ReloadConfigResponse, GetMissionDetailResponse, GetMissionEventsResponse, TaskDetailResponse, GetDatasetsResponse, GetDatasetItemsResponse, ListConfigFilesResponse, GetConfigFileResponse, WriteConfigFileResponse, ValidateConfigResponse, ListSharedFoldersResponse, BrowseDirectoryResponse, ReadBrowseFileResponse, WriteBrowseFileResponse, GetVariablesResponse, ListNotificationsResponse } from './types';
 
 const BASE_URL = '/api';
 
@@ -56,6 +56,16 @@ export async function getInstance(id: string): Promise<InstanceState> {
 
 export async function getInstanceConfig(id: string): Promise<InstanceConfig> {
   return fetchJSON<InstanceConfig>(`/instances/${id}/config`);
+}
+
+export async function getNotifications(id: string): Promise<ListNotificationsResponse> {
+  return fetchJSON<ListNotificationsResponse>(`/instances/${id}/notifications`);
+}
+
+export async function dismissNotification(id: string, notificationId: string): Promise<void> {
+  await fetchJSON<{ ok: boolean }>(`/instances/${id}/notifications/${encodeURIComponent(notificationId)}`, {
+    method: 'DELETE',
+  });
 }
 
 export async function runMission(instanceId: string, missionName: string, inputs: Record<string, string>): Promise<RunMissionResponse> {
