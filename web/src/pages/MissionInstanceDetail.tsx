@@ -14,7 +14,7 @@ import {
 } from '@xyflow/react';
 import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
-import { ChevronsDown, ChevronsUp, ChevronDown, Repeat, ChevronLeft, ChevronRight, HelpCircle, Square, RotateCcw, ShieldCheck } from 'lucide-react';
+import { ChevronsDown, ChevronsUp, ChevronDown, Repeat, ChevronLeft, ChevronRight, HelpCircle, Square, RotateCcw, ShieldCheck, FileText } from 'lucide-react';
 
 import { getInstance, getMissionDetail, getMissionEvents, getTaskDetail, getRunDatasets, getDatasetItems, stopMission, resumeMission, getChatMessages } from '@/api/client';
 import { subscribeMissionEvents } from '@/api/sse';
@@ -3508,7 +3508,7 @@ export function MissionInstanceDetail() {
                             {defs[k]?.description && (
                               <p className="text-xs text-muted-foreground mt-1">{defs[k].description}</p>
                             )}
-                            <p className="text-sm mt-1.5 whitespace-pre-wrap break-all">{v}</p>
+                            <FileInputValue raw={v} />
                           </div>
                         ));
                       } catch { return null; }
@@ -3533,6 +3533,79 @@ export function MissionInstanceDetail() {
             </TabsContent>
           </div>
         </Tabs>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// File input value — preview or filename + size
+// ---------------------------------------------------------------------------
+
+/** Decoded byte length of a base64 string. */
+function base64ByteLength(b64: string): number {
+  if (!b64) return 0;
+  const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  return Math.floor((b64.length * 3) / 4) - padding;
+}
+
+function formatFileSize(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** MIME type usable in an <img> preview for a filename, or null. */
+function imagePreviewMime(filename: string): string | null {
+  const ext = filename.toLowerCase().split('.').pop() || '';
+  const map: Record<string, string> = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+  };
+  return map[ext] ?? null;
+}
+
+/**
+ * Renders a mission input value. A file input (a base64 upload envelope) shows
+ * an image preview when previewable, otherwise the filename and size. Any other
+ * value renders as plain text.
+ */
+function FileInputValue({ raw }: { raw: string }) {
+  const env = useMemo(() => {
+    const s = raw.trim();
+    if (!s.startsWith('{')) return null;
+    try {
+      const o = JSON.parse(s);
+      if (o && typeof o === 'object' && typeof o.filename === 'string' && typeof o.content_base64 === 'string') {
+        return o as { filename: string; content_base64: string };
+      }
+    } catch { /* not a file envelope */ }
+    return null;
+  }, [raw]);
+
+  if (!env) {
+    return <p className="text-sm mt-1.5 whitespace-pre-wrap break-all">{raw}</p>;
+  }
+
+  const size = formatFileSize(base64ByteLength(env.content_base64));
+  const mime = imagePreviewMime(env.filename);
+
+  return (
+    <div className="mt-2 flex items-center gap-3">
+      {mime ? (
+        <img
+          src={`data:${mime};base64,${env.content_base64}`}
+          alt={env.filename}
+          className="max-h-32 max-w-[12rem] rounded border object-contain bg-muted/20"
+        />
+      ) : (
+        <div className="flex size-10 shrink-0 items-center justify-center rounded border bg-muted/30">
+          <FileText className="size-5 text-muted-foreground" />
+        </div>
+      )}
+      <div className="min-w-0">
+        <p className="text-sm truncate">{env.filename}</p>
+        <p className="text-xs text-muted-foreground">{size}</p>
       </div>
     </div>
   );

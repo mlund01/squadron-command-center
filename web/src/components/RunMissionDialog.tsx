@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { runMission } from '@/api/client';
 import { Button } from '@/components/ui/button';
@@ -12,9 +12,158 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, Upload, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { MissionInfo, MissionInputInfo } from '@/api/types';
+
+/** Max decoded file-input size — mirrors maxFileInputBytes (10 MB) in the runner. */
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+/** File types an agent can read (text via file_read) or view (images/SVG/PDF via file_view). */
+const FILE_ACCEPT =
+  '.txt,.md,.json,.csv,.yaml,.yml,.xml,.html,.png,.jpg,.jpeg,.gif,.webp,.svg,.pdf,text/*,image/*,application/pdf';
+
+/** MIME type usable in an <img> preview, or null for non-image files. */
+function previewImageMime(filename: string): string | null {
+  const ext = filename.toLowerCase().split('.').pop() || '';
+  const map: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    svg: 'image/svg+xml',
+  };
+  return map[ext] || null;
+}
+
+/** A staged file input value: the base64 upload envelope the runner expects. */
+interface FileInputValue {
+  filename: string;
+  content_base64: string;
+  size?: number;
+}
+
+function isFileInputValue(v: any): v is FileInputValue {
+  return !!v && typeof v === 'object' && typeof v.content_base64 === 'string' && v.content_base64.length > 0;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Read a File as bare base64 (strips the data: URL prefix). */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** File picker for a `file`-typed input — stages the file as a base64 envelope. */
+function FileInputControl({
+  value,
+  onChange,
+}: {
+  value: any;
+  onChange: (val: FileInputValue | undefined) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const env = isFileInputValue(value) ? value : null;
+
+  const handleFile = async (file: File | undefined) => {
+    setError(null);
+    if (!file) return;
+    if (file.size > MAX_FILE_BYTES) {
+      setError(`File too large (${formatBytes(file.size)}, max ${formatBytes(MAX_FILE_BYTES)})`);
+      return;
+    }
+    setLoading(true);
+    try {
+      const content_base64 = await fileToBase64(file);
+      onChange({ filename: file.name, content_base64, size: file.size });
+    } catch {
+      setError('Failed to read file');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={FILE_ACCEPT}
+        className="hidden"
+        onChange={(e) => {
+          handleFile(e.target.files?.[0]);
+          e.target.value = '';
+        }}
+      />
+      {env ? (
+        <div className="flex items-center gap-2 rounded-md border border-input bg-transparent px-3 py-2">
+          {previewImageMime(env.filename) ? (
+            <img
+              src={`data:${previewImageMime(env.filename)};base64,${env.content_base64}`}
+              alt={env.filename}
+              className="size-8 shrink-0 rounded object-cover"
+            />
+          ) : (
+            <FileText className="size-4 shrink-0 text-muted-foreground" />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm">{env.filename}</p>
+            {env.size != null && (
+              <p className="text-[10px] text-muted-foreground">{formatBytes(env.size)}</p>
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => inputRef.current?.click()}
+          >
+            Replace
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+            onClick={() => {
+              onChange(undefined);
+              setError(null);
+            }}
+          >
+            ×
+          </Button>
+        </div>
+      ) : (
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-xs"
+          disabled={loading}
+          onClick={() => inputRef.current?.click()}
+        >
+          <Upload className="mr-1 size-3.5" />
+          {loading ? 'Reading…' : 'Choose file'}
+        </Button>
+      )}
+      {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
 
 interface RunMissionDialogProps {
   instanceId: string;
@@ -48,6 +197,10 @@ function InputControl({
   depth?: number;
 }) {
   const type = inp.type || 'string';
+
+  if (type === 'file') {
+    return <FileInputControl value={value} onChange={onChange} />;
+  }
 
   if (type === 'bool') {
     return (
@@ -269,6 +422,14 @@ function validateInputs(inputs: Record<string, any>, schema: MissionInputInfo[])
   for (const inp of schema) {
     const val = inputs[inp.name];
     const type = inp.type || 'string';
+
+    if (type === 'file') {
+      if (inp.required && !isFileInputValue(val)) {
+        errors[inp.name] = 'Required';
+      }
+      continue;
+    }
+
     const isEmpty = val === undefined || val === '' || val === null;
 
     // Required check
@@ -324,7 +485,11 @@ function serializeInputs(inputs: Record<string, any>, schema: MissionInputInfo[]
     const val = inputs[inp.name];
     if (val === undefined || val === '') continue;
     const type = inp.type || 'string';
-    if (type === 'string') {
+    if (type === 'file') {
+      if (isFileInputValue(val)) {
+        result[inp.name] = JSON.stringify({ filename: val.filename, content_base64: val.content_base64 });
+      }
+    } else if (type === 'string') {
       result[inp.name] = String(val);
     } else if (type === 'bool') {
       result[inp.name] = val === true || val === 'true' ? 'true' : 'false';
