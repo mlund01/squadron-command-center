@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { getInstance, getMissionHistory, runMission } from '@/api/client';
+import { useId, useMemo, useState } from 'react';
+import dagre from 'dagre';
+import { CalendarClock, CheckCircle2, MoreHorizontal, Play, Plus, Search } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { getWorkspaceConfig, listWorkspaceMissionSchedules, listWorkspaces } from '@/api/client';
+import type { MissionInfo, MissionSchedule, TaskInfo } from '@/api/types';
+import { describeSchedule } from '@/lib/schedule-display';
+import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -9,445 +14,430 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { MoreVertical, Play } from 'lucide-react';
-import { MissionCard } from '@/components/mission-card';
-import { RunMissionDialog } from '@/components/RunMissionDialog';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { formatTime, formatDuration, formatTimeAgo, formatSchedule } from '@/lib/mission-utils';
-import { FilterChip, InlineStat, SearchBox } from '@/components/ui-shell';
-import type { MiniNode, MiniEdge } from '@/components/mini-graph';
-import type { MissionInfo, MissionRecordInfo } from '@/api/types';
-import { cn } from '@/lib/utils';
+import { Input } from '@/components/ui/input';
 
-type ViewKey = 'missions' | 'history';
-type FilterKey = 'all' | 'active' | 'scheduled';
-type HistoryFilterKey = 'all' | 'running' | 'completed' | 'failed';
+type MissionFilter = 'all' | 'scheduled';
 
-const HISTORY_PAGE_SIZE = 50;
+type CanvasNode = {
+  id: string;
+  label: string;
+  detail: string;
+  kind: 'agent' | 'task' | 'output' | 'router' | 'mission';
+  stacked?: boolean;
+};
 
-function buildMissionMiniGraph(mission: MissionInfo): { nodes: MiniNode[]; edges: MiniEdge[] } {
-  const nodes: MiniNode[] = [];
-  const edges: MiniEdge[] = [];
-  const tasks = mission.tasks ?? [];
-  if (tasks.length === 0) return { nodes, edges };
+type CanvasEdge = [string, string];
 
-  for (const t of tasks) {
-    for (const dep of t.dependsOn ?? []) {
-      edges.push({ source: `t:${dep}`, target: `t:${t.name}` });
-    }
-    for (const target of t.sendTo ?? []) {
-      edges.push({ source: `t:${t.name}`, target: `t:${target}` });
-    }
-    if (t.router?.routes) {
-      for (const route of t.router.routes) {
-        if (route.isMission) {
-          const mId = `m:${route.target}`;
-          if (!nodes.some(n => n.id === mId)) {
-            nodes.push({ id: mId, color: 'teal', size: 'sm' });
-          }
-          edges.push({ source: `t:${t.name}`, target: mId });
-        } else {
-          edges.push({ source: `t:${t.name}`, target: `t:${route.target}` });
-        }
-      }
-    }
-  }
-
-  for (const t of tasks) {
-    nodes.push({ id: `t:${t.name}`, color: 'purple', size: 'sm', stacked: !!t.iterator });
-  }
-
-  return { nodes, edges };
-}
+type MissionView = {
+  mission: MissionInfo;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  schedule?: MissionSchedule;
+};
 
 export function MissionsPage() {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const view: ViewKey = searchParams.get('view') === 'history' ? 'history' : 'missions';
-
-  const [runningMission, setRunningMission] = useState<string | null>(null);
-  const [dialogMission, setDialogMission] = useState<MissionInfo | null>(null);
-  const [filter, setFilter] = useState<FilterKey>('all');
-  const [historyFilter, setHistoryFilter] = useState<HistoryFilterKey>('all');
-  const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  const [search, setSearch] = useState(() => searchParams.get('q') ?? '');
-
-  const { data: instance, isLoading } = useQuery({
-    queryKey: ['instance', id],
-    queryFn: () => getInstance(id!),
-    enabled: !!id,
-    refetchInterval: 5000,
+  const { workspaceId } = useParams();
+  const [filter, setFilter] = useState<MissionFilter>('all');
+  const [params, setParams] = useSearchParams();
+  const search = params.get('search') ?? '';
+  function setSearch(value: string) {
+    setParams((current) => {
+      if (value) current.set('search', value);
+      else current.delete('search');
+      return current;
+    }, { replace: true });
+  }
+  const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: listWorkspaces });
+  const workspace = workspaces.data?.find((candidate) => candidate.id === workspaceId);
+  const snapshot = useQuery({
+    queryKey: ['workspace-config', workspaceId],
+    queryFn: () => getWorkspaceConfig(workspaceId!),
+    enabled: Boolean(workspaceId),
+    refetchInterval: 2_000,
     refetchIntervalInBackground: false,
+    retry: false,
   });
+	const schedules = useQuery({ queryKey: ['workspace-mission-schedules', workspaceId], queryFn: () => listWorkspaceMissionSchedules(workspaceId!), enabled: Boolean(workspaceId) });
 
-  // Poll every 3s so running / just-finished missions light up (and stop
-  // breathing) quickly enough to feel live. Infinite paging drives history scroll.
-  const {
-    data: historyData,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useInfiniteQuery({
-    queryKey: ['history-infinite', id],
-    queryFn: ({ pageParam }) => getMissionHistory(id!, pageParam as number, HISTORY_PAGE_SIZE),
-    initialPageParam: 0,
-    getNextPageParam: (lastPage, allPages) => {
-      const loaded = allPages.reduce((n, p) => n + p.missions.length, 0);
-      return loaded < lastPage.total ? loaded : undefined;
-    },
-    enabled: !!id && !!instance?.connected,
-    refetchInterval: 3000,
-    refetchIntervalInBackground: false,
-  });
+  const missions = useMemo<MissionView[]>(() => (
+    (snapshot.data?.config.missions ?? []).map((mission) => ({
+      mission,
+      ...buildMissionCanvas(mission.tasks ?? []),
+      schedule: schedules.data?.find((schedule) => schedule.missionName === mission.name),
+    }))
+  ), [schedules.data, snapshot.data]);
 
-  const history = useMemo(() => {
-    if (!historyData) return undefined;
-    const missions = historyData.pages.flatMap((p) => p.missions);
-    const total = historyData.pages[historyData.pages.length - 1]?.total ?? 0;
-    return { missions, total };
-  }, [historyData]);
-
-  const missions = useMemo(() => instance?.config.missions ?? [], [instance]);
-
-  // Per-mission indices from history: most-recent run + count of currently-running runs
-  const { lastRunByName, runningByName } = useMemo(() => {
-    const last = new Map<string, MissionRecordInfo>();
-    const running = new Map<string, number>();
-    for (const r of history?.missions ?? []) {
-      const existing = last.get(r.name);
-      if (!existing || new Date(r.startedAt).getTime() > new Date(existing.startedAt).getTime()) {
-        last.set(r.name, r);
-      }
-      if (r.status === 'running') {
-        running.set(r.name, (running.get(r.name) ?? 0) + 1);
-      }
-    }
-    return { lastRunByName: last, runningByName: running };
-  }, [history]);
-
-  // Precompute the per-mission graph + schedule alongside the run stats. This
-  // keeps dagre layout off the render hot path — search-box keystrokes would
-  // otherwise rebuild every card's graph even for filtered-out rows.
-  const enriched = useMemo(() => {
-    return missions.map((m) => {
-      const run = lastRunByName.get(m.name);
-      const runningCount = runningByName.get(m.name) ?? 0;
-      const lastRunAgo = run ? formatTimeAgo(run.finishedAt ?? run.startedAt) : null;
-      return {
-        mission: m,
-        runningCount,
-        lastRunAgo,
-        graph: buildMissionMiniGraph(m),
-        schedule: formatSchedule(m.schedules?.[0]),
-      };
+  const visibleMissions = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return missions.filter(({ mission, schedule }) => {
+      const matchesSearch = !query || `${mission.name} ${mission.description ?? ''}`.toLowerCase().includes(query);
+      const matchesFilter = filter === 'all' || Boolean(schedule);
+      return matchesSearch && matchesFilter;
     });
-  }, [missions, lastRunByName, runningByName]);
+  }, [filter, missions, search]);
 
-  const totalTasks = missions.reduce((s, m) => s + (m.tasks?.length ?? 0), 0);
-  const scheduledCount = missions.filter((m) => (m.schedules?.length ?? 0) > 0).length;
-  const runningCount = enriched.reduce((s, e) => s + e.runningCount, 0);
-
-  const visible = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return enriched.filter(({ mission: m, runningCount }) => {
-      if (q && !m.name.toLowerCase().includes(q) && !(m.description ?? '').toLowerCase().includes(q)) {
-        return false;
-      }
-      switch (filter) {
-        case 'active':    return runningCount > 0;
-        case 'scheduled': return (m.schedules?.length ?? 0) > 0;
-        case 'all':       return true;
-      }
-    });
-  }, [enriched, filter, search]);
-
-  // History view — stats + filtered runs
-  const runs = useMemo(() => history?.missions ?? [], [history]);
-  const totalRuns = history?.total ?? 0;
-  const historyCompleted = runs.filter((m) => m.status === 'completed').length;
-  const historyFailed = runs.filter((m) => m.status === 'failed').length;
-  const historyRunning = runs.filter((m) => m.status === 'running').length;
-
-  const visibleRuns = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return runs.filter((m) => {
-      if (q && !m.name.toLowerCase().includes(q) && !m.id.toLowerCase().includes(q)) return false;
-      switch (historyFilter) {
-        case 'running':   return m.status === 'running';
-        case 'completed': return m.status === 'completed';
-        case 'failed':    return m.status === 'failed';
-        case 'all':       return true;
-      }
-    });
-  }, [runs, historyFilter, search]);
-
-  useEffect(() => {
-    if (view !== 'history') return;
-    const el = loadMoreRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting) && hasNextPage && !isFetchingNextPage) {
-          fetchNextPage();
-        }
-      },
-      { rootMargin: '300px' },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [view, hasNextPage, isFetchingNextPage, fetchNextPage]);
-
-  const handleRun = async (mission: MissionInfo) => {
-    if (!id) return;
-    if (mission.inputs && mission.inputs.length > 0) {
-      setDialogMission(mission);
-      return;
-    }
-    setRunningMission(mission.name);
-    try {
-      const result = await runMission(id, mission.name, {});
-      // Kick an immediate refetch so the breathing card appears without
-      // waiting for the next poll interval.
-      queryClient.invalidateQueries({ queryKey: ['history-infinite', id] });
-      queryClient.invalidateQueries({ queryKey: ['history', id] });
-      navigate(`/instances/${id}/runs/${result.missionId}`, {
-        state: { from: { kind: 'history' } },
-      });
-    } catch {
-      setRunningMission(null);
-    }
-  };
-
-  const switchView = (v: ViewKey) => {
-    const next = new URLSearchParams(searchParams);
-    if (v === 'missions') next.delete('view');
-    else next.set('view', v);
-    next.delete('q');
-    setSearchParams(next, { replace: true });
-    setSearch('');
-  };
-
-  if (isLoading) return <div className="p-8 text-muted-foreground">Loading...</div>;
-  if (!instance) return <div className="p-8 text-muted-foreground">Instance not found</div>;
-
-  const showingMissions = view === 'missions';
+  const totalTasks = missions.reduce((total, item) => total + (item.mission.tasks?.length ?? 0), 0);
+  const scheduled = missions.filter((item) => item.schedule).length;
 
   return (
-    <div className="px-8 py-7 w-full">
-      <div className="flex items-end gap-4 mb-5">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-[22px] font-semibold tracking-tight leading-none">Missions</h1>
-          <span className="font-mono text-[11px] text-muted-foreground/70 tracking-[0.2px]">
-            {showingMissions
-              ? `${instance.name} · ${missions.length} configured`
-              : `${instance.name} · ${totalRuns} run${totalRuns !== 1 ? 's' : ''}`}
-          </span>
+    <div>
+      <PageHeader
+        actions={<Button><Plus />New mission</Button>}
+        description="Author, review, and run the repeatable work owned by this workspace."
+        eyebrow={workspace?.name ?? 'Workspace'}
+        title="Missions"
+      />
+
+      {snapshot.data?.configError && (
+        <div className="mb-5 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-xs text-destructive">
+          The runner reported a configuration error: {snapshot.data.configError}
         </div>
-
-        <div className="flex-1" />
-
-        <div className="flex items-center gap-0 rounded-sm border border-border/60 overflow-hidden font-mono text-[11px]">
-          <ViewTab active={showingMissions} onClick={() => switchView('missions')}>Configured</ViewTab>
-          <ViewTab active={!showingMissions} onClick={() => switchView('history')}>History</ViewTab>
-        </div>
-      </div>
-
-      {showingMissions ? (
-        missions.length === 0 ? (
-          <p className="text-muted-foreground">No missions configured.</p>
-        ) : (
-          <>
-            <div className="flex items-center gap-6 pb-3.5 mb-4 border-b border-border/60 font-mono text-[11px] text-muted-foreground/80 flex-wrap">
-              <InlineStat k="missions" v={missions.length} />
-              <InlineStat k="tasks" v={totalTasks} />
-              <InlineStat k="scheduled" v={scheduledCount} />
-              <InlineStat k="running" v={runningCount} tone={runningCount > 0 ? 'running' : undefined} />
-
-              <span className="flex-1" />
-
-              <div className="flex items-center gap-1">
-                <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>All</FilterChip>
-                <FilterChip active={filter === 'active'} onClick={() => setFilter('active')}>Active</FilterChip>
-                <FilterChip active={filter === 'scheduled'} onClick={() => setFilter('scheduled')}>Scheduled</FilterChip>
-              </div>
-
-              <SearchBox value={search} onChange={setSearch} placeholder="Search missions" />
-            </div>
-
-            {visible.length === 0 ? (
-              <p className="text-muted-foreground text-sm mt-10 text-center">No missions match.</p>
-            ) : (
-              <div className="sqd-card-grid">
-                {visible.map(({ mission: m, runningCount, lastRunAgo, graph, schedule }) => (
-                    <MissionCard
-                      key={m.name}
-                      name={m.name}
-                      description={m.description}
-                      tasks={m.tasks?.length ?? 0}
-                      agents={m.agents?.length ?? 0}
-                      inputs={m.inputs?.length ?? 0}
-                      schedule={schedule}
-                      runningCount={runningCount}
-                      lastRunAgo={lastRunAgo}
-                      graph={graph}
-                      onClick={() => navigate(`/instances/${id}/missions/${m.name}`)}
-                      action={
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 w-6 p-0 text-muted-foreground/70 hover:text-foreground"
-                            >
-                              <MoreVertical className="h-3.5 w-3.5" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                            <DropdownMenuItem
-                              disabled={!instance.connected || runningMission === m.name}
-                              onClick={() => handleRun(m)}
-                            >
-                              <Play className="h-3.5 w-3.5 mr-2" />
-                              {runningMission === m.name ? 'Starting...' : 'Run Mission'}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      }
-                    />
-                ))}
-              </div>
-            )}
-          </>
-        )
-      ) : (
-        !instance.connected ? (
-          <p className="text-muted-foreground">Instance is disconnected. History is unavailable.</p>
-        ) : runs.length === 0 ? (
-          <p className="text-muted-foreground">No mission runs yet.</p>
-        ) : (
-          <>
-            <div className="flex items-center gap-6 pb-3.5 mb-4 border-b border-border/60 font-mono text-[11px] text-muted-foreground/80 flex-wrap">
-              <InlineStat k="runs" v={totalRuns} />
-              <InlineStat k="running" v={historyRunning} tone={historyRunning > 0 ? 'running' : undefined} />
-              <InlineStat k="completed" v={historyCompleted} />
-              <InlineStat k="failed" v={historyFailed} tone={historyFailed > 0 ? 'failed' : undefined} />
-
-              <span className="flex-1" />
-
-              <div className="flex items-center gap-1">
-                <FilterChip active={historyFilter === 'all'} onClick={() => setHistoryFilter('all')}>All</FilterChip>
-                <FilterChip active={historyFilter === 'running'} onClick={() => setHistoryFilter('running')}>Running</FilterChip>
-                <FilterChip active={historyFilter === 'completed'} onClick={() => setHistoryFilter('completed')}>Completed</FilterChip>
-                <FilterChip active={historyFilter === 'failed'} onClick={() => setHistoryFilter('failed')}>Failed</FilterChip>
-              </div>
-
-              <SearchBox value={search} onChange={setSearch} placeholder="Search runs" />
-            </div>
-
-            {visibleRuns.length === 0 ? (
-              <p className="text-muted-foreground text-sm mt-10 text-center">No runs match.</p>
-            ) : (
-              <div className="rounded-sm border border-border/60 overflow-hidden bg-card">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent border-border/60">
-                      <TableHead className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/80">Mission</TableHead>
-                      <TableHead className="w-32 font-mono text-[10px] uppercase tracking-wider text-muted-foreground/80">Status</TableHead>
-                      <TableHead className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/80">Started</TableHead>
-                      <TableHead className="w-32 font-mono text-[10px] uppercase tracking-wider text-muted-foreground/80 text-right">Duration</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {visibleRuns.map((m) => (
-                      <TableRow
-                        key={m.id}
-                        className="cursor-pointer border-border/40 hover:bg-accent/20 transition-colors"
-                        onClick={() => navigate(`/instances/${id}/runs/${m.id}`, { state: { from: { kind: 'history' } } })}
-                      >
-                        <TableCell className="font-mono text-[13px] font-medium truncate">{m.name}</TableCell>
-                        <TableCell>
-                          <StatusPill status={m.status} />
-                        </TableCell>
-                        <TableCell className="font-mono text-[11.5px] text-muted-foreground">
-                          {formatTime(m.startedAt)}
-                        </TableCell>
-                        <TableCell className="font-mono text-[11.5px] text-muted-foreground tabular-nums text-right">
-                          {m.finishedAt ? formatDuration(m.startedAt, m.finishedAt) : '—'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-
-            <div ref={loadMoreRef} className="h-8" />
-            <p className="font-mono text-[10.5px] text-muted-foreground/70 mt-3 tracking-[0.2px]">
-              Showing {visibleRuns.length} of {totalRuns} run{totalRuns !== 1 ? 's' : ''}
-              {isFetchingNextPage && ' · loading more...'}
-            </p>
-          </>
-        )
       )}
 
-      {dialogMission && (
-        <RunMissionDialog
-          instanceId={id!}
-          mission={dialogMission}
-          open={!!dialogMission}
-          onOpenChange={(open) => { if (!open) setDialogMission(null); }}
+      {snapshot.isLoading ? (
+        <MissionState title="Loading workspace configuration…" />
+      ) : snapshot.isError ? (
+        <MissionState
+          description="Start the workspace runner from the workflows directory. Missions will appear here as soon as Squadron reports its configuration."
+          title="Waiting for workspace configuration"
         />
+      ) : (
+        <>
+          <div className="mb-5 flex flex-wrap items-center gap-3 border-b pb-4">
+            <div className="flex items-center gap-1">
+              {(['all', 'scheduled'] as const).map((value) => (
+                <Button
+                  className="capitalize"
+                  key={value}
+                  onClick={() => setFilter(value)}
+                  size="xs"
+                  variant={filter === value ? 'secondary' : 'ghost'}
+                >
+                  {value}
+                </Button>
+              ))}
+            </div>
+            <div className="flex-1" />
+            <label className="relative min-w-56 sm:w-64">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input className="h-8 pl-9 text-xs" onChange={(event) => setSearch(event.target.value)} placeholder="Search missions" value={search} />
+            </label>
+          </div>
+
+          <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-muted-foreground">
+            <InlineStat label="missions" value={missions.length} />
+            <InlineStat label="tasks" value={totalTasks} />
+            <InlineStat label="scheduled" value={scheduled} />
+          </div>
+
+          {visibleMissions.length > 0 ? (
+            <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              {visibleMissions.map((item) => <MissionCard item={item} key={item.mission.name} workspaceId={workspaceId ?? ''} />)}
+            </div>
+          ) : (
+            <MissionState title={missions.length === 0 ? 'No missions configured.' : 'No missions match this search.'} />
+          )}
+        </>
       )}
     </div>
   );
 }
 
-function ViewTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function MissionCard({ item, workspaceId }: { item: MissionView; workspaceId: string }) {
+  const { mission, nodes, edges, schedule } = item;
+  const href = `/w/${workspaceId}/missions/${encodeURIComponent(mission.name)}`;
+  const tasks = mission.tasks?.length ?? 0;
+  const agents = mission.agents?.length ?? 0;
+  const inputs = mission.inputs?.length ?? 0;
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'px-3 py-[5px] transition-colors cursor-pointer',
-        active
-          ? 'bg-accent text-foreground font-medium'
-          : 'text-muted-foreground hover:text-foreground hover:bg-accent/25',
-      )}
+    <article className="group overflow-hidden rounded-md border bg-card transition-colors hover:border-foreground/30">
+      <Link aria-label={`Open ${mission.name}`} className="block" to={href}><MissionCanvasPreview edges={edges} nodes={nodes} /></Link>
+      <div className="p-4">
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-sm font-semibold text-foreground"><Link className="hover:underline" to={href}>{mission.name}</Link></h2>
+            <p className="mt-1 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">{mission.description || 'No directive provided.'}</p>
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button aria-label={`Actions for ${mission.name}`} size="icon-xs" variant="ghost"><MoreHorizontal /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem asChild><Link to={href}>Open mission</Link></DropdownMenuItem>
+              <DropdownMenuItem><Play />Run mission</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-t pt-3 text-[11px] text-muted-foreground">
+          <span>{tasks} task{tasks === 1 ? '' : 's'}</span>
+          <span>·</span>
+          <span>{agents} agent{agents === 1 ? '' : 's'}</span>
+          {inputs > 0 && <><span>·</span><span>{inputs} input{inputs === 1 ? '' : 's'}</span></>}
+          <span className="flex-1" />
+          <span className="flex items-center gap-1.5"><CheckCircle2 className="size-3" />Configured</span>
+        </div>
+        {schedule && <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground"><CalendarClock className="size-3" />{schedule.name || describeSchedule(schedule.cronExpression)}</p>}
+      </div>
+    </article>
+  );
+}
+
+function MissionCanvasPreview({ edges, nodes }: { edges: CanvasEdge[]; nodes: CanvasNode[] }) {
+  const markerID = useId().replace(/:/g, '');
+  const layout = useMemo(() => layoutMissionCanvas(nodes, edges), [edges, nodes]);
+
+  return (
+    <div
+      className="relative h-44 overflow-hidden border-b bg-muted/40"
+      style={{
+        backgroundImage: 'linear-gradient(to right, color-mix(in srgb, var(--border) 45%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--border) 45%, transparent) 1px, transparent 1px)',
+        backgroundSize: '18px 18px',
+      }}
     >
-      {children}
-    </button>
+      {nodes.length === 0 && <span className="absolute inset-0 grid place-items-center text-[10px] text-muted-foreground">No tasks</span>}
+      <svg
+        aria-label={`Mission graph with ${nodes.length} nodes and ${edges.length} connections`}
+        className="absolute inset-0 size-full p-2"
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        viewBox={`0 0 ${layout.width} ${layout.height}`}
+      >
+        <defs>
+          <marker id={markerID} markerHeight="6" markerWidth="6" orient="auto" refX="5" refY="3">
+            <path d="M0,0 L6,3 L0,6 Z" fill="var(--muted-foreground)" opacity="0.55" />
+          </marker>
+        </defs>
+        {layout.edges.map((edge) => (
+          <path
+            d={edge.path}
+            fill="none"
+            key={`${edge.source}-${edge.target}`}
+            markerEnd={`url(#${markerID})`}
+            opacity={layout.dense ? 0.45 : 0.65}
+            stroke="var(--muted-foreground)"
+            strokeWidth={layout.dense ? 0.75 : 1}
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+        {layout.nodes.map((node) => (
+          <g key={node.id}>
+            <title>{node.label} — {node.detail}</title>
+            {node.stacked && (
+              <>
+                <rect
+                  fill="var(--card)"
+                  height={node.height}
+                  opacity="0.35"
+                  rx={layout.radius}
+                  stroke="var(--primary)"
+                  vectorEffect="non-scaling-stroke"
+                  width={node.width}
+                  x={node.x - node.width / 2 + 4}
+                  y={node.y - node.height / 2 + 4}
+                />
+                <rect
+                  fill="var(--card)"
+                  height={node.height}
+                  opacity="0.6"
+                  rx={layout.radius}
+                  stroke="var(--primary)"
+                  vectorEffect="non-scaling-stroke"
+                  width={node.width}
+                  x={node.x - node.width / 2 + 2}
+                  y={node.y - node.height / 2 + 2}
+                />
+              </>
+            )}
+            <rect
+              fill={node.kind === 'output' || node.kind === 'mission' ? 'var(--secondary)' : 'var(--card)'}
+              height={node.height}
+              rx={node.kind === 'router' ? node.height / 2 : layout.radius}
+              stroke={node.kind === 'agent' || node.stacked ? 'var(--primary)' : node.kind === 'mission' ? 'var(--muted-foreground)' : 'var(--border)'}
+              strokeDasharray={node.kind === 'mission' ? '3 2' : undefined}
+              strokeWidth={node.kind === 'agent' || node.stacked ? 1.25 : 1}
+              vectorEffect="non-scaling-stroke"
+              width={node.width}
+              x={node.x - node.width / 2}
+              y={node.y - node.height / 2}
+            />
+            {layout.showLabels && (
+              <text
+                dominantBaseline="middle"
+                fill="var(--foreground)"
+                fontFamily="var(--font-mono)"
+                fontSize={layout.labelSize}
+                textAnchor="middle"
+                x={node.x}
+                y={node.y - (layout.showDetails ? 4 : 0)}
+              >
+                {truncateNodeLabel(node.label, layout.labelLimit)}
+              </text>
+            )}
+            {layout.showDetails && (
+              <text
+                dominantBaseline="middle"
+                fill="var(--muted-foreground)"
+                fontFamily="var(--font-mono)"
+                fontSize={6}
+                textAnchor="middle"
+                x={node.x}
+                y={node.y + 7}
+              >
+                {truncateNodeLabel(node.detail, 17)}
+              </text>
+            )}
+          </g>
+        ))}
+      </svg>
+      {layout.dense && <span className="absolute bottom-2 right-2 rounded-sm border bg-background/80 px-1.5 py-0.5 text-[8px] text-muted-foreground backdrop-blur">{nodes.length} nodes</span>}
+    </div>
   );
 }
 
-function StatusPill({ status }: { status: string }) {
-  const map: Record<string, { dot: string; text: string; border: string; bg: string; live?: boolean }> = {
-    running:   { dot: 'bg-blue-500',    text: 'text-blue-400',   border: 'border-blue-500/40',   bg: 'bg-blue-500/10',   live: true },
-    completed: { dot: 'bg-green-500',   text: 'text-green-400',  border: 'border-green-500/40',  bg: 'bg-green-500/10' },
-    failed:    { dot: 'bg-red-500',     text: 'text-red-400',    border: 'border-red-500/40',    bg: 'bg-red-500/10' },
-    queued:    { dot: 'bg-amber-500',   text: 'text-amber-400',  border: 'border-amber-500/40',  bg: 'bg-amber-500/10' },
-    stopped:   { dot: 'bg-muted-foreground/60', text: 'text-muted-foreground', border: 'border-border', bg: 'bg-muted/40' },
+function buildMissionCanvas(tasks: TaskInfo[]): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
+  if (tasks.length === 0) return { nodes: [], edges: [] };
+
+  const taskNames = new Set(tasks.map((task) => task.name));
+  const normalize = (reference: string) => reference.replace(/^(tasks|missions)\./, '');
+  const outgoing = new Set<string>();
+  const edges: CanvasEdge[] = [];
+  const edgeKeys = new Set<string>();
+  const addEdge = (source: string, target: string) => {
+    if (!taskNames.has(source) || !taskNames.has(target)) return;
+    const key = `${source}->${target}`;
+    if (edgeKeys.has(key)) return;
+    edgeKeys.add(key);
+    outgoing.add(source);
+    edges.push([source, target]);
   };
-  const s = map[status] ?? { dot: 'bg-muted-foreground/60', text: 'text-muted-foreground', border: 'border-border', bg: 'bg-muted/40' };
+  tasks.forEach((task) => {
+    (task.dependsOn ?? []).map(normalize).forEach((dependency) => addEdge(dependency, task.name));
+    (task.sendTo ?? []).map(normalize).forEach((target) => addEdge(task.name, target));
+    (task.router?.routes ?? []).filter((route) => !route.isMission).map((route) => normalize(route.target)).forEach((target) => addEdge(task.name, target));
+  });
+
+  const nodes: CanvasNode[] = tasks.map((task) => ({
+    id: task.name,
+    label: task.name,
+    detail: task.router ? 'Router' : task.iterator ? `Iterates ${normalize(task.iterator.dataset)}` : task.agent || 'Task',
+    kind: task.router ? 'router' : task.agent ? 'agent' : outgoing.has(task.name) ? 'task' : 'output',
+    stacked: Boolean(task.iterator),
+  }));
+
+  tasks.forEach((task) => {
+    (task.router?.routes ?? []).filter((route) => route.isMission).forEach((route) => {
+      const name = normalize(route.target);
+      const id = `mission:${name}`;
+      if (!nodes.some((node) => node.id === id)) {
+        nodes.push({ id, label: name, detail: 'Mission', kind: 'mission' });
+      }
+      const key = `${task.name}->${id}`;
+      if (!edgeKeys.has(key)) {
+        edgeKeys.add(key);
+        edges.push([task.name, id]);
+      }
+    });
+  });
+
+  return { nodes, edges };
+}
+
+type CanvasLayout = {
+  width: number;
+  height: number;
+  nodes: Array<CanvasNode & { x: number; y: number; width: number; height: number }>;
+  edges: Array<{ source: string; target: string; path: string }>;
+  dense: boolean;
+  showLabels: boolean;
+  showDetails: boolean;
+  labelSize: number;
+  labelLimit: number;
+  radius: number;
+};
+
+function layoutMissionCanvas(nodes: CanvasNode[], edges: CanvasEdge[]): CanvasLayout {
+  const dense = nodes.length > 18;
+  const medium = nodes.length > 7;
+  const nodeWidth = dense ? 24 : medium ? 62 : 92;
+  const nodeHeight = dense ? 12 : medium ? 24 : 38;
+  const graph = new dagre.graphlib.Graph();
+  graph.setDefaultEdgeLabel(() => ({}));
+  graph.setGraph({
+    rankdir: 'LR',
+    ranker: 'network-simplex',
+    acyclicer: 'greedy',
+    nodesep: dense ? 7 : medium ? 12 : 18,
+    ranksep: dense ? 18 : medium ? 28 : 38,
+    marginx: 14,
+    marginy: 14,
+  });
+  nodes.forEach((node) => graph.setNode(node.id, { width: nodeWidth, height: nodeHeight }));
+  edges.forEach(([source, target]) => graph.setEdge(source, target));
+  dagre.layout(graph);
+
+  const graphSize = graph.graph();
+  const graphWidth = graphSize.width ?? 120;
+  const graphHeight = graphSize.height ?? 80;
+  const width = Math.max(graphWidth, 220);
+  const height = Math.max(graphHeight, 120);
+  const offsetX = (width - graphWidth) / 2;
+  const offsetY = (height - graphHeight) / 2;
+  return {
+    width,
+    height,
+    nodes: nodes.map((node) => ({
+      ...node,
+      ...graph.node(node.id),
+      x: graph.node(node.id).x + offsetX,
+      y: graph.node(node.id).y + offsetY,
+      width: nodeWidth,
+      height: nodeHeight,
+    })),
+    edges: graph.edges().map((edge) => ({
+      source: edge.v,
+      target: edge.w,
+      path: smoothEdgePath(graph.edge(edge).points.map((point: { x: number; y: number }) => ({
+        x: point.x + offsetX,
+        y: point.y + offsetY,
+      }))),
+    })),
+    dense,
+    showLabels: !dense,
+    showDetails: !medium,
+    labelSize: medium ? 7 : 9,
+    labelLimit: medium ? 12 : 18,
+    radius: dense ? 3 : 5,
+  };
+}
+
+function smoothEdgePath(points: Array<{ x: number; y: number }>): string {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  let path = `M ${points[0].x} ${points[0].y}`;
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const point = points[index];
+    const next = points[index + 1];
+    path += ` Q ${point.x} ${point.y} ${(point.x + next.x) / 2} ${(point.y + next.y) / 2}`;
+  }
+  const last = points[points.length - 1];
+  return `${path} L ${last.x} ${last.y}`;
+}
+
+function truncateNodeLabel(value: string, limit: number): string {
+  return value.length <= limit ? value : `${value.slice(0, Math.max(limit - 1, 1))}…`;
+}
+
+function MissionState({ description, title }: { description?: string; title: string }) {
   return (
-    <span className={cn(
-      'inline-flex items-center gap-1.5 rounded-sm border px-1.5 py-[1px] font-mono text-[10px] font-semibold uppercase tracking-wider',
-      s.border, s.bg, s.text,
-    )}>
-      <span className="relative inline-flex h-1.5 w-1.5">
-        <span className={cn('absolute inset-0 rounded-full', s.dot)} />
-        {s.live && <span className={cn('absolute inset-0 rounded-full animate-ping opacity-60', s.dot)} />}
-      </span>
-      {status}
-    </span>
+    <div className="rounded-md border bg-card px-6 py-16 text-center">
+      <p className="text-sm font-medium text-foreground">{title}</p>
+      {description && <p className="mx-auto mt-2 max-w-xl text-xs leading-5 text-muted-foreground">{description}</p>}
+    </div>
   );
 }
 
+function InlineStat({ label, value }: { label: string; value: number }) {
+  return <span><strong className="mr-1.5 font-medium text-foreground">{value}</strong>{label}</span>;
+}

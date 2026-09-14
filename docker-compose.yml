@@ -1,0 +1,36 @@
+services:
+  command-center:
+    build: .
+    environment:
+      COMMAND_CENTER_MODE: ${COMMAND_CENTER_MODE}
+      COMMAND_CENTER_PUBLIC_URL: ${COMMAND_CENTER_PUBLIC_URL}
+      COMMAND_CENTER_DATABASE_URL: ${COMMAND_CENTER_DATABASE_URL}
+      COMMAND_CENTER_MASTER_KEY: ${COMMAND_CENTER_MASTER_KEY}
+      COMMAND_CENTER_SETUP_TOKEN: ${COMMAND_CENTER_SETUP_TOKEN:-}
+      OAUTH_ISSUER_URL: ${OAUTH_ISSUER_URL:-}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-}
+      OAUTH_REDIRECT_URL: ${OAUTH_REDIRECT_URL:-}
+      OAUTH_COOKIE_SECRET: ${OAUTH_COOKIE_SECRET:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: command_center
+      POSTGRES_USER: command_center
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      - command-center-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U command_center -d command_center"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  command-center-postgres:

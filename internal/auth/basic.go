@@ -314,15 +314,18 @@ func (p *Provider) issueCSRFToken(w http.ResponseWriter) (string, error) {
 // validateCSRF compares the cookie and form values in constant time. Both
 // must be present and equal; a missing cookie is treated as a failure.
 func (p *Provider) validateCSRF(r *http.Request) bool {
+	return p.validateCSRFToken(r, r.FormValue("csrf"))
+}
+
+func (p *Provider) validateCSRFToken(r *http.Request, token string) bool {
 	cookie, err := r.Cookie(csrfCookieName)
 	if err != nil || cookie.Value == "" {
 		return false
 	}
-	formVal := r.FormValue("csrf")
-	if formVal == "" {
+	if token == "" {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(formVal)) == 1
+	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(token)) == 1
 }
 
 func retryAfterSeconds(d time.Duration) string {

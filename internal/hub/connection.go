@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -19,10 +20,11 @@ const (
 
 // Connection represents a single WebSocket connection from a squadron instance.
 type Connection struct {
-	hub        *Hub
-	ws         *websocket.Conn
-	send       chan []byte
-	instanceID string
+	hub         *Hub
+	ws          *websocket.Conn
+	send        chan []byte
+	instanceID  string
+	workspaceID string
 
 	// Request/response correlation
 	mu      sync.Mutex
@@ -31,7 +33,7 @@ type Connection struct {
 	// Mission event fan-out for SSE subscribers
 	eventMu     sync.Mutex
 	eventSubs   map[string][]chan *protocol.MissionEventPayload // missionID → subscriber channels
-	eventBuffer map[string][]*protocol.MissionEventPayload     // buffered events before first subscriber
+	eventBuffer map[string][]*protocol.MissionEventPayload      // buffered events before first subscriber
 
 	// Chat event fan-out for SSE subscribers
 	chatMu     sync.Mutex
@@ -68,10 +70,11 @@ type NotificationView struct {
 }
 
 // NewConnection creates a new Connection wrapping a WebSocket.
-func NewConnection(hub *Hub, ws *websocket.Conn) *Connection {
+func NewConnection(hub *Hub, ws *websocket.Conn, workspaceID string) *Connection {
 	return &Connection{
 		hub:         hub,
 		ws:          ws,
+		workspaceID: workspaceID,
 		send:        make(chan []byte, 256),
 		pending:     make(map[string]chan *protocol.Envelope),
 		eventSubs:   make(map[string][]chan *protocol.MissionEventPayload),
@@ -85,7 +88,7 @@ func NewConnection(hub *Hub, ws *websocket.Conn) *Connection {
 func (c *Connection) ReadPump() {
 	defer func() {
 		if c.instanceID != "" {
-			c.hub.Unregister(c.instanceID)
+			c.hub.Unregister(c.instanceID, c)
 		}
 		c.ws.Close()
 	}()
@@ -520,9 +523,27 @@ func (c *Connection) dispatch(env *protocol.Envelope) {
 		c.fanOutChatComplete(env)
 	case protocol.TypeNotification:
 		c.fanOutNotification(env)
+	case protocol.TypeReloadConfigResult:
+		c.handleReloadConfigResult(env)
 	default:
 		log.Printf("Unhandled message type: %s", env.Type)
 	}
+}
+
+func (c *Connection) handleReloadConfigResult(env *protocol.Envelope) {
+	if c.instanceID == "" {
+		return
+	}
+	var payload protocol.ReloadConfigResultPayload
+	if err := protocol.DecodePayload(env, &payload); err != nil {
+		log.Printf("Invalid reload config result: %v", err)
+		return
+	}
+	if payload.Success {
+		c.hub.GetRegistry().UpdateConfig(c.instanceID, payload.Config)
+		return
+	}
+	c.hub.GetRegistry().UpdateConfigState(c.instanceID, false, payload.Error)
 }
 
 func (c *Connection) handleRegister(env *protocol.Envelope) {
@@ -531,9 +552,14 @@ func (c *Connection) handleRegister(env *protocol.Envelope) {
 		log.Printf("Invalid register payload: %v", err)
 		return
 	}
+	if c.workspaceID != "" {
+		// A control-plane credential already identifies exactly one workspace
+		// and that workspace has exactly one runner. Ignore client labels.
+		payload.InstanceName = c.workspaceID
+	}
 
 	// Register in the registry
-	instanceID := c.hub.GetRegistry().Register(payload)
+	instanceID := c.hub.GetRegistry().Register(payload, c.workspaceID)
 	c.instanceID = instanceID
 	c.hub.Register(instanceID, c)
 
@@ -543,6 +569,7 @@ func (c *Connection) handleRegister(env *protocol.Envelope) {
 		Accepted:   true,
 	})
 	c.Send(ack)
+	go c.syncWorkspaceVariables()
 
 	log.Printf("Instance registered: %s (id=%s)", payload.InstanceName, instanceID)
 
@@ -553,7 +580,30 @@ func (c *Connection) handleRegister(env *protocol.Envelope) {
 	c.Send(subEnv)
 }
 
+func (c *Connection) syncWorkspaceVariables() {
+	store, ok := c.hub.workerStore.(workspaceVariableStore)
+	if !ok || c.workspaceID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	values, err := store.WorkspaceVariablesForRunner(ctx, c.workspaceID)
+	if err != nil {
+		log.Printf("load workspace variables: %v", err)
+		return
+	}
+	envelope, err := protocol.NewEvent("sync_variables", map[string]any{"values": values})
+	if err != nil {
+		log.Printf("encode workspace variables: %v", err)
+		return
+	}
+	if err := c.Send(envelope); err != nil {
+		log.Printf("sync workspace variables: %v", err)
+	}
+}
+
 func (c *Connection) handleHeartbeat(env *protocol.Envelope) {
+	c.hub.touchWorker(c.workspaceID)
 	ack, _ := protocol.NewResponse(env.RequestID, protocol.TypeHeartbeatAck, &protocol.HeartbeatAckPayload{})
 	c.Send(ack)
 }

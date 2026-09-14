@@ -1,6 +1,7 @@
 package hub_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,25 @@ import (
 
 	"commander/internal/hub"
 )
+
+type recordingWorkerStore struct {
+	disconnected chan string
+	touched      chan string
+}
+
+func (s *recordingWorkerStore) AuthenticateWorker(_ context.Context, credential string) (string, error) {
+	return "workspace-1", nil
+}
+
+func (s *recordingWorkerStore) MarkWorkspaceWorkerDisconnected(_ context.Context, workspaceID string) error {
+	s.disconnected <- workspaceID
+	return nil
+}
+
+func (s *recordingWorkerStore) TouchWorkspaceWorker(_ context.Context, workspaceID string) error {
+	s.touched <- workspaceID
+	return nil
+}
 
 func setupTestServer(t *testing.T) (*hub.Hub, *httptest.Server) {
 	t.Helper()
@@ -214,6 +234,57 @@ func TestHeartbeat(t *testing.T) {
 	resp := readEnvelope(t, ws)
 	if resp.Type != protocol.TypeHeartbeatAck {
 		t.Errorf("expected heartbeat_ack, got %s", resp.Type)
+	}
+}
+
+func TestWorkerPresencePersistsHeartbeatAndDisconnect(t *testing.T) {
+	store := &recordingWorkerStore{
+		disconnected: make(chan string, 1),
+		touched:      make(chan string, 1),
+	}
+	h := hub.New(false, store)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", h.ServeWS)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	header := http.Header{"Authorization": []string{"Bearer worker-credential"}}
+	ws, _, err := websocket.DefaultDialer.Dial(url, header)
+	if err != nil {
+		t.Fatalf("dial authenticated worker: %v", err)
+	}
+
+	registerInstance(t, ws, "ignored-worker-name")
+	readEnvelope(t, ws) // Drain the global subscribe message.
+
+	heartbeat, err := protocol.NewRequest(protocol.TypeHeartbeat, &protocol.HeartbeatPayload{})
+	if err != nil {
+		t.Fatalf("new heartbeat: %v", err)
+	}
+	sendEnvelope(t, ws, heartbeat)
+	if response := readEnvelope(t, ws); response.Type != protocol.TypeHeartbeatAck {
+		t.Fatalf("expected heartbeat_ack, got %s", response.Type)
+	}
+	select {
+	case workspaceID := <-store.touched:
+		if workspaceID != "workspace-1" {
+			t.Fatalf("touched workspace %q", workspaceID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for persisted heartbeat")
+	}
+
+	if err := ws.Close(); err != nil {
+		t.Fatalf("close worker websocket: %v", err)
+	}
+	select {
+	case workspaceID := <-store.disconnected:
+		if workspaceID != "workspace-1" {
+			t.Fatalf("disconnected workspace %q", workspaceID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for persisted disconnect")
 	}
 }
 

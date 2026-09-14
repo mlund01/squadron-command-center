@@ -9,16 +9,17 @@ import (
 
 // InstanceState represents the current state of a squadron instance.
 type InstanceState struct {
-	ID           string                  `json:"id"`
-	Name         string                  `json:"name"`
-	Version      string                  `json:"version"`
-	ConfigDigest string                  `json:"configDigest"`
-	ConfigReady  bool                    `json:"configReady"`
-	ConfigError  string                  `json:"configError,omitempty"`
-	Config       protocol.InstanceConfig `json:"config"`
-	Connected    bool                    `json:"connected"`
-	ConnectedAt  *time.Time              `json:"connectedAt,omitempty"`
-	DisconnectedAt *time.Time            `json:"disconnectedAt,omitempty"`
+	ID             string                  `json:"id"`
+	WorkspaceID    string                  `json:"workspaceId,omitempty"`
+	Name           string                  `json:"name"`
+	Version        string                  `json:"version"`
+	ConfigDigest   string                  `json:"configDigest"`
+	ConfigReady    bool                    `json:"configReady"`
+	ConfigError    string                  `json:"configError,omitempty"`
+	Config         protocol.InstanceConfig `json:"config"`
+	Connected      bool                    `json:"connected"`
+	ConnectedAt    *time.Time              `json:"connectedAt,omitempty"`
+	DisconnectedAt *time.Time              `json:"disconnectedAt,omitempty"`
 }
 
 // Registry tracks all known instances (connected and recently disconnected).
@@ -38,7 +39,11 @@ func NewRegistry() *Registry {
 }
 
 // Register adds or reconnects an instance. Returns the assigned instance ID.
-func (r *Registry) Register(payload protocol.RegisterPayload) string {
+func (r *Registry) Register(payload protocol.RegisterPayload, workspaceIDs ...string) string {
+	workspaceID := ""
+	if len(workspaceIDs) > 0 {
+		workspaceID = workspaceIDs[0]
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -54,6 +59,7 @@ func (r *Registry) Register(payload protocol.RegisterPayload) string {
 			state.ConfigReady = payload.ConfigReady
 			state.ConfigError = payload.ConfigError
 			state.Config = payload.Config
+			state.WorkspaceID = workspaceID
 			return existingID
 		}
 	}
@@ -65,6 +71,7 @@ func (r *Registry) Register(payload protocol.RegisterPayload) string {
 
 	r.instances[id] = &InstanceState{
 		ID:           id,
+		WorkspaceID:  workspaceID,
 		Name:         payload.InstanceName,
 		Version:      payload.Version,
 		ConfigDigest: payload.ConfigDigest,
@@ -119,6 +126,20 @@ func (r *Registry) GetInstanceByName(name string) *InstanceState {
 	}
 	cp := *state
 	return &cp
+}
+
+// GetInstanceByWorkspaceID returns the runner state assigned to a workspace.
+func (r *Registry) GetInstanceByWorkspaceID(workspaceID string) *InstanceState {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, state := range r.instances {
+		if state.WorkspaceID == workspaceID {
+			cp := *state
+			return &cp
+		}
+	}
+	return nil
 }
 
 // UpdateConfig updates the cached config for an instance.

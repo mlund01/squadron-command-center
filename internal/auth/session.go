@@ -15,6 +15,7 @@ import (
 // minimal — anything here is visible to the browser (claims are base64 but
 // not encrypted).
 type Session struct {
+	Kind    string `json:"kind,omitempty"`
 	Sub     string `json:"sub"`
 	Email   string `json:"email"`
 	Name    string `json:"name"`

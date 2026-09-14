@@ -42,6 +42,16 @@ func writeUnauthorized(w http.ResponseWriter) {
 
 // RegisterRoutes hooks the four auth endpoints into mux.
 func (p *Provider) RegisterRoutes(mux *http.ServeMux) {
+	if p.cfg.Mode == ModeLocal {
+		mux.HandleFunc("GET /api/setup", p.handleSetup)
+		mux.HandleFunc("POST /api/setup", p.handleSetup)
+		mux.HandleFunc("GET /api/auth/invitation", p.handleInvitation)
+		mux.HandleFunc("POST /api/auth/invitation", p.handleInvitation)
+	}
+	if p.cfg.Mode == ModeLocal || p.cfg.Mode == ModeBasic {
+		mux.HandleFunc("GET /api/auth/login", p.handleBrowserLoginAPI)
+		mux.HandleFunc("POST /api/auth/login", p.handleBrowserLoginAPI)
+	}
 	mux.HandleFunc("/auth/login", p.handleLogin)
 	mux.HandleFunc("/auth/callback", p.handleCallback)
 	mux.HandleFunc("/auth/logout", p.handleLogout)
@@ -49,8 +59,29 @@ func (p *Provider) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if p.cfg.Mode == ModeLocal {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		claimed, err := p.localStore.IsClaimed(r.Context())
+		if err != nil {
+			http.Error(w, "login unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if !claimed {
+			http.Redirect(w, r, "/setup", http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(safeLoginNext(r.URL.Query().Get("next"))), http.StatusFound)
+		return
+	}
 	if p.cfg.Mode == ModeBasic {
-		p.handleBasicLogin(w, r)
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(safeLoginNext(r.URL.Query().Get("next"))), http.StatusFound)
 		return
 	}
 	next := r.URL.Query().Get("next")
@@ -95,7 +126,7 @@ func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
-	if p.cfg.Mode == ModeBasic {
+	if p.cfg.Mode == ModeBasic || p.cfg.Mode == ModeLocal {
 		http.NotFound(w, r)
 		return
 	}
@@ -166,6 +197,33 @@ func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this account is not permitted to access commander", http.StatusForbidden)
 		return
 	}
+	if p.oidcClaimStore != nil {
+		claimed, claimErr := p.oidcClaimStore.IsClaimed(r.Context())
+		if claimErr != nil {
+			http.Error(w, "setup status unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if !claimed {
+			if _, claimErr = p.oidcClaimStore.ClaimInitialOIDCAdmin(r.Context(), claims.Email, claims.Name, claims.Sub); claimErr != nil {
+				// A simultaneous first login can win the claim. Re-read once to
+				// distinguish that expected race from a storage failure.
+				claimed, _ = p.oidcClaimStore.IsClaimed(r.Context())
+				if !claimed {
+					http.Error(w, "failed to claim command center", http.StatusServiceUnavailable)
+					return
+				}
+			}
+		}
+		user, resolveErr := p.oidcClaimStore.ResolveOIDCUser(r.Context(), p.cfg.IssuerURL, claims.Sub, claims.Email, claims.Name)
+		if resolveErr != nil {
+			log.Printf("auth: rejected unprovisioned OIDC identity %q: %v", claims.Email, resolveErr)
+			http.Error(w, "this account has not been provisioned for Command Center", http.StatusForbidden)
+			return
+		}
+		claims.Sub = user.ID
+		claims.Email = user.Email
+		claims.Name = user.Name
+	}
 
 	sess := Session{
 		Sub:     claims.Sub,
@@ -193,7 +251,7 @@ func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 func (p *Provider) handleLogout(w http.ResponseWriter, r *http.Request) {
 	p.clearCookie(w, p.cfg.CookieName)
 
-	if p.cfg.Mode == ModeBasic {
+	if p.cfg.Mode == ModeBasic || p.cfg.Mode == ModeLocal {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}

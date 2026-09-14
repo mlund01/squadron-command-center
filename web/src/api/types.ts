@@ -1,41 +1,65 @@
-// TypeScript mirrors of protocol types
-
-export interface InstanceState {
+export interface Workspace {
   id: string;
   name: string;
-  version: string;
-  configDigest: string;
+  repositoryUrl?: string;
+  defaultBranch: string;
+  createdBy: string;
+  createdAt: string;
+  worker?: WorkspaceWorker;
+}
+
+export interface WorkspaceWorker {
+  id: string;
+  workspaceId: string;
+  status: 'pending' | 'connected' | 'disconnected';
+  createdAt: string;
+  enrolledAt?: string;
+  lastSeenAt?: string;
+}
+
+export type CommandCenterRole = 'admin' | 'member';
+export type UserStatus = 'invited' | 'active' | 'suspended' | 'deactivated';
+export type WorkspaceRole = 'reader' | 'developer' | 'manager' | 'admin';
+export interface AdminUser { id: string; email: string; name: string; role: CommandCenterRole; status: UserStatus; createdAt: string; updatedAt: string }
+export interface ServicePrincipal { id: string; name: string; description: string; status: 'active' | 'disabled'; createdBy: string; createdAt: string; updatedAt: string; lastUsedAt?: string }
+export interface AuditEvent { id: string; actorId?: string; actorEmail?: string; eventType: string; data: Record<string, unknown>; createdAt: string }
+export interface WorkspaceUserGrant { workspaceId: string; userId: string; role: WorkspaceRole; missions: string[] }
+export interface WorkspaceServicePrincipalGrant { workspaceId: string; servicePrincipalId: string; missions: string[]; userIds: string[] }
+export interface AdminAccess { users: WorkspaceUserGrant[]; servicePrincipals: WorkspaceServicePrincipalGrant[] }
+
+export interface WorkspaceConfigSnapshot {
+  instanceId: string;
+  connected: boolean;
   configReady: boolean;
   configError?: string;
   config: InstanceConfig;
-  connected: boolean;
-  connectedAt?: string;
-  disconnectedAt?: string;
 }
 
 export interface InstanceConfig {
-  models: ModelInfo[];
   agents: AgentInfo[];
   missions: MissionInfo[];
-  plugins: PluginInfo[];
-  variables: VariableInfo[];
+  models?: ModelInfo[];
   skills?: SkillInfo[];
+  plugins?: PluginInfo[];
+  variables?: VariableInfo[];
   sharedFolders?: SharedFolderInfo[];
 }
 
-export interface SkillInfo {
+export interface ModelInfo { name: string; provider: string; model: string }
+export interface SkillInfo { name: string; description?: string; instructions?: string; tools?: string[]; agent?: string }
+export interface ToolInfo { name: string; description?: string; parameters?: { type: string; properties?: Record<string, unknown>; required?: string[] } }
+export interface PluginInfo { name: string; path: string; version?: string; builtin?: boolean; kind?: 'builtin' | 'plugin' | 'mcp' | string; tools?: ToolInfo[] }
+export interface LocalPluginFile { path: string; size: number }
+export interface LocalPluginFileContent { pluginName: string; path: string; content: string; size: number }
+export interface VariableInfo { name: string; secret: boolean }
+export interface WorkspaceVariable {
   name: string;
-  description: string;
-  instructions: string;
-  tools?: string[];
-  agent?: string;
+  secret: boolean;
+  hasValue: boolean;
+  value: string;
+  updatedAt?: string;
 }
-
-export interface ModelInfo {
-  name: string;
-  provider: string;
-  model: string;
-}
+export interface SharedFolderInfo { name: string; path: string; label: string; description?: string; editable: boolean; isShared: boolean; missions?: string[] }
 
 export interface AgentInfo {
   name: string;
@@ -45,11 +69,46 @@ export interface AgentInfo {
   tools?: string[];
   skills?: string[];
   mission?: string;
+  reasoning?: string;
+  pruning?: { PruneOn: number; PruneTo: number } | null;
+  compaction?: { TokenLimit: number; TurnRetention: number } | null;
+  toolResponse?: { MaxTokens: number } | null;
+  localSkills?: Array<{ name: string; description: string }>;
+  source?: ConfigSource | null;
+  lineage?: { missions: Array<{ name: string }> };
+}
+
+export interface ConfigSource {
+  path: string;
+  startLine: number;
+  endLine: number;
+  content: string;
+  fileRevision: string;
+}
+
+export type SessionMode = 'interactive' | 'task';
+export interface AgentConversationContext {
+  mission?: string;
+  purpose: 'authoring' | 'session';
+  mode: SessionMode;
+}
+export interface AgentConversationState {
+  sessionId: string;
+  running: boolean;
+  partialAnswer?: string;
+  error?: string;
+  messages?: Array<{ id: number; role: string; content: string; createdAt: string }>;
+}
+export interface AgentConversationSummary {
+  sessionId: string;
+  startedAt: string;
+  mode: SessionMode;
 }
 
 export interface MissionInfo {
   name: string;
   description?: string;
+  source?: ConfigSource | null;
   commander?: string;
   agents?: string[];
   inputs?: MissionInputInfo[];
@@ -58,35 +117,6 @@ export interface MissionInfo {
   schedules?: ScheduleInfo[];
   trigger?: TriggerInfo;
   maxParallel?: number;
-}
-
-export interface ScheduleInfo {
-  expression: string;
-  at?: string[];
-  every?: string;
-  weekdays?: string[];
-  timezone?: string;
-  inputs?: Record<string, string>;
-}
-
-export interface TriggerInfo {
-  type: string;
-  webhookPath?: string;
-  hasSecret?: boolean;
-  secret?: string;
-}
-
-export interface DatasetInfo {
-  name: string;
-  description?: string;
-  bindTo?: string;
-  schema?: DatasetField[];
-}
-
-export interface DatasetField {
-  name: string;
-  type: string;
-  required?: boolean;
 }
 
 export interface MissionInputInfo {
@@ -99,100 +129,46 @@ export interface MissionInputInfo {
   properties?: MissionInputInfo[];
 }
 
-export interface TaskIteratorInfo {
-  dataset: string;
-  parallel: boolean;
-  maxRetries?: number;
-  concurrencyLimit?: number;
-}
-
-export interface TaskRouteInfo {
-  target: string;
-  condition: string;
-  isMission?: boolean;
-}
-
-export interface TaskRouterInfo {
-  routes: TaskRouteInfo[];
-}
+export interface DatasetInfo { name: string; description?: string; bindTo?: string; schema?: Array<{ name: string; type: string; required?: boolean }> }
+export interface TriggerInfo { type: string; webhookPath?: string; hasSecret?: boolean }
 
 export interface TaskInfo {
   name: string;
   description?: string;
   objective?: string;
-  sendTo?: string[];
   agent?: string;
   commander?: string;
   dependsOn?: string[];
-  iterator?: TaskIteratorInfo;
-  router?: TaskRouterInfo;
+  sendTo?: string[];
+  iterator?: {
+    dataset: string;
+    parallel: boolean;
+    maxRetries?: number;
+    concurrencyLimit?: number;
+  };
+  router?: { routes: Array<{ target: string; condition?: string; isMission?: boolean }> };
 }
 
-export interface PluginInfo {
-  name: string;
-  path: string;
-  version?: string;
-  builtin?: boolean;
-  kind?: 'builtin' | 'plugin' | 'mcp';
-  tools?: ToolInfo[];
+export interface ScheduleInfo {
+  expression: string;
+  at?: string[];
+  every?: string;
+  weekdays?: string[];
+  timezone?: string;
 }
 
-export interface ToolInfo {
-  name: string;
-  description?: string;
-  parameters?: ToolSchema;
-}
-
-export interface ToolSchema {
-  type: string;
-  properties?: Record<string, ToolProperty>;
-  required?: string[];
-}
-
-export interface ToolProperty {
-  type: string;
-  description?: string;
-  items?: ToolProperty;
-  properties?: Record<string, ToolProperty>;
-  required?: string[];
-}
-
-export interface VariableInfo {
-  name: string;
-  secret: boolean;
-}
-
-export interface VariableDetail {
-  name: string;
-  secret: boolean;
-  value: string;
-  hasValue: boolean;
-  default?: string;
-  source: 'override' | 'default' | 'unset';
-}
-
-export interface GetVariablesResponse {
-  variables: VariableDetail[];
-}
-
-export interface MissionRecordInfo {
+export interface MissionRun {
   id: string;
   name: string;
-  status: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'stopped' | string;
   inputsJson?: string;
   configJson?: string;
   startedAt: string;
   finishedAt?: string;
 }
 
-export interface MissionEvent {
-  missionId: string;
-  eventType: string;
-  data: Record<string, unknown>;
-}
-
 export interface MissionHistoryResponse {
-  missions: MissionRecordInfo[];
+  missions: MissionRun[];
   total: number;
 }
 
@@ -200,48 +176,53 @@ export interface RunMissionResponse {
   missionId: string;
   status: string;
 }
-
-export interface ChatEvent {
-  sessionId: string;
-  eventType: string;
-  data: Record<string, unknown>;
+export interface MissionRunIdentity { kind: 'user' | 'service_principal'; id: string; name: string }
+export interface MissionSchedule {
+  id: string;
+  workspaceId: string;
+  missionName: string;
+  name: string;
+  cronExpression: string;
+  timezone: string;
+  inputs: Record<string, string>;
+  runAsUserId?: string;
+  runAsServicePrincipalId?: string;
+  status: 'active' | 'paused';
+  nextRunAt: string;
+  lastRunAt?: string;
+  lastRunStatus?: 'started' | 'failed' | 'skipped';
+  lastError?: string;
 }
 
-export interface ChatMessageResponse {
-  sessionId: string;
-  status: string;
+export interface HumanInputRequest {
+  id: string;
+  missionId?: string;
+  missionName?: string;
+  taskId?: string;
+  taskName?: string;
+  toolCallId: string;
+  question: string;
+  shortSummary?: string;
+  additionalContext?: string;
+  choices?: string[];
+  multiSelect?: boolean;
+  state: 'open' | 'resolved';
+  requestedAt: string;
+  resolvedAt?: string;
+  response?: string;
+  responderUserId?: string;
 }
 
-export interface ChatSessionInfo {
-  sessionId: string;
-  agentName: string;
-  model: string;
-  status: string;
-  startedAt: string;
-}
-
-export interface ChatMessageInfo {
-  id: number;
-  role: string;
-  content: string;
-  createdAt: string;
-}
-
-export interface ChatHistoryResponse {
-  chats: ChatSessionInfo[];
+export interface HumanInputsResponse {
+  humanInputs: HumanInputRequest[];
   total: number;
 }
 
-export interface ChatMessagesResponse {
-  messages: ChatMessageInfo[];
+export interface ResolveHumanInputResponse {
+  humanInput: HumanInputRequest;
 }
 
-export interface ReloadConfigResponse {
-  success: boolean;
-  error?: string;
-}
-
-export interface MissionTaskRecord {
+export interface MissionTaskRun {
   id: string;
   missionId: string;
   taskName: string;
@@ -254,6 +235,16 @@ export interface MissionTaskRecord {
   error?: string;
 }
 
+export interface MissionRunDetail { mission: MissionRun; tasks: MissionTaskRun[] }
+export interface MissionTaskDetail {
+  task: MissionTaskRun;
+  outputs: Array<{ id: string; taskId: string; datasetName?: string; datasetIndex?: number; itemId?: string; outputJson: string; createdAt: string }>;
+  sessions: Array<{ id: string; taskId: string; role: string; agentName?: string; model?: string; status: string; startedAt: string; finishedAt?: string; iterationIndex?: number }>;
+  toolResults: Array<{ id: string; sessionId: string; toolCallId?: string; toolName: string; inputParams?: string; output?: string; media?: Array<{ kind: string; mediaType: string; data: string; filename?: string }>; startedAt: string; finishedAt: string }>;
+  subtasks: Array<{ index: number; title: string; status: string; sessionId: string; iterationIndex?: number; completedAt?: string }>;
+  inputs: Array<{ iterationIndex?: number; objective: string }>;
+  datasetItems?: Array<{ index: number; itemJson: string }>;
+}
 export interface MissionEventRecord {
   id: string;
   missionId: string;
@@ -264,209 +255,9 @@ export interface MissionEventRecord {
   dataJson: string;
   createdAt: string;
 }
-
-export interface GetMissionDetailResponse {
-  mission: MissionRecordInfo;
-  tasks: MissionTaskRecord[];
-}
-
-export interface GetMissionEventsResponse {
-  events: MissionEventRecord[];
-}
-
-export interface SessionInfoDTO {
-  id: string;
-  taskId: string;
-  role: string;
-  agentName?: string;
-  model?: string;
-  status: string;
-  startedAt: string;
-  finishedAt?: string;
-  iterationIndex?: number;
-}
-
-export interface TaskOutputInfo {
-  id: string;
-  taskId: string;
-  datasetName?: string;
-  datasetIndex?: number;
-  itemId?: string;
-  outputJson: string;
-  createdAt: string;
-}
-
-export interface ToolResultDTO {
-  id: string;
-  sessionId: string;
-  toolCallId?: string;
-  toolName: string;
-  inputParams?: string;
-  output?: string;
-  startedAt: string;
-  finishedAt: string;
-}
-
-export interface SubtaskInfo {
-  index: number;
-  title: string;
-  status: string; // pending, in_progress, completed
-  sessionId: string;
-  iterationIndex?: number;
-  completedAt?: string;
-}
-
-export interface TaskInputInfo {
-  iterationIndex?: number;
-  objective: string;
-}
-
-export interface DatasetItemInfo {
-  index: number;
-  itemJson: string;
-}
-
-export interface TaskDetailResponse {
-  task: MissionTaskRecord;
-  outputs: TaskOutputInfo[];
-  sessions: SessionInfoDTO[];
-  toolResults: ToolResultDTO[];
-  subtasks: SubtaskInfo[];
-  inputs: TaskInputInfo[];
-  datasetItems?: DatasetItemInfo[];
-}
-
-export interface DatasetRecordInfo {
-  id: string;
-  name: string;
-  description?: string;
-  itemCount: number;
-}
-
-export interface GetDatasetsResponse {
-  datasets: DatasetRecordInfo[];
-}
-
-export interface GetDatasetItemsResponse {
-  items: string[];
-  total: number;
-}
-
-export interface ConfigFileInfo {
-  name: string;
-  size: number;
-}
-
-export interface ListConfigFilesResponse {
-  files: ConfigFileInfo[];
-  path: string;
-  allowConfigEdit: boolean;
-}
-
-export interface GetConfigFileResponse {
-  name: string;
-  content: string;
-}
-
-export interface WriteConfigFileResponse {
-  success: string;
-  error?: string;
-}
-
-export interface ValidateConfigResponse {
-  valid: boolean;
-  errors?: string[];
-}
-
-// Shared folder types
-
-export interface SharedFolderInfo {
-  name: string;
-  path: string;
-  label: string;
-  description?: string;
-  editable: boolean;
-  isShared: boolean;
-  missions?: string[];
-}
-
-export interface BrowseEntryInfo {
-  name: string;
-  isDir: boolean;
-  size: number;
-  modTime: string;
-}
-
-export interface BrowseDirectoryResponse {
-  browserName: string;
-  relPath: string;
-  entries: BrowseEntryInfo[];
-}
-
-export interface ReadBrowseFileResponse {
-  browserName: string;
-  relPath: string;
-  content: string;
-  size: number;
-  isBinary: boolean;
-}
-
-export interface WriteBrowseFileResponse {
-  success: boolean;
-  error?: string;
-}
-
-export interface ListSharedFoldersResponse {
-  folders: SharedFolderInfo[];
-}
-
-// Human-in-the-loop (ask_human) types
-
-export interface HumanInputRequestDTO {
-  id: string;
-  missionId?: string;
-  missionName?: string;
-  taskId?: string;
-  taskName?: string;
-  toolCallId: string;
-  question: string;
-  shortSummary?: string;
-  additionalContext?: string;
-  choices?: string[];
-  // multiSelect=true means the human picks 1+ choices instead of one.
-  // The submitted response is then a JSON-encoded array of strings
-  // (e.g. `["A","C"]`); the agent / API contract is single string in
-  // both cases.
-  multiSelect?: boolean;
-  state: 'open' | 'resolved';
-  requestedAt: string;
-  resolvedAt?: string;
-  response?: string;
-  responderUserId?: string;
-}
-
-export interface ListHumanInputsResponse {
-  humanInputs: HumanInputRequestDTO[];
-  total: number;
-}
-
-export interface ResolveHumanInputResponse {
-  humanInput: HumanInputRequestDTO;
-}
-
-// NotificationItem is a mission-lifecycle notification (mission_completed /
-// mission_failed / mission_stopped) delivered to the command center.
-export interface NotificationItem {
-  id: string;
-  missionId: string;
-  missionName: string;
-  event: 'mission_completed' | 'mission_failed' | 'mission_stopped';
-  title: string;
-  message?: string;
-  occurredAt: string;
-  error?: string;
-}
-
-export interface ListNotificationsResponse {
-  notifications: NotificationItem[];
+export interface MissionEventsResponse { events: MissionEventRecord[] }
+export interface CostSummaryResponse {
+  totals: { totalCost: number; inputCost: number; outputCost: number; cacheReadCost: number; cacheWriteCost: number; totalTurns: number; totalInputTokens: number; totalOutputTokens: number };
+  byGroup: Array<{ groupKey: string; turns: number; totalCost: number; inputCost: number; outputCost: number; cacheReadCost: number; cacheWriteCost: number }>;
+  recentMissions: Array<{ missionId: string; missionName: string; status: string; turns: number; totalCost: number; startedAt: string }>;
 }

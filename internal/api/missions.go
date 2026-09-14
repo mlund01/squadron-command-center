@@ -10,12 +10,19 @@ import (
 
 	"github.com/mlund01/squadron-wire/protocol"
 
+	"commander/internal/auth"
+	"commander/internal/controlplane"
 	"commander/internal/hub"
 )
 
 const proxyTimeout = 30 * time.Second
 
-func handleRunMission(h *hub.Hub) http.HandlerFunc {
+type missionRunProxy interface {
+	GetRegistry() *hub.Registry
+	SendRequest(string, *protocol.Envelope, time.Duration) (*protocol.Envelope, error)
+}
+
+func handleRunMission(h missionRunProxy, stores ...AuthorizationStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		instanceID := r.PathValue("id")
 		missionName := r.PathValue("name")
@@ -29,15 +36,56 @@ func handleRunMission(h *hub.Hub) http.HandlerFunc {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "instance disconnected"})
 			return
 		}
-
 		var body struct {
-			Inputs map[string]string `json:"inputs"`
+			Inputs             map[string]string `json:"inputs"`
+			ServicePrincipalID string            `json:"servicePrincipalId"`
 		}
 		if r.Body != nil {
-			json.NewDecoder(r.Body).Decode(&body)
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+				return
+			}
 		}
 		if body.Inputs == nil {
 			body.Inputs = make(map[string]string)
+		}
+
+		var actor controlplane.User
+		var actorServicePrincipal string
+		var runAsServicePrincipal bool
+		if len(stores) > 0 && stores[0] != nil && instance.WorkspaceID != "" {
+			session := auth.SessionFromContext(r.Context())
+			var allowed bool
+			var err error
+			if session != nil && session.Kind == "service_principal" {
+				if body.ServicePrincipalID != "" {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "service principals cannot select another run identity"})
+					return
+				}
+				actorServicePrincipal = session.Sub
+				allowed, err = stores[0].CanRunMissionServicePrincipal(r.Context(), session.Sub, instance.WorkspaceID, missionName)
+			} else {
+				var ok bool
+				actor, ok = currentControlPlaneUser(w, r, stores[0])
+				if !ok {
+					return
+				}
+				if body.ServicePrincipalID != "" {
+					actorServicePrincipal = body.ServicePrincipalID
+					runAsServicePrincipal = true
+					allowed, err = stores[0].CanUserRunAsServicePrincipal(r.Context(), actor, body.ServicePrincipalID, instance.WorkspaceID, missionName)
+				} else {
+					allowed, err = stores[0].CanRunMission(r.Context(), actor, instance.WorkspaceID, missionName)
+				}
+			}
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authorization unavailable"})
+				return
+			}
+			if !allowed {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "Run permission is required for this mission"})
+				return
+			}
 		}
 
 		req, err := protocol.NewRequest(protocol.TypeRunMission, &protocol.RunMissionPayload{
@@ -65,6 +113,21 @@ func handleRunMission(h *hub.Hub) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": ack.Reason})
 			return
 		}
+		if len(stores) > 0 && stores[0] != nil && instance.WorkspaceID != "" && actor.ID != "" && !runAsServicePrincipal {
+			if err := stores[0].RecordMissionRunActor(r.Context(), actor, instance.WorkspaceID, ack.MissionID, missionName); err != nil {
+				log.Printf("record mission run actor: %v", err)
+			}
+		}
+		if len(stores) > 0 && stores[0] != nil && instance.WorkspaceID != "" && actor.ID != "" && runAsServicePrincipal {
+			if err := stores[0].RecordMissionRunAsServicePrincipal(r.Context(), actor, actorServicePrincipal, instance.WorkspaceID, ack.MissionID, missionName); err != nil {
+				log.Printf("record run-as service principal mission actor: %v", err)
+			}
+		}
+		if len(stores) > 0 && stores[0] != nil && instance.WorkspaceID != "" && actorServicePrincipal != "" && actor.ID == "" {
+			if err := stores[0].RecordMissionRunServicePrincipal(r.Context(), actorServicePrincipal, instance.WorkspaceID, ack.MissionID, missionName); err != nil {
+				log.Printf("record service principal mission run actor: %v", err)
+			}
+		}
 
 		writeJSON(w, http.StatusAccepted, map[string]string{
 			"missionId": ack.MissionID,
@@ -73,7 +136,36 @@ func handleRunMission(h *hub.Hub) http.HandlerFunc {
 	}
 }
 
-func handleStopMission(h *hub.Hub) http.HandlerFunc {
+func handleMissionRunIdentities(h *hub.Hub, store AuthorizationStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		instance := h.GetRegistry().GetInstance(r.PathValue("id"))
+		if instance == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "instance not found"})
+			return
+		}
+		if store == nil || instance.WorkspaceID == "" {
+			writeJSON(w, http.StatusOK, map[string]any{"identities": []controlplane.MissionRunIdentity{}})
+			return
+		}
+		session := auth.SessionFromContext(r.Context())
+		if session == nil || session.Kind == "service_principal" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "user access is required"})
+			return
+		}
+		actor, ok := currentControlPlaneUser(w, r, store)
+		if !ok {
+			return
+		}
+		identities, err := store.ListMissionRunIdentities(r.Context(), actor, instance.WorkspaceID, r.PathValue("name"))
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authorization unavailable"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"identities": identities})
+	}
+}
+
+func handleStopMission(h *hub.Hub, stores ...AuthorizationStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		instanceID := r.PathValue("id")
 		missionID := r.PathValue("mid")
@@ -86,6 +178,28 @@ func handleStopMission(h *hub.Hub) http.HandlerFunc {
 		if !instance.Connected {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "instance disconnected"})
 			return
+		}
+		if len(stores) > 0 && stores[0] != nil && instance.WorkspaceID != "" {
+			session := auth.SessionFromContext(r.Context())
+			var allowed bool
+			var err error
+			if session != nil && session.Kind == "service_principal" {
+				allowed, err = stores[0].CanControlMissionRunServicePrincipal(r.Context(), session.Sub, instance.WorkspaceID, missionID)
+			} else {
+				actor, ok := currentControlPlaneUser(w, r, stores[0])
+				if !ok {
+					return
+				}
+				allowed, err = stores[0].CanControlMissionRun(r.Context(), actor, instance.WorkspaceID, missionID)
+			}
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authorization unavailable"})
+				return
+			}
+			if !allowed {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "You may only control runs you started"})
+				return
+			}
 		}
 
 		req, err := protocol.NewRequest(protocol.TypeStopMission, &protocol.StopMissionPayload{
@@ -117,7 +231,7 @@ func handleStopMission(h *hub.Hub) http.HandlerFunc {
 	}
 }
 
-func handleResumeMission(h *hub.Hub) http.HandlerFunc {
+func handleResumeMission(h *hub.Hub, stores ...AuthorizationStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		instanceID := r.PathValue("id")
 		missionID := r.PathValue("mid")
@@ -130,6 +244,28 @@ func handleResumeMission(h *hub.Hub) http.HandlerFunc {
 		if !instance.Connected {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "instance disconnected"})
 			return
+		}
+		if len(stores) > 0 && stores[0] != nil && instance.WorkspaceID != "" {
+			session := auth.SessionFromContext(r.Context())
+			var allowed bool
+			var err error
+			if session != nil && session.Kind == "service_principal" {
+				allowed, err = stores[0].CanControlMissionRunServicePrincipal(r.Context(), session.Sub, instance.WorkspaceID, missionID)
+			} else {
+				actor, ok := currentControlPlaneUser(w, r, stores[0])
+				if !ok {
+					return
+				}
+				allowed, err = stores[0].CanControlMissionRun(r.Context(), actor, instance.WorkspaceID, missionID)
+			}
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authorization unavailable"})
+				return
+			}
+			if !allowed {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "You may only control runs you started"})
+				return
+			}
 		}
 
 		var body struct {

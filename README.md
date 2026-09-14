@@ -1,6 +1,78 @@
-# Commander
+# Squadron Command Center
 
 Web-based command center for [Squadron](https://github.com/mlund01/squadron) instances. Provides a dashboard for managing missions, agents, skills, tools, config, and costs across one or more connected Squadron instances.
+
+## Deployment model
+
+Command Center is a deployable server, not a second end-user CLI. Run the
+official container image on your preferred platform and configure it through
+environment variables and that platform's secret manager. Squadron remains the
+worker/runtime CLI that connects to the server.
+
+Command Center validates its deployment contract at boot:
+
+| Variable | Required in control-plane mode | Purpose |
+|---|---:|---|
+| `COMMAND_CENTER_MODE=control-plane` | Yes | Runs Command Center with its control-plane deployment contract. |
+| `COMMAND_CENTER_PUBLIC_URL` | Yes | Canonical public HTTPS URL, such as `https://command.example.com`. |
+| `COMMAND_CENTER_DATABASE_URL` | Yes | PostgreSQL connection URL for control-plane state. |
+| `COMMAND_CENTER_MASTER_KEY` | Yes | Hex or base64 encoded key of at least 32 bytes; supplied by your secret manager. |
+| OIDC variables | No | Uses your external identity provider instead of local passwords. |
+| `COMMAND_CENTER_SETUP_TOKEN` | No | Requires this one-time token when claiming the instance through local setup. |
+
+`/healthz` and `/readyz` are unauthenticated probe endpoints. PostgreSQL is
+the persistent store for Command Center workspace state; startup runs the
+database migrations and readiness checks the live connection.
+
+### First-run setup
+
+With no OIDC provider configured, a fresh Command Center opens a browser setup
+screen at `/setup`. The first person to complete it chooses the local
+administrator's email and password. Until that atomic claim completes, the
+server cannot manage workers, secrets, Git integrations, workspaces, or
+missions.
+
+Set `COMMAND_CENTER_SETUP_TOKEN` when you want to require a one-time claim
+secret. If it is omitted, the first setup user claims the otherwise inert
+instance. When OIDC is configured, the first successful OIDC sign-in claims
+the instance instead; local password management is not used.
+
+### Workspaces
+
+After setup, Command Center's home screen is the workspace list. An
+administrator can create a workspace with an optional repository URL and a
+default `main` branch. Every workspace will have exactly one Squadron worker,
+and each worker belongs to exactly one workspace. Worker enrollment will attach
+that worker through an explicit credentialed handshake.
+
+### Agent conversations
+
+Select an agent to open its authoring conversation, with the runner's current
+configuration alongside it. The authoring assistant drafts proposed changes;
+it does not execute the selected agent or save changes to live configuration.
+Applying proposals through a branch/review workflow is not implemented yet.
+
+**Start session** opens a separate page for interacting with the configured
+agent. Choose **Interactive** for back-and-forth collaboration (including
+one-shot requests), or **Task** for autonomous, mission-style execution toward
+a clear result. Operational sessions use the agent's configured tools.
+
+Conversations require a connected runner. They are persisted on the runner,
+scoped to the signed-in user, agent, mission scope, purpose, and mode. The
+conversation URL restores its transcript after a refresh or runner restart.
+
+### Self-hosted Docker
+
+Copy `.env.example` to `.env`, supply values through your platform's secret
+manager, then start the server and PostgreSQL:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+For production, use the same image with your managed PostgreSQL service and
+cloud-provider configuration rather than keeping a local `.env` file.
 
 ## Deploy to Fly.io
 
@@ -41,9 +113,16 @@ Open `http://localhost:8080`. Commander will wait for a Squadron instance to con
 | `-disable-config-edit` | `false` | Disable config file editing from the UI |
 | `-keep-alive` | `0` | Self-terminate if no keep-alive ping within N seconds (0 = disabled) |
 
-## Authentication (optional)
+## Authentication
 
-Commander supports two auth modes; both protect all browser-facing routes (`/api/*` and the UI) behind a session cookie. The `/ws` WebSocket endpoint used by Squadron instances is **not** protected — it's machine-to-machine.
+Control-plane deployments support two first-class human authentication models. Both protect browser-facing routes (`/api/*` and the UI) with a signed session cookie:
+
+- **Built-in identity** is the default when `COMMAND_CENTER_MODE=control-plane` and no OIDC issuer is configured. First-run setup creates the initial administrator in PostgreSQL; subsequent users are invited by email address and create their password from a one-time, expiring invitation link.
+- **External OIDC** works with Auth0, Okta, Microsoft Entra ID, Keycloak, and other standards-compliant providers. Command Center users are still provisioned centrally; the first successful login binds the provider's issuer and subject to the invited account by verified email.
+
+Service principals use separately generated bearer credentials. Credentials are stored only as hashes, shown once, independently rotatable, revocable by disabling the principal, and constrained by workspace plus mission-level grants. The Squadron worker `/ws` credential remains a separate machine identity.
+
+Legacy standalone deployments also retain the optional single-account basic mode described below.
 
 | Mode | When to use | How to enable |
 |---|---|---|

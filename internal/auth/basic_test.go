@@ -28,14 +28,13 @@ func testBasicProvider(username, password string) *Provider {
 	}
 }
 
-// loginAttempt mimics what a browser would do: GET /auth/login to pick up a
-// CSRF token + cookie, then POST the form back with both. remoteAddr lets
-// tests control the limiter key.
+// loginAttempt exercises the legacy form handler directly. The browser-facing
+// route now redirects to React and authenticates through the JSON API.
 func loginAttempt(p *Provider, username, password, remoteAddr string) *httptest.ResponseRecorder {
 	getReq := httptest.NewRequest("GET", "/auth/login", nil)
 	getReq.RemoteAddr = remoteAddr
 	getRec := httptest.NewRecorder()
-	p.handleLogin(getRec, getReq)
+	p.handleBasicLogin(getRec, getReq)
 
 	var csrfCookie *http.Cookie
 	for _, c := range getRec.Result().Cookies() {
@@ -55,7 +54,7 @@ func loginAttempt(p *Provider, username, password, remoteAddr string) *httptest.
 	postReq.AddCookie(csrfCookie)
 	postReq.RemoteAddr = remoteAddr
 	postRec := httptest.NewRecorder()
-	p.handleLogin(postRec, postReq)
+	p.handleBasicLogin(postRec, postReq)
 	return postRec
 }
 
@@ -113,37 +112,26 @@ var _ = Describe("BasicAuth config", func() {
 var _ = Describe("BasicAuth login", func() {
 	const user, pass = "admin", "hunter2"
 
-	It("renders the login form with a CSRF token on GET", func() {
+	It("redirects browser login to the React application", func() {
 		p := testBasicProvider(user, pass)
 		req := httptest.NewRequest("GET", "/auth/login", nil)
 		rec := httptest.NewRecorder()
 		p.handleLogin(rec, req)
 
-		Expect(rec.Code).To(Equal(http.StatusOK))
-		Expect(rec.Body.String()).To(ContainSubstring("Sign in to Commander"))
-		Expect(rec.Body.String()).To(ContainSubstring(`name="csrf"`))
-
-		var csrf *http.Cookie
-		for _, c := range rec.Result().Cookies() {
-			if c.Name == csrfCookieName {
-				csrf = c
-			}
-		}
-		Expect(csrf).NotTo(BeNil())
-		Expect(csrf.Value).NotTo(BeEmpty())
+		Expect(rec.Code).To(Equal(http.StatusFound))
+		Expect(rec.Header().Get("Location")).To(Equal("/login?next=%2F"))
 	})
 
-	It("sets security headers on the login form", func() {
+	It("initializes the browser login API with a CSRF token", func() {
 		p := testBasicProvider(user, pass)
-		req := httptest.NewRequest("GET", "/auth/login", nil)
+		req := httptest.NewRequest("GET", "/api/auth/login", nil)
 		rec := httptest.NewRecorder()
-		p.handleLogin(rec, req)
+		p.handleBrowserLoginAPI(rec, req)
 
-		Expect(rec.Header().Get("X-Frame-Options")).To(Equal("DENY"))
+		Expect(rec.Code).To(Equal(http.StatusOK))
 		Expect(rec.Header().Get("Cache-Control")).To(ContainSubstring("no-store"))
-		Expect(rec.Header().Get("Content-Security-Policy")).To(ContainSubstring("frame-ancestors"))
-		Expect(rec.Header().Get("Referrer-Policy")).To(Equal("no-referrer"))
-		Expect(rec.Header().Get("X-Content-Type-Options")).To(Equal("nosniff"))
+		Expect(rec.Body.String()).To(ContainSubstring("csrfToken"))
+		Expect(rec.Body.String()).To(ContainSubstring("Username"))
 	})
 
 	It("rejects POSTs without a valid CSRF token", func() {
@@ -152,7 +140,7 @@ var _ = Describe("BasicAuth login", func() {
 		req := httptest.NewRequest("POST", "/auth/login", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
-		p.handleLogin(rec, req)
+		p.handleBasicLogin(rec, req)
 
 		Expect(rec.Code).To(Equal(http.StatusBadRequest))
 	})
@@ -164,7 +152,7 @@ var _ = Describe("BasicAuth login", func() {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "different"})
 		rec := httptest.NewRecorder()
-		p.handleLogin(rec, req)
+		p.handleBasicLogin(rec, req)
 
 		Expect(rec.Code).To(Equal(http.StatusBadRequest))
 	})

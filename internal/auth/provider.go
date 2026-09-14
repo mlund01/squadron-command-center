@@ -12,11 +12,54 @@ import (
 // discovered OIDC provider and handles the auth-code flow; in basic mode it
 // holds the username/password hash and an in-memory brute-force limiter.
 type Provider struct {
-	cfg       *Config
-	oauth     *oauth2.Config
-	verifier  *oidc.IDTokenVerifier
-	logoutURL string // end_session_endpoint from discovery; may be empty
-	limiter   *bruteForceLimiter
+	cfg               *Config
+	oauth             *oauth2.Config
+	verifier          *oidc.IDTokenVerifier
+	logoutURL         string // end_session_endpoint from discovery; may be empty
+	limiter           *bruteForceLimiter
+	localStore        LocalStore
+	oidcClaimStore    OIDCClaimStore
+	setupToken        string
+	servicePrincipals ServicePrincipalStore
+}
+
+// LocalUser is the minimum user data required for password authentication.
+type LocalUser struct {
+	ID, Email, Name string
+	PasswordHash    []byte
+	Role            string
+}
+
+// LocalStore keeps local credentials in the Command Center database. The
+// interface keeps auth independent from the persistence implementation.
+type LocalStore interface {
+	IsClaimed(context.Context) (bool, error)
+	ClaimInitialAdmin(context.Context, string, string, []byte) (LocalUser, error)
+	AuthenticateLocal(context.Context, string) (LocalUser, error)
+}
+
+type OIDCClaimStore interface {
+	IsClaimed(context.Context) (bool, error)
+	ClaimInitialOIDCAdmin(context.Context, string, string, string) (LocalUser, error)
+	ResolveOIDCUser(context.Context, string, string, string, string) (LocalUser, error)
+}
+
+func (p *Provider) SetOIDCClaimStore(store OIDCClaimStore) { p.oidcClaimStore = store }
+
+type ServicePrincipal struct{ ID, Name string }
+type ServicePrincipalStore interface {
+	AuthenticateServicePrincipal(context.Context, string) (ServicePrincipal, error)
+}
+
+func (p *Provider) SetServicePrincipalStore(store ServicePrincipalStore) { p.servicePrincipals = store }
+
+// NewLocalProvider creates the browser-first local authentication mode used
+// when Command Center has no external identity provider configured.
+func NewLocalProvider(store LocalStore, cookieSecret []byte, cookieSecure bool, setupToken string) *Provider {
+	return &Provider{
+		cfg:     &Config{Mode: ModeLocal, CookieSecret: cookieSecret, CookieName: defaultCookieName, CookieSecure: cookieSecure, SessionTTL: defaultSessionTTL},
+		limiter: newBruteForceLimiter(), localStore: store, setupToken: setupToken,
+	}
 }
 
 // NewProvider builds a Provider for the configured mode. For OIDC it performs

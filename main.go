@@ -2,15 +2,19 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"flag"
 	"fmt"
 	"io/fs"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"commander/internal/auth"
+	"commander/internal/controlplane"
+	"commander/internal/deployment"
 	"commander/internal/keepalive"
 	"commander/internal/server"
 )
@@ -21,6 +25,11 @@ func main() {
 	disableConfigEdit := flag.Bool("disable-config-edit", false, "Disable editing config files from the web UI")
 	keepAliveSecs := flag.Int("keep-alive", 0, "Self-terminate if no keep-alive ping within N seconds (0=disabled)")
 	flag.Parse()
+
+	deploymentCfg, err := deployment.LoadFromEnv()
+	if err != nil {
+		log.Fatalf("Deployment config: %v", err)
+	}
 
 	// Resolve web assets: use --web-dir if provided, otherwise embedded assets
 	var webFS fs.FS
@@ -45,7 +54,17 @@ func main() {
 		ka = keepalive.New(*keepAliveSecs)
 	}
 
-	// Load optional auth config from env. Nil means auth is disabled.
+	var controlStore *controlplane.Store
+	if deploymentCfg.Mode == deployment.ModeControlPlane {
+		controlStore, err = controlplane.Open(context.Background(), deploymentCfg.DatabaseURL, deploymentCfg.MasterKey)
+		if err != nil {
+			log.Fatalf("Control-plane store: %v", err)
+		}
+		defer controlStore.Close()
+	}
+
+	// Load optional external auth config from env. In control-plane mode, an
+	// absent provider means browser-managed local administrator credentials.
 	authCfg, err := auth.LoadFromEnv()
 	if err != nil {
 		log.Fatalf("Auth config: %v", err)
@@ -63,8 +82,19 @@ func main() {
 			log.Printf("Auth enabled: basic (user=%s) — OIDC is recommended for real deployments", authCfg.BasicUsername)
 		}
 	}
+	if deploymentCfg.Mode == deployment.ModeControlPlane && authCfg == nil {
+		derived := sha256.Sum256(append([]byte("command-center/local-session/v1:"), deploymentCfg.MasterKey...))
+		authProv = auth.NewLocalProvider(controlStore, derived[:], strings.HasPrefix(deploymentCfg.PublicURL, "https://"), deploymentCfg.SetupToken)
+	} else if deploymentCfg.Mode == deployment.ModeControlPlane && authCfg.Mode == auth.ModeOIDC {
+		authProv.SetOIDCClaimStore(controlStore)
+	} else if deploymentCfg.Mode == deployment.ModeControlPlane && authCfg.Mode == auth.ModeBasic {
+		log.Fatal("Deployment config: BASIC_AUTH_* is not supported in control-plane mode; omit it for browser-managed local auth or configure OIDC")
+	}
+	if authProv != nil && controlStore != nil {
+		authProv.SetServicePrincipalStore(controlStore)
+	}
 
-	srv, err := server.New(*addr, webFS, !*disableConfigEdit, ka, authProv)
+	srv, err := server.New(*addr, webFS, !*disableConfigEdit, ka, authProv, deploymentCfg.PublicURL, controlStore)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}

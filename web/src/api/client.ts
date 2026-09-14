@@ -1,21 +1,30 @@
-import type { InstanceState, InstanceConfig, MissionHistoryResponse, RunMissionResponse, ChatMessageResponse, ChatHistoryResponse, ChatMessagesResponse, ReloadConfigResponse, GetMissionDetailResponse, GetMissionEventsResponse, TaskDetailResponse, GetDatasetsResponse, GetDatasetItemsResponse, ListConfigFilesResponse, GetConfigFileResponse, WriteConfigFileResponse, ValidateConfigResponse, ListSharedFoldersResponse, BrowseDirectoryResponse, ReadBrowseFileResponse, WriteBrowseFileResponse, GetVariablesResponse, ListNotificationsResponse } from './types';
+import type { AdminAccess, AdminUser, AgentInfo, AgentConversationContext, AgentConversationState, AgentConversationSummary, AuditEvent, CommandCenterRole, ConfigSource, CostSummaryResponse, HumanInputsResponse, LocalPluginFile, LocalPluginFileContent, MissionEventsResponse, MissionHistoryResponse, MissionRunDetail, MissionRunIdentity, MissionSchedule, MissionTaskDetail, ResolveHumanInputResponse, RunMissionResponse, ServicePrincipal, UserStatus, Workspace, WorkspaceConfigSnapshot, WorkspaceRole, WorkspaceVariable, WorkspaceWorker } from './types';
 
 const BASE_URL = '/api';
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, init);
-  if (res.status === 401) {
-    // Session missing or expired. Full-page redirect so the backend's /auth/login
-    // handler can run (it builds the IdP URL and sets the pending-state cookie).
+  const response = await fetch(`${BASE_URL}${path}`, init);
+
+  if (response.status === 401) {
     const next = window.location.pathname + window.location.search;
-    window.location.href = '/auth/login?next=' + encodeURIComponent(next);
+    window.location.href = `/auth/login?next=${encodeURIComponent(next)}`;
     throw new Error('unauthorized');
   }
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${response.status}`);
   }
-  return res.json();
+
+  if (response.status === 204) return undefined as T;
+
+  return response.json() as Promise<T>;
+}
+
+export interface WorkerEnrollment {
+  worker: WorkspaceWorker;
+  credential: string;
+  commandCenterURL: string;
 }
 
 export interface CurrentUser {
@@ -24,277 +33,208 @@ export interface CurrentUser {
   sub: string;
 }
 
-// getCurrentUser returns the logged-in user, or null when auth is disabled
-// (endpoint 404s) or the session is missing/invalid (401). Does not redirect.
 export async function getCurrentUser(): Promise<CurrentUser | null> {
-  try {
-    const res = await fetch('/auth/me');
-    if (!res.ok) return null;
-    return (await res.json()) as CurrentUser;
-  } catch {
+  const response = await fetch('/auth/me');
+  if (!response.ok) {
     return null;
   }
+  return response.json() as Promise<CurrentUser>;
 }
 
-export async function logout(): Promise<void> {
-  // /auth/logout is a GET on the backend — it clears the session cookie and
-  // redirects through the IdP's end-session endpoint back to /.
-  window.location.href = '/auth/logout';
+export async function listWorkspaces(): Promise<Workspace[]> {
+  const response = await fetchJSON<{ workspaces: Workspace[] }>('/workspaces');
+  return response.workspaces;
 }
 
-export async function getServerInfo(): Promise<{ baseUrl: string; version: string }> {
-  return fetchJSON<{ baseUrl: string; version: string }>('/info');
-}
+export function listAdminUsers(): Promise<AdminUser[]> { return fetchJSON<{ users: AdminUser[] }>('/admin/users').then((value) => value.users); }
+export function createAdminUser(input: { name: string; email: string; role: CommandCenterRole }): Promise<{ user: AdminUser; invitationToken: string }> { return fetchJSON('/admin/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }); }
+export function updateAdminUser(id: string, input: { name: string; role: CommandCenterRole; status: UserStatus }): Promise<AdminUser> { return fetchJSON(`/admin/users/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }); }
+export function listServicePrincipals(): Promise<ServicePrincipal[]> { return fetchJSON<{ servicePrincipals: ServicePrincipal[] }>('/admin/service-principals').then((value) => value.servicePrincipals); }
+export function createServicePrincipal(input: { name: string; description: string }): Promise<{ servicePrincipal: ServicePrincipal; credential: string }> { return fetchJSON('/admin/service-principals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }); }
+export function updateServicePrincipalStatus(id: string, status: 'active' | 'disabled'): Promise<ServicePrincipal> { return fetchJSON(`/admin/service-principals/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }); }
+export function rotateServicePrincipalCredential(id: string): Promise<{ credential: string }> { return fetchJSON(`/admin/service-principals/${encodeURIComponent(id)}/rotate`, { method: 'POST' }); }
+export function listAuditEvents(): Promise<AuditEvent[]> { return fetchJSON<{ events: AuditEvent[] }>('/admin/audit').then((value) => value.events); }
+export function getAdminAccess(): Promise<AdminAccess> { return fetchJSON('/admin/access'); }
+export function setWorkspaceUserAccess(workspaceId: string, userId: string, input: { role: WorkspaceRole; missions: string[] }): Promise<void> { return fetchJSON(`/admin/workspaces/${encodeURIComponent(workspaceId)}/users/${encodeURIComponent(userId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }); }
+export function setWorkspaceServicePrincipalAccess(workspaceId: string, servicePrincipalId: string, missions: string[], userIds: string[]): Promise<void> { return fetchJSON(`/admin/workspaces/${encodeURIComponent(workspaceId)}/service-principals/${encodeURIComponent(servicePrincipalId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ missions, userIds }) }); }
+export function removeWorkspaceUserAccess(workspaceId:string,userId:string):Promise<void>{return fetchJSON(`/admin/workspaces/${encodeURIComponent(workspaceId)}/users/${encodeURIComponent(userId)}`,{method:'DELETE'})}
+export function removeWorkspaceServicePrincipalAccess(workspaceId:string,servicePrincipalId:string):Promise<void>{return fetchJSON(`/admin/workspaces/${encodeURIComponent(workspaceId)}/service-principals/${encodeURIComponent(servicePrincipalId)}`,{method:'DELETE'})}
 
-export async function listInstances(): Promise<InstanceState[]> {
-  return fetchJSON<InstanceState[]>('/instances');
-}
-
-export async function getInstance(id: string): Promise<InstanceState> {
-  return fetchJSON<InstanceState>(`/instances/${id}`);
-}
-
-export async function getInstanceConfig(id: string): Promise<InstanceConfig> {
-  return fetchJSON<InstanceConfig>(`/instances/${id}/config`);
-}
-
-export async function getNotifications(id: string): Promise<ListNotificationsResponse> {
-  return fetchJSON<ListNotificationsResponse>(`/instances/${id}/notifications`);
-}
-
-export async function dismissNotification(id: string, notificationId: string): Promise<void> {
-  await fetchJSON<{ ok: boolean }>(`/instances/${id}/notifications/${encodeURIComponent(notificationId)}`, {
-    method: 'DELETE',
-  });
-}
-
-export async function runMission(instanceId: string, missionName: string, inputs: Record<string, string>): Promise<RunMissionResponse> {
-  return fetchJSON<RunMissionResponse>(`/instances/${instanceId}/missions/${missionName}/run`, {
+export function createWorkspace(name: string, repositoryUrl: string): Promise<Workspace> {
+  return fetchJSON<Workspace>('/workspaces', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ inputs }),
+    body: JSON.stringify({ name, repositoryUrl }),
   });
 }
 
-export async function stopMission(instanceId: string, missionId: string): Promise<{ status: string }> {
-  return fetchJSON<{ status: string }>(`/instances/${instanceId}/missions/${missionId}/stop`, {
+export function provisionWorker(workspaceId: string): Promise<WorkerEnrollment> {
+  return fetchJSON<WorkerEnrollment>(`/workspaces/${workspaceId}/worker-enrollment`, {
     method: 'POST',
   });
 }
 
-export async function resumeMission(instanceId: string, missionId: string, missionName: string): Promise<{ missionId: string; status: string }> {
-  return fetchJSON<{ missionId: string; status: string }>(`/instances/${instanceId}/missions/${missionId}/resume`, {
+export function revealWorkerCredential(
+  workspaceId: string,
+): Promise<{ credential: string; commandCenterURL: string }> {
+  return fetchJSON(`/workspaces/${workspaceId}/worker-credential`);
+}
+
+export function getWorkspaceConfig(workspaceId: string): Promise<WorkspaceConfigSnapshot> {
+  return fetchJSON(`/workspaces/${workspaceId}/config`);
+}
+
+export function listWorkspaceVariables(workspaceId: string): Promise<WorkspaceVariable[]> {
+  return fetchJSON<{ variables: WorkspaceVariable[] }>(`/workspaces/${encodeURIComponent(workspaceId)}/variables`).then((result) => result.variables);
+}
+
+export function createWorkspaceVariable(workspaceId: string, input: { name: string; value: string; secret: boolean }): Promise<void> {
+  return fetchJSON(`/workspaces/${encodeURIComponent(workspaceId)}/variables`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+
+export function updateWorkspaceVariable(workspaceId: string, name: string, input: { value: string; secret: boolean }): Promise<void> {
+  return fetchJSON(`/workspaces/${encodeURIComponent(workspaceId)}/variables/${encodeURIComponent(name)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+
+export function deleteWorkspaceVariable(workspaceId: string, name: string): Promise<void> {
+  return fetchJSON(`/workspaces/${encodeURIComponent(workspaceId)}/variables/${encodeURIComponent(name)}`, { method: 'DELETE' });
+}
+
+export function revealWorkspaceVariable(workspaceId: string, name: string): Promise<{ value: string }> {
+  return fetchJSON(`/workspaces/${encodeURIComponent(workspaceId)}/variables/${encodeURIComponent(name)}`);
+}
+
+export function getMissionDefinition(workspaceId: string, missionName: string): Promise<{ name: string; source?: ConfigSource | null }> {
+  return fetchJSON(`/workspaces/${encodeURIComponent(workspaceId)}/missions/${encodeURIComponent(missionName)}/definition`);
+}
+
+function localPluginFilesPath(workspaceId: string, pluginName: string) {
+  return `/workspaces/${encodeURIComponent(workspaceId)}/plugins/${encodeURIComponent(pluginName)}/files`;
+}
+
+export function listLocalPluginFiles(workspaceId: string, pluginName: string): Promise<LocalPluginFile[]> {
+  return fetchJSON<{ files: LocalPluginFile[] }>(localPluginFilesPath(workspaceId, pluginName)).then((result) => result.files);
+}
+
+export function getLocalPluginFile(workspaceId: string, pluginName: string, path: string): Promise<LocalPluginFileContent> {
+  const query = new URLSearchParams({ path });
+  return fetchJSON(`${localPluginFilesPath(workspaceId, pluginName)}?${query}`);
+}
+
+export function getMissionHistory(instanceId: string, limit = 500): Promise<MissionHistoryResponse> {
+  return fetchJSON(`/instances/${instanceId}/history?limit=${limit}`);
+}
+
+export function listMissionRunIdentities(instanceId: string, missionName: string): Promise<MissionRunIdentity[]> {
+  return fetchJSON<{ identities: MissionRunIdentity[] }>(`/instances/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionName)}/run-identities`).then((value) => value.identities);
+}
+
+export function runMission(instanceId: string, missionName: string, inputs: Record<string, string>, servicePrincipalId?: string): Promise<RunMissionResponse> {
+  return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionName)}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ missionName }),
+    body: JSON.stringify({ inputs, servicePrincipalId }),
   });
 }
 
-export async function getMissionHistory(instanceId: string, offset = 0, limit = 50): Promise<MissionHistoryResponse> {
-  const params = new URLSearchParams();
-  if (offset) params.set('offset', String(offset));
-  if (limit !== 50) params.set('limit', String(limit));
-  const qs = params.toString();
-  return fetchJSON<MissionHistoryResponse>(`/instances/${instanceId}/history${qs ? '?' + qs : ''}`);
+export interface MissionScheduleInput {
+  name: string;
+  cronExpression: string;
+  timezone: string;
+  inputs: Record<string, string>;
+  runAsKind: 'user' | 'service_principal';
+  runAsId: string;
+  status: 'active' | 'paused';
 }
 
-export async function sendChatMessage(instanceId: string, agentName: string, message: string, sessionId?: string): Promise<ChatMessageResponse> {
-  return fetchJSON<ChatMessageResponse>(`/instances/${instanceId}/agents/${agentName}/chat`, {
+function missionSchedulesPath(workspaceId: string, missionName: string) {
+  return `/workspaces/${encodeURIComponent(workspaceId)}/missions/${encodeURIComponent(missionName)}/schedules`;
+}
+
+export function listMissionSchedules(workspaceId: string, missionName: string): Promise<MissionSchedule[]> {
+  return fetchJSON<{ schedules: MissionSchedule[] }>(missionSchedulesPath(workspaceId, missionName)).then((value) => value.schedules);
+}
+
+export function listWorkspaceMissionSchedules(workspaceId: string): Promise<MissionSchedule[]> {
+  return fetchJSON<{ schedules: MissionSchedule[] }>(`/workspaces/${encodeURIComponent(workspaceId)}/schedules`).then((value) => value.schedules);
+}
+
+export function createMissionSchedule(workspaceId: string, missionName: string, input: MissionScheduleInput): Promise<MissionSchedule> {
+  return fetchJSON(missionSchedulesPath(workspaceId, missionName), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+
+export function updateMissionSchedule(workspaceId: string, missionName: string, scheduleId: string, input: MissionScheduleInput): Promise<MissionSchedule> {
+  return fetchJSON(`${missionSchedulesPath(workspaceId, missionName)}/${encodeURIComponent(scheduleId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+
+export function deleteMissionSchedule(workspaceId: string, missionName: string, scheduleId: string): Promise<void> {
+  return fetchJSON(`${missionSchedulesPath(workspaceId, missionName)}/${encodeURIComponent(scheduleId)}`, { method: 'DELETE' });
+}
+
+export function stopMission(instanceId: string, missionId: string): Promise<{ status: string }> {
+  return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/stop`, { method: 'POST' });
+}
+
+export function listHumanInputs(instanceId: string, missionId: string, state: 'open' | 'resolved' = 'open'): Promise<HumanInputsResponse> {
+  const query = new URLSearchParams({ missionId, state, order: 'oldest', limit: '100' });
+  return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/human-inputs?${query}`);
+}
+
+export function resolveHumanInput(instanceId: string, toolCallId: string, response: string): Promise<ResolveHumanInputResponse> {
+  return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/human-inputs/${encodeURIComponent(toolCallId)}/resolve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId, message }),
+    body: JSON.stringify({ response }),
   });
 }
 
-export async function getChatHistory(instanceId: string, agentName: string): Promise<ChatHistoryResponse> {
-  return fetchJSON<ChatHistoryResponse>(`/instances/${instanceId}/agents/${agentName}/chats`);
+export function getMissionRun(instanceId: string, runId: string): Promise<MissionRunDetail> {
+  return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(runId)}/detail`);
 }
 
-export async function getChatMessages(instanceId: string, sessionId: string): Promise<ChatMessagesResponse> {
-  return fetchJSON<ChatMessagesResponse>(`/instances/${instanceId}/chats/${sessionId}/messages`);
+export function getMissionRunEvents(instanceId: string, runId: string): Promise<MissionEventsResponse> {
+  return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(runId)}/history-events`);
 }
 
-export async function archiveChat(instanceId: string, sessionId: string): Promise<void> {
-  await fetchJSON(`/instances/${instanceId}/chats/${sessionId}`, { method: 'DELETE' });
+export function getMissionTaskDetail(instanceId: string, taskId: string): Promise<MissionTaskDetail> {
+  return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/tasks/${encodeURIComponent(taskId)}/detail`);
 }
 
-export async function reloadConfig(instanceId: string): Promise<ReloadConfigResponse> {
-  return fetchJSON<ReloadConfigResponse>(`/instances/${instanceId}/reload`, { method: 'POST' });
+export function getCostSummary(instanceId: string, groupBy = 'model'): Promise<CostSummaryResponse> {
+  const query = new URLSearchParams({ groupBy });
+  return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/costs?${query}`);
 }
 
-export async function getMissionDetail(instanceId: string, missionId: string): Promise<GetMissionDetailResponse> {
-  return fetchJSON<GetMissionDetailResponse>(`/instances/${instanceId}/missions/${missionId}/detail`);
+function agentApiPath(workspaceId: string, name: string) {
+  return `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(name)}`;
 }
 
-export async function getMissionEvents(instanceId: string, missionId: string): Promise<GetMissionEventsResponse> {
-  return fetchJSON<GetMissionEventsResponse>(`/instances/${instanceId}/missions/${missionId}/history-events`);
+export function getAgentDefinition(workspaceId: string, name: string, mission?: string): Promise<AgentInfo> {
+  const query = new URLSearchParams(mission ? { mission } : {});
+  return fetchJSON(`${agentApiPath(workspaceId, name)}/definition?${query}`);
 }
 
-export async function getTaskDetail(instanceId: string, taskId: string): Promise<TaskDetailResponse> {
-  return fetchJSON<TaskDetailResponse>(`/instances/${instanceId}/tasks/${taskId}/detail`);
-}
-
-export async function getRunDatasets(instanceId: string, missionId: string): Promise<GetDatasetsResponse> {
-  return fetchJSON<GetDatasetsResponse>(`/instances/${instanceId}/missions/${missionId}/datasets`);
-}
-
-export async function getDatasetItems(instanceId: string, datasetId: string, offset = 0, limit = 50): Promise<GetDatasetItemsResponse> {
-  return fetchJSON<GetDatasetItemsResponse>(`/instances/${instanceId}/datasets/${datasetId}/items?offset=${offset}&limit=${limit}`);
-}
-
-export async function listConfigFiles(instanceId: string): Promise<ListConfigFilesResponse> {
-  return fetchJSON<ListConfigFilesResponse>(`/instances/${instanceId}/config/files`);
-}
-
-export async function getConfigFile(instanceId: string, name: string): Promise<GetConfigFileResponse> {
-  return fetchJSON<GetConfigFileResponse>(`/instances/${instanceId}/config/files/${name}`);
-}
-
-export async function writeConfigFile(instanceId: string, name: string, content: string): Promise<WriteConfigFileResponse> {
-  return fetchJSON<WriteConfigFileResponse>(`/instances/${instanceId}/config/files/${name}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+export function sendAgentConversation(workspaceId: string, name: string, context: AgentConversationContext, content: string, sessionId?: string): Promise<AgentConversationState> {
+  return fetchJSON(`${agentApiPath(workspaceId, name)}/conversations`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...context, content, sessionId }),
   });
 }
 
-export async function validateConfig(instanceId: string, files: Record<string, string>): Promise<ValidateConfigResponse> {
-  return fetchJSON<ValidateConfigResponse>(`/instances/${instanceId}/config/validate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ files }),
+export function listAgentConversations(workspaceId: string, name: string, context: AgentConversationContext): Promise<AgentConversationSummary[]> {
+  const query = new URLSearchParams({ purpose: context.purpose, mode: context.mode });
+  if (context.mission) query.set('mission', context.mission);
+  return fetchJSON<{ conversations: AgentConversationSummary[] }>(agentApiPath(workspaceId, name) + '/conversations?' + query).then((result) => result.conversations);
+}
+
+export function getAgentConversation(workspaceId: string, name: string, context: AgentConversationContext, sessionId: string): Promise<AgentConversationState> {
+  const query = new URLSearchParams({ purpose: context.purpose, mode: context.mode });
+  if (context.mission) query.set('mission', context.mission);
+  return fetchJSON(`${agentApiPath(workspaceId, name)}/conversations/${encodeURIComponent(sessionId)}?${query}`);
+}
+
+export function stopAgentConversation(workspaceId: string, name: string, context: AgentConversationContext, sessionId: string): Promise<AgentConversationState> {
+  return fetchJSON(`${agentApiPath(workspaceId, name)}/conversations/${encodeURIComponent(sessionId)}/stop`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(context),
   });
-}
-
-// Variables API
-
-export async function getVariables(instanceId: string): Promise<GetVariablesResponse> {
-  return fetchJSON<GetVariablesResponse>(`/instances/${instanceId}/variables`);
-}
-
-export async function setVariable(instanceId: string, name: string, value: string): Promise<void> {
-  await fetchJSON(`/instances/${instanceId}/variables/${name}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ value }),
-  });
-}
-
-export async function deleteVariable(instanceId: string, name: string): Promise<void> {
-  await fetchJSON(`/instances/${instanceId}/variables/${name}`, { method: 'DELETE' });
-}
-
-// Shared folder API
-
-export async function listSharedFolders(instanceId: string): Promise<ListSharedFoldersResponse> {
-  return fetchJSON<ListSharedFoldersResponse>(`/instances/${instanceId}/browsers`);
-}
-
-export async function browseDirectory(instanceId: string, browser: string, relPath: string): Promise<BrowseDirectoryResponse> {
-  return fetchJSON<BrowseDirectoryResponse>(`/instances/${instanceId}/browsers/${browser}/browse?path=${encodeURIComponent(relPath)}`);
-}
-
-export async function readBrowseFile(instanceId: string, browser: string, relPath: string): Promise<ReadBrowseFileResponse> {
-  return fetchJSON<ReadBrowseFileResponse>(`/instances/${instanceId}/browsers/${browser}/read?path=${encodeURIComponent(relPath)}`);
-}
-
-export async function writeBrowseFile(instanceId: string, browser: string, relPath: string, content: string): Promise<WriteBrowseFileResponse> {
-  return fetchJSON<WriteBrowseFileResponse>(`/instances/${instanceId}/browsers/${browser}/write?path=${encodeURIComponent(relPath)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  });
-}
-
-export function getDownloadFileUrl(instanceId: string, browser: string, relPath: string): string {
-  return `${BASE_URL}/instances/${instanceId}/browsers/${browser}/download?path=${encodeURIComponent(relPath)}`;
-}
-
-export function getDownloadDirUrl(instanceId: string, browser: string, relPath: string): string {
-  return `${BASE_URL}/instances/${instanceId}/browsers/${browser}/download-dir?path=${encodeURIComponent(relPath)}`;
-}
-
-export interface CostSummaryResponse {
-  totals: {
-    totalCost: number;
-    inputCost: number;
-    outputCost: number;
-    cacheReadCost: number;
-    cacheWriteCost: number;
-    totalTurns: number;
-    totalInputTokens: number;
-    totalOutputTokens: number;
-  };
-  byGroup: Array<{
-    groupKey: string;
-    turns: number;
-    totalCost: number;
-    inputCost: number;
-    outputCost: number;
-    cacheReadCost: number;
-    cacheWriteCost: number;
-  }>;
-  byDateAndField?: Array<{
-    date: string;
-    fieldKey: string;
-    totalCost: number;
-  }>;
-  recentMissions: Array<{
-    missionId: string;
-    missionName: string;
-    status: string;
-    turns: number;
-    totalCost: number;
-    startedAt: string;
-  }>;
-}
-
-export async function getCostSummary(instanceId: string, from?: string, to?: string, groupBy?: string, breakdownField?: string): Promise<CostSummaryResponse> {
-  const params = new URLSearchParams();
-  if (from) params.set('from', from);
-  if (to) params.set('to', to);
-  if (groupBy) params.set('groupBy', groupBy);
-  if (breakdownField) params.set('breakdownField', breakdownField);
-  const qs = params.toString();
-  return fetchJSON<CostSummaryResponse>(`/instances/${instanceId}/costs${qs ? '?' + qs : ''}`);
-}
-
-// Human-in-the-loop (ask_human) API — commander proxies to the squadron
-// that owns the records. All endpoints are instance-scoped.
-
-export interface ListHumanInputsOptions {
-  state?: 'open' | 'resolved';
-  missionId?: string;
-  order?: 'oldest' | 'newest';
-  limit?: number;
-  offset?: number;
-}
-
-export async function listHumanInputs(
-  instanceId: string,
-  opts: ListHumanInputsOptions = {},
-): Promise<import('./types').ListHumanInputsResponse> {
-  const params = new URLSearchParams();
-  if (opts.state) params.set('state', opts.state);
-  if (opts.missionId) params.set('missionId', opts.missionId);
-  if (opts.order) params.set('order', opts.order);
-  if (opts.limit) params.set('limit', String(opts.limit));
-  if (opts.offset) params.set('offset', String(opts.offset));
-  const qs = params.toString();
-  return fetchJSON(`/instances/${instanceId}/human-inputs${qs ? '?' + qs : ''}`);
-}
-
-export async function resolveHumanInput(
-  instanceId: string,
-  toolCallId: string,
-  response: string,
-): Promise<import('./types').ResolveHumanInputResponse> {
-  return fetchJSON<import('./types').ResolveHumanInputResponse>(
-    `/instances/${instanceId}/human-inputs/${toolCallId}/resolve`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ response }),
-    },
-  );
 }

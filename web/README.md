@@ -1,73 +1,68 @@
-# React + TypeScript + Vite
+# Command Center web
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This is the fresh Command Center frontend: a deliberately small React application built with Vite, Tailwind CSS, and shadcn/ui.
 
-Currently, two official plugins are available:
+The active application currently contains only the first-admin setup and workspace management flows. It supports a light theme and a single dark theme based on the former DEFCON 5 palette.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+The previous frontend is preserved intact in [`../archive/frontend-legacy`](../archive/frontend-legacy) for reference and comparison. Generated dependencies and build output are intentionally not archived; run `npm install` in that directory if you need to launch it independently.
 
-## React Compiler
+## Development
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+The production bundle is generated with `npm run build` and embedded by the Go server.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## UI primitives
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+Use the checked-in shadcn components in `src/components/ui` for menus, dialogs,
+and other interactive primitives. Do not implement custom popup or dropdown
+behavior when a shadcn primitive exists. Native `<select>` controls are also
+disallowed; use the shadcn `Select` component so triggers, menus, focus states,
+and themes remain consistent. ESLint enforces this convention.
+
+## Configuration source editor
+
+The configuration panel has a compact **View raw** header action opening a
+read-only HCL source viewer with the filename and original line numbers. The
+runner captures the exact agent block during configuration loading, including
+comments, expressions, relative file path and original line numbers. It does
+not reconstruct HCL from evaluated values or read arbitrary client-supplied
+paths. The viewer represents the loaded snapshot, not un-reloaded disk edits.
+
+The editor uses CodeMirror 6 with `codemirror-lang-hcl`, loaded lazily when the
+source panel opens. It replaces the configuration inspector alongside the chat,
+with a 50/50 default split and a draggable, keyboard-accessible divider powered
+by `react-resizable-panels`. Switching between details and source preserves the
+chosen split. Narrow screens use a full-width configuration drawer instead.
+Both editor state and DOM editing are disabled; search,
+selection, copy and folding remain available. Theme and language extensions
+live in `src/lib/config-editor.ts`, separate from the panel and React wrapper.
+
+For the planned review experience, reuse those extensions with
+[`@codemirror/merge`](https://github.com/codemirror/merge) for split or unified
+diffs. No diff controls or write actions are implemented here. The source
+response includes `fileRevision`, a SHA-256 fingerprint of the full loaded
+file, so a future apply endpoint can verify its base before writing. That
+fingerprint is not a Git commit; branch creation, authorization and conflict
+handling still belong in the eventual server-side review workflow.
+
+### Wrapped indentation
+
+The source editor keeps a small local CodeMirror decoration extension for
+indent-preserving wrapping. We evaluated `codemirror-wrapped-line-indent@1.0.9`
+against the same fixtures on 2026-08-31. In our empty-editor → loaded-snapshot
+lifecycle its indentation appeared only after a subsequent resize, and its
+fixed extra indentation level differs from preserving the original indent.
+It is not installed. Reevaluate a newer release if those behaviors change.
+
+The comparison also exposed a mixed-tabs/spaces rendering bug in our own
+negative-text-indent approach. Leading tab whitespace now has a fixed-width
+display span; the underlying HCL and copied whitespace remain intact.
+
+Run the state tests with `node --experimental-strip-types --test tests/config-wrapping.test.ts`.
+For actual browser-layout regression checks, start `npm run dev` and open
+`/tests/config-wrapping.html`. This compares first and wrapped line positions
+against an unwrapped baseline at two panel widths and tab sizes in both themes.

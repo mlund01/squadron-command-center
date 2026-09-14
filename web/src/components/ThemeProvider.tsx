@@ -1,65 +1,28 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
+import { ThemeContext } from '@/components/theme';
+import type { Theme } from '@/components/theme';
 
-type Theme = 'light' | 'dark' | 'defcon5' | 'system';
-type ResolvedTheme = 'light' | 'dark' | 'defcon5';
-
-interface ThemeContextValue {
-  theme: Theme;
-  setTheme: (theme: Theme) => void;
-  resolvedTheme: ResolvedTheme;
-}
-
-const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
-
-function getSystemTheme(): 'light' | 'dark' {
+function initialTheme(): Theme {
+  const stored = window.localStorage.getItem('theme');
+  if (stored === 'light' || stored === 'dark') {
+    return stored;
+  }
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-const validThemes: Theme[] = ['light', 'dark', 'defcon5', 'system'];
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  const [theme, setThemeState] = useState<Theme>(initialTheme);
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    const stored = localStorage.getItem('theme');
-    return validThemes.includes(stored as Theme) ? (stored as Theme) : 'system';
-  });
-
-  const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(getSystemTheme);
-
-  const resolvedTheme: ResolvedTheme = theme === 'system' ? systemTheme : theme;
-
-  // Listen for system theme changes
   useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = (e: MediaQueryListEvent) => setSystemTheme(e.matches ? 'dark' : 'light');
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, []);
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
 
-  // Apply theme class to <html>
-  useEffect(() => {
-    const root = document.documentElement;
-    root.classList.remove('dark', 'defcon5');
-    if (resolvedTheme === 'dark') {
-      root.classList.add('dark');
-    } else if (resolvedTheme === 'defcon5') {
-      root.classList.add('dark', 'defcon5');
-    }
-  }, [resolvedTheme]);
+  function setTheme(nextTheme: Theme) {
+    setThemeState(nextTheme);
+    window.localStorage.setItem('theme', nextTheme);
+  }
 
-  const setTheme = (t: Theme) => {
-    setThemeState(t);
-    localStorage.setItem('theme', t);
-  };
-
-  return (
-    <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme }}>
-      {children}
-    </ThemeContext.Provider>
-  );
-}
-
-export function useTheme() {
-  const ctx = useContext(ThemeContext);
-  if (!ctx) throw new Error('useTheme must be used within ThemeProvider');
-  return ctx;
+  return <ThemeContext.Provider value={{ theme, setTheme }}>{children}</ThemeContext.Provider>;
 }

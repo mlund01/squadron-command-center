@@ -1,8 +1,10 @@
 package hub
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,15 +22,32 @@ type Hub struct {
 	connections     map[string]*Connection // instanceID → connection
 	registry        *Registry
 	AllowConfigEdit bool
+	workerStore     WorkerStore
+}
+
+// WorkerStore verifies worker credentials and persists connection state for
+// the single worker assigned to each workspace.
+type WorkerStore interface {
+	AuthenticateWorker(context.Context, string) (string, error)
+	MarkWorkspaceWorkerDisconnected(context.Context, string) error
+	TouchWorkspaceWorker(context.Context, string) error
+}
+
+type workspaceVariableStore interface {
+	WorkspaceVariablesForRunner(context.Context, string) (map[string]string, error)
 }
 
 // New creates a new Hub.
-func New(allowConfigEdit bool) *Hub {
-	return &Hub{
+func New(allowConfigEdit bool, workerStore ...WorkerStore) *Hub {
+	hub := &Hub{
 		connections:     make(map[string]*Connection),
 		registry:        NewRegistry(),
 		AllowConfigEdit: allowConfigEdit,
 	}
+	if len(workerStore) > 0 {
+		hub.workerStore = workerStore[0]
+	}
+	return hub
 }
 
 // Start initializes background tasks (heartbeat, cleanup, etc.).
@@ -47,13 +66,28 @@ func (h *Hub) Stop() {
 
 // ServeWS upgrades an HTTP request to a WebSocket connection.
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
+	workspaceID := ""
+	if h.workerStore != nil {
+		credential, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || credential == "" {
+			http.Error(w, "worker credential required", http.StatusUnauthorized)
+			return
+		}
+		var err error
+		workspaceID, err = h.workerStore.AuthenticateWorker(r.Context(), credential)
+		if err != nil {
+			http.Error(w, "invalid worker credential", http.StatusUnauthorized)
+			return
+		}
+	}
+
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
 
-	conn := NewConnection(h, ws)
+	conn := NewConnection(h, ws, workspaceID)
 	go conn.ReadPump()
 	go conn.WritePump()
 }
@@ -65,12 +99,36 @@ func (h *Hub) Register(instanceID string, conn *Connection) {
 	h.connections[instanceID] = conn
 }
 
-// Unregister removes a connection from the hub.
-func (h *Hub) Unregister(instanceID string) {
+// Unregister removes a connection from the hub. Checking the connection
+// identity prevents an older socket from racing a newer reconnect.
+func (h *Hub) Unregister(instanceID string, connection *Connection) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	if h.connections[instanceID] != connection {
+		h.mu.Unlock()
+		return
+	}
 	delete(h.connections, instanceID)
+	h.mu.Unlock()
+
 	h.registry.MarkDisconnected(instanceID)
+	if h.workerStore != nil && connection.workspaceID != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := h.workerStore.MarkWorkspaceWorkerDisconnected(ctx, connection.workspaceID); err != nil {
+			log.Printf("mark workspace worker disconnected: %v", err)
+		}
+	}
+}
+
+func (h *Hub) touchWorker(workspaceID string) {
+	if h.workerStore == nil || workspaceID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.workerStore.TouchWorkspaceWorker(ctx, workspaceID); err != nil {
+		log.Printf("touch workspace worker: %v", err)
+	}
 }
 
 // GetConnection returns a connection by instance ID.

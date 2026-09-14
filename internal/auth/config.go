@@ -17,6 +17,7 @@ type Mode int
 const (
 	ModeOIDC Mode = iota
 	ModeBasic
+	ModeLocal
 )
 
 // Config holds auth configuration loaded from the environment.

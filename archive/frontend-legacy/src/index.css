@@ -1,0 +1,407 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:is(.dark *));
+@custom-variant defcon5 (&:is(.defcon5 *));
+
+@theme inline {
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+    --radius-2xl: calc(var(--radius) + 8px);
+    --radius-3xl: calc(var(--radius) + 12px);
+    --radius-4xl: calc(var(--radius) + 16px);
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+    --color-chart-1: var(--chart-1);
+    --color-chart-2: var(--chart-2);
+    --color-chart-3: var(--chart-3);
+    --color-chart-4: var(--chart-4);
+    --color-chart-5: var(--chart-5);
+    --color-sidebar: var(--sidebar);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-ring: var(--sidebar-ring);
+    --font-sans: Inter, sans-serif;
+    --font-mono: JetBrains Mono, monospace;
+    --font-serif: Source Serif 4, serif;
+    --radius: 1.15rem;
+    --tracking-tighter: calc(var(--tracking-normal) - 0.05em);
+    --tracking-tight: calc(var(--tracking-normal) - 0.025em);
+    --tracking-wide: calc(var(--tracking-normal) + 0.025em);
+    --tracking-wider: calc(var(--tracking-normal) + 0.05em);
+    --tracking-widest: calc(var(--tracking-normal) + 0.1em);
+    --tracking-normal: var(--tracking-normal);
+    --shadow-2xl: var(--shadow-2xl);
+    --shadow-xl: var(--shadow-xl);
+    --shadow-lg: var(--shadow-lg);
+    --shadow-md: var(--shadow-md);
+    --shadow: var(--shadow);
+    --shadow-sm: var(--shadow-sm);
+    --shadow-xs: var(--shadow-xs);
+    --shadow-2xs: var(--shadow-2xs);
+    --spacing: var(--spacing);
+    --letter-spacing: var(--letter-spacing);
+    --shadow-offset-y: var(--shadow-offset-y);
+    --shadow-offset-x: var(--shadow-offset-x);
+    --shadow-spread: var(--shadow-spread);
+    --shadow-blur: var(--shadow-blur);
+    --shadow-opacity: var(--shadow-opacity);
+    --color-shadow-color: var(--shadow-color);
+    --color-destructive-foreground: var(--destructive-foreground);
+}
+
+:root {
+    --radius: 1.15rem;
+    /* Design tokens (light): bg #f6f6f4 · surface #ffffff · surface3 #f0f0ee · hairline rgba(15,20,30,0.08) · text #0f1420 */
+    --background: #f6f6f4;
+    --foreground: #0f1420;
+    --card: #ffffff;
+    --card-foreground: #0f1420;
+    --popover: #ffffff;
+    --popover-foreground: #0f1420;
+    --primary: oklch(0.6225 0.2041 259.9027);
+    --primary-foreground: oklch(1.0000 0 0);
+    --secondary: #f0f0ee;
+    --secondary-foreground: #0f1420;
+    --muted: #f0f0ee;
+    --muted-foreground: #5a6473;
+    --accent: #f0f0ee;
+    --accent-foreground: #0f1420;
+    --destructive: oklch(0.6496 0.2362 26.9032);
+    --border: rgba(15, 20, 30, 0.08);
+    --input: rgba(15, 20, 30, 0.08);
+    --ring: oklch(0.6225 0.2041 259.9027);
+    --chart-1: oklch(0.6225 0.2041 259.9027);
+    --chart-2: oklch(0.5469 0.2507 262.8085);
+    --chart-3: oklch(0.4902 0.2693 263.7106);
+    --chart-4: oklch(0.4234 0.2370 263.9162);
+    --chart-5: oklch(0.3742 0.1844 263.9420);
+    --sidebar: #ffffff;
+    --sidebar-foreground: #0f1420;
+    --sidebar-primary: oklch(0.6225 0.2041 259.9027);
+    --sidebar-primary-foreground: oklch(1.0000 0 0);
+    --sidebar-accent: #f0f0ee;
+    --sidebar-accent-foreground: #0f1420;
+    --sidebar-border: rgba(15, 20, 30, 0.08);
+    --sidebar-ring: oklch(0.6225 0.2041 259.9027);
+    --destructive-foreground: oklch(1.0000 0 0);
+    --font-sans: Inter, sans-serif;
+    --font-serif: Source Serif 4, serif;
+    --font-mono: JetBrains Mono, monospace;
+    --shadow-color: oklch(0 0 0);
+    --shadow-opacity: 0.1;
+    --shadow-blur: 3px;
+    --shadow-spread: 0px;
+    --shadow-offset-x: 0;
+    --shadow-offset-y: 1px;
+    --letter-spacing: 0em;
+    --spacing: 0.25rem;
+    --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+    --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+    --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
+    --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
+    --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 2px 4px -1px hsl(0 0% 0% / 0.10);
+    --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 4px 6px -1px hsl(0 0% 0% / 0.10);
+    --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 8px 10px -1px hsl(0 0% 0% / 0.10);
+    --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+    --tracking-normal: 0em;
+}
+
+.dark {
+    /* Design tokens (dark): bg #0a0c10 · surface #11141a · surface2 #161a22 (cards) · surface3 #1d222c (hover) · hairline rgba(255,255,255,0.06) · text #e6e8ec · muted #9ba3b0 */
+    --background: #0a0c10;
+    --foreground: #e6e8ec;
+    --card: #161a22;
+    --card-foreground: #e6e8ec;
+    --popover: #161a22;
+    --popover-foreground: #e6e8ec;
+    --primary: oklch(0.6225 0.2041 259.9027);
+    --primary-foreground: oklch(1.0000 0 0);
+    --secondary: #1d222c;
+    --secondary-foreground: #e6e8ec;
+    --muted: #1d222c;
+    --muted-foreground: #9ba3b0;
+    --accent: #1d222c;
+    --accent-foreground: #e6e8ec;
+    --destructive: oklch(0.6496 0.2362 26.9032);
+    --border: rgba(255, 255, 255, 0.06);
+    --input: rgba(255, 255, 255, 0.08);
+    --ring: oklch(0.6225 0.2041 259.9027);
+    --chart-1: oklch(0.7122 0.1526 254.9868);
+    --chart-2: oklch(0.6225 0.2041 259.9027);
+    --chart-3: oklch(0.5739 0.2334 262.7735);
+    --chart-4: oklch(0.6225 0.2041 259.9027);
+    --chart-5: oklch(0.6225 0.2041 259.9027);
+    --sidebar: #11141a;
+    --sidebar-foreground: #e6e8ec;
+    --sidebar-primary: oklch(0.6225 0.2041 259.9027);
+    --sidebar-primary-foreground: oklch(1.0000 0 0);
+    --sidebar-accent: #1d222c;
+    --sidebar-accent-foreground: #e6e8ec;
+    --sidebar-border: rgba(255, 255, 255, 0.06);
+    --sidebar-ring: oklch(0.6225 0.2041 259.9027);
+    --destructive-foreground: oklch(1.0000 0 0);
+    --radius: 1.15rem;
+    --font-sans: Inter, sans-serif;
+    --font-serif: Source Serif 4, serif;
+    --font-mono: JetBrains Mono, monospace;
+    --shadow-color: oklch(0 0 0);
+    --shadow-opacity: 0.1;
+    --shadow-blur: 3px;
+    --shadow-spread: 0px;
+    --shadow-offset-x: 0;
+    --shadow-offset-y: 1px;
+    --letter-spacing: 0em;
+    --spacing: 0.25rem;
+    --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+    --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+    --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
+    --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
+    --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 2px 4px -1px hsl(0 0% 0% / 0.10);
+    --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 4px 6px -1px hsl(0 0% 0% / 0.10);
+    --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 8px 10px -1px hsl(0 0% 0% / 0.10);
+    --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    }
+  body {
+    @apply bg-background text-foreground;
+    letter-spacing: var(--tracking-normal);
+    }
+}
+
+.dark.defcon5 {
+    /* DEFCON 5 — military terminal, green-on-black CRT. Palette mirrors the docs site
+     * (github.com/mlund01/squadron/blob/main/docs/app/globals.css).
+     *   bg #0a1f0a · elevated #0d2a0d · inset #081808
+     *   fg #4ade80 · bright #86efac · dim #6b8f71
+     *   border #1a4a1a · strong #2a6a2a
+     *   accent #a3e635 · amber #facc15 · red #f87171
+     */
+    --background: #0a1f0a;
+    --foreground: #4ade80;
+    --card: #0d2a0d;
+    --card-foreground: #4ade80;
+    --popover: #0d2a0d;
+    --popover-foreground: #4ade80;
+    --primary: #a3e635;
+    --primary-foreground: #0a1f0a;
+    --secondary: #081808;
+    --secondary-foreground: #86efac;
+    --muted: #081808;
+    --muted-foreground: #6b8f71;
+    --accent: #0d2a0d;
+    --accent-foreground: #86efac;
+    --destructive: #f87171;
+    --destructive-foreground: #0a1f0a;
+    --border: #1a4a1a;
+    --input: #1a4a1a;
+    --ring: #a3e635;
+    --chart-1: #4ade80;
+    --chart-2: #a3e635;
+    --chart-3: #86efac;
+    --chart-4: #facc15;
+    --chart-5: #f87171;
+    --sidebar: #081808;
+    --sidebar-foreground: #4ade80;
+    --sidebar-primary: #a3e635;
+    --sidebar-primary-foreground: #0a1f0a;
+    --sidebar-accent: #0d2a0d;
+    --sidebar-accent-foreground: #86efac;
+    --sidebar-border: #1a4a1a;
+    --sidebar-ring: #a3e635;
+    --font-sans: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
+    --font-serif: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
+    --font-mono: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
+}
+
+/* Headings pop in bright green to match the docs treatment */
+.defcon5 h1, .defcon5 h2, .defcon5 h3, .defcon5 h4, .defcon5 h5, .defcon5 h6 {
+    color: #86efac;
+    letter-spacing: -0.01em;
+}
+
+/* Selection */
+.defcon5 ::selection {
+    background: rgba(74, 222, 128, 0.3);
+    color: #86efac;
+}
+
+/* Scrollbars — sharp, zero-radius, green */
+.defcon5 ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+.defcon5 ::-webkit-scrollbar-track {
+    background: #081808;
+}
+.defcon5 ::-webkit-scrollbar-thumb {
+    background: #2a6a2a;
+    border-radius: 0;
+}
+.defcon5 ::-webkit-scrollbar-thumb:hover {
+    background: #6b8f71;
+}
+
+/* Subtle CRT scanline overlay — very low opacity so readability stays intact */
+html.defcon5 body {
+    background-image: repeating-linear-gradient(
+        0deg,
+        rgba(74, 222, 128, 0.02) 0px,
+        rgba(74, 222, 128, 0.02) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+}
+
+/* ─── DEFCON 5: remap hardcoded Tailwind colors to green spectrum ─── */
+/* Purple/violet/blue → bright greens & limes */
+.defcon5 .text-purple-400, .defcon5 .text-purple-500 { color: #4ade80 !important; }
+.defcon5 .text-violet-400, .defcon5 .text-violet-500 { color: #86efac !important; }
+.defcon5 .text-blue-200, .defcon5 .text-blue-300 { color: #bbf7d0 !important; }
+.defcon5 .text-blue-400, .defcon5 .text-blue-500 { color: #4ade80 !important; }
+.defcon5 .text-sky-400 { color: #67e8f9 !important; }
+.defcon5 .text-indigo-400, .defcon5 .text-indigo-500 { color: #4ade80 !important; }
+
+.defcon5 .bg-purple-400, .defcon5 .bg-purple-500 { background-color: #4ade80 !important; }
+.defcon5 .bg-violet-400, .defcon5 .bg-violet-500 { background-color: #86efac !important; }
+.defcon5 .bg-blue-400, .defcon5 .bg-blue-500 { background-color: #4ade80 !important; }
+.defcon5 .text-foreground\/80 { color: oklch(0.9000 0.1500 145) !important; }
+.defcon5 .bg-blue-300\/20 { background-color: rgb(250 204 21 / 0.2) !important; }
+.defcon5 .bg-blue-300\/40 { background-color: rgb(250 204 21 / 0.35) !important; }
+.defcon5 .border-blue-400\/30 { border-color: rgb(250 204 21 / 0.5) !important; }
+
+.defcon5 .border-purple-500\/40, .defcon5 .border-purple-500 { border-color: rgb(74 222 128 / 0.4) !important; }
+.defcon5 .border-violet-500\/40, .defcon5 .border-violet-500 { border-color: rgb(134 239 172 / 0.4) !important; }
+.defcon5 .border-blue-500\/40, .defcon5 .border-blue-500, .defcon5 .border-blue-500\/30 { border-color: rgb(34 211 238 / 0.4) !important; }
+.defcon5 .bg-blue-500\/10, .defcon5 .bg-blue-500\/5 { background-color: rgb(34 211 238 / 0.1) !important; }
+.defcon5 \[&>svg\]\:text-blue-400 > svg { color: #22d3ee !important; }
+
+/* Teal/emerald → keep green but shift toward primary */
+.defcon5 .text-teal-400, .defcon5 .text-teal-500 { color: #34d399 !important; }
+.defcon5 .text-emerald-400, .defcon5 .text-emerald-500 { color: #6ee7b7 !important; }
+.defcon5 .bg-teal-400, .defcon5 .bg-teal-500 { background-color: #34d399 !important; }
+.defcon5 .bg-emerald-400, .defcon5 .bg-emerald-500 { background-color: #6ee7b7 !important; }
+.defcon5 .border-teal-500\/40, .defcon5 .border-teal-500 { border-color: rgb(52 211 153 / 0.4) !important; }
+.defcon5 .border-emerald-500\/40, .defcon5 .border-emerald-500, .defcon5 .border-emerald-500\/20 { border-color: rgb(110 231 183 / 0.4) !important; }
+.defcon5 .bg-emerald-500\/10 { background-color: rgb(110 231 183 / 0.1) !important; }
+.defcon5 .text-teal-300 { color: #5eead4 !important; }
+
+/* Amber/yellow → warm green / olive */
+.defcon5 .text-amber-300, .defcon5 .text-amber-500 { color: #bef264 !important; }
+.defcon5 .text-yellow-400, .defcon5 .text-yellow-500, .defcon5 .text-yellow-600 { color: #a3e635 !important; }
+.defcon5 .bg-amber-400, .defcon5 .bg-amber-500 { background-color: #bef264 !important; }
+.defcon5 .border-amber-500\/40, .defcon5 .border-amber-500\/30 { border-color: rgb(190 242 100 / 0.4) !important; }
+.defcon5 .bg-amber-500\/10 { background-color: rgb(190 242 100 / 0.1) !important; }
+.defcon5 .border-yellow-500\/50 { border-color: rgb(163 230 53 / 0.5) !important; }
+.defcon5 .bg-yellow-500\/10 { background-color: rgb(163 230 53 / 0.1) !important; }
+
+/* Red → keep as danger but dim slightly */
+.defcon5 .text-red-400, .defcon5 .text-red-500, .defcon5 .text-red-600, .defcon5 .text-red-700 { color: #f87171 !important; }
+.defcon5 .bg-red-500 { background-color: #ef4444 !important; }
+.defcon5 .bg-red-500\/10, .defcon5 .bg-red-500\/15 { background-color: rgb(239 68 68 / 0.1) !important; }
+.defcon5 .border-red-500, .defcon5 .border-red-500\/30 { border-color: rgb(239 68 68 / 0.4) !important; }
+
+/* Orange → amber-green */
+.defcon5 .text-orange-400, .defcon5 .text-orange-500, .defcon5 .text-orange-600 { color: #facc15 !important; }
+.defcon5 .bg-orange-400\/50, .defcon5 .bg-orange-500 { background-color: rgb(250 204 21 / 0.5) !important; }
+.defcon5 .border-orange-500, .defcon5 .border-orange-500\/50 { border-color: rgb(250 204 21 / 0.5) !important; }
+.defcon5 .bg-orange-500\/5 { background-color: rgb(250 204 21 / 0.05) !important; }
+.defcon5 .fill-orange-500 { fill: #facc15 !important; }
+
+/* Green → brighten to match theme */
+.defcon5 .text-green-400 { color: #4ade80 !important; }
+.defcon5 .text-green-500, .defcon5 .text-green-600, .defcon5 .text-green-700 { color: #22c55e !important; }
+.defcon5 .bg-green-100 { background-color: rgb(34 197 94 / 0.15) !important; }
+.defcon5 .text-green-800 { color: #4ade80 !important; }
+.defcon5 .bg-green-500 { background-color: #22c55e !important; }
+.defcon5 .bg-green-500\/15 { background-color: rgb(34 197 94 / 0.15) !important; }
+
+/* Slate/gray → muted green */
+.defcon5 .text-slate-300, .defcon5 .text-slate-400 { color: #6b8f71 !important; }
+.defcon5 .border-slate-500\/40, .defcon5 .border-slate-500\/30 { border-color: rgb(107 143 113 / 0.4) !important; }
+.defcon5 .bg-slate-500\/10 { background-color: rgb(107 143 113 / 0.1) !important; }
+.defcon5 .bg-gray-100 { background-color: rgb(107 143 113 / 0.15) !important; }
+.defcon5 .text-gray-600 { color: #6b8f71 !important; }
+.defcon5 .bg-gray-400 { background-color: #6b8f71 !important; }
+
+/* Task pulse animation — green glow for defcon5 */
+.defcon5 .task-pulse {
+  animation: task-pulse-defcon5 1.5s ease-out infinite;
+}
+@keyframes task-pulse-defcon5 {
+  0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4); }
+  100% { box-shadow: 0 0 0 8px rgba(74, 222, 128, 0); }
+}
+
+/* Render edges on top of nodes so connector lines aren't hidden behind overflowing node content */
+.react-flow__edges {
+  z-index: 1001 !important;
+}
+
+/* Edge label tooltips above the edges SVG layer */
+.react-flow__edge-labels {
+  z-index: 1002 !important;
+}
+
+/* Pulsing glow for running task nodes — expands outward only */
+@keyframes task-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+  100% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
+}
+.task-pulse { animation: task-pulse 1.5s ease-out infinite; }
+
+/* Living border for mission cards with an active run — breathing primary-tinted halo. */
+@keyframes sqd-card-live {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 35%, transparent); }
+  50%      { box-shadow: 0 0 0 4px color-mix(in oklch, var(--primary) 14%, transparent); }
+}
+.sqd-card-live { animation: sqd-card-live 2.4s ease-in-out infinite; }
+
+/* Stencil display face used only for the Squadron brand mark. */
+.sqd-brand {
+  font-family: 'Black Ops One', 'Courier New', ui-monospace, monospace;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+
+/* Shared auto-fill grid used by the Missions/Agents/Skills list pages. */
+.sqd-card-grid {
+  display: grid;
+  gap: 0.875rem; /* 14px */
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
+/* Mini-graph emphasis ring — breathing halo on the running node. */
+@keyframes sqd-node-ring {
+  0%, 100% { opacity: 0.25; transform: scale(0.9); transform-origin: center; transform-box: fill-box; }
+  50%      { opacity: 0.55; transform: scale(1.15); transform-origin: center; transform-box: fill-box; }
+}
+.sqd-node-ring { animation: sqd-node-ring 2s ease-in-out infinite; }
