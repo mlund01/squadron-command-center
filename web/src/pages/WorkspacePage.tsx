@@ -7,6 +7,7 @@ import type { WorkerEnrollment } from '@/api/client';
 import type { Workspace } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
 import { RunnerConnectionDialog } from '@/components/RunnerConnectionDialog';
+import { WorkspaceModelProvidersCard } from '@/components/WorkspaceModelProvidersCard';
 import { WorkspaceVariablesCard } from '@/components/WorkspaceVariablesCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -75,6 +76,7 @@ export function WorkspacePage() {
             <p className="text-muted-foreground">Default branch: <span className="text-foreground">{workspace.defaultBranch}</span></p>
           </CardContent>
         </Card>
+        <WorkspaceModelProvidersCard workspaceId={workspace.id} />
         <WorkspaceVariablesCard workspaceId={workspace.id} />
       </div>
       <RunnerConnectionDialog
