@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"commander/internal/controlplane"
 	"github.com/gorilla/websocket"
 	"github.com/mlund01/squadron-wire/protocol"
 )
@@ -35,6 +36,10 @@ type WorkerStore interface {
 
 type workspaceVariableStore interface {
 	WorkspaceVariablesForRunner(context.Context, string) (map[string]string, error)
+}
+
+type workspaceModelConnectionStore interface {
+	WorkspaceModelConnectionsForRunner(context.Context, string) (map[string]controlplane.RunnerModelConnection, error)
 }
 
 // New creates a new Hub.

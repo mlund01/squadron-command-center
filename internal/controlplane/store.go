@@ -72,6 +72,7 @@ type Store struct {
 	pool             *pgxpool.Pool
 	credentialCipher *credentialCipher
 	variableCipher   *variableCipher
+	modelCipher      *modelConnectionCipher
 }
 
 func Open(ctx context.Context, databaseURL string, masterKey []byte) (*Store, error) {
@@ -83,16 +84,24 @@ func Open(ctx context.Context, databaseURL string, masterKey []byte) (*Store, er
 	if err != nil {
 		return nil, err
 	}
+	modelCipher, err := newModelConnectionCipher(masterKey)
+	if err != nil {
+		return nil, err
+	}
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("open postgres pool: %w", err)
 	}
-	s := &Store{pool: pool, credentialCipher: credentialCipher, variableCipher: variableCipher}
+	s := &Store{pool: pool, credentialCipher: credentialCipher, variableCipher: variableCipher, modelCipher: modelCipher}
 	if err := s.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, err
 	}
 	if err := s.Migrate(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	if err := s.MigrateLegacyModelVariables(ctx); err != nil {
 		pool.Close()
 		return nil, err
 	}

@@ -43,3 +43,23 @@ func TestVariableCipherBindsWorkspaceAndName(t *testing.T) {
 		t.Fatal("ciphertext decrypted under a different variable name")
 	}
 }
+
+func TestModelConnectionCipherBindsWorkspaceAndName(t *testing.T) {
+	cipher, err := newModelConnectionCipher(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := cipher.Encrypt("workspace-a", "anthropic", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, err := cipher.Decrypt("workspace-a", "anthropic", ciphertext); err != nil || value != "secret" {
+		t.Fatalf("round trip failed: %q %v", value, err)
+	}
+	if _, err := cipher.Decrypt("workspace-b", "anthropic", ciphertext); err == nil {
+		t.Fatal("credential decrypted in a different workspace")
+	}
+	if _, err := cipher.Decrypt("workspace-a", "openai", ciphertext); err == nil {
+		t.Fatal("credential decrypted under a different connection name")
+	}
+}

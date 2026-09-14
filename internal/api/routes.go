@@ -63,6 +63,13 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, ka *keepalive.KeepAlive, pub
 			mux.HandleFunc("GET /api/workspaces/{id}/variables/{name}", requireWorkspaceRole(authorizationStore, "manager", handleWorkspaceVariable(h, workspaceStore, variableStore)))
 			mux.HandleFunc("DELETE /api/workspaces/{id}/variables/{name}", requireWorkspaceRole(authorizationStore, "manager", handleWorkspaceVariable(h, workspaceStore, variableStore)))
 		}
+		if modelStore, ok := workspaceStore.(WorkspaceModelConnectionStore); ok {
+			mux.HandleFunc("GET /api/workspaces/{id}/model-connections", requireWorkspaceRole(authorizationStore, "manager", handleWorkspaceModelConnections(h, workspaceStore, modelStore)))
+			mux.HandleFunc("POST /api/workspaces/{id}/model-connections", requireWorkspaceRole(authorizationStore, "manager", handleWorkspaceModelConnections(h, workspaceStore, modelStore)))
+			mux.HandleFunc("PUT /api/workspaces/{id}/model-connections/{name}", requireWorkspaceRole(authorizationStore, "manager", handleWorkspaceModelConnection(h, workspaceStore, modelStore)))
+			mux.HandleFunc("DELETE /api/workspaces/{id}/model-connections/{name}", requireWorkspaceRole(authorizationStore, "manager", handleWorkspaceModelConnection(h, workspaceStore, modelStore)))
+			mux.HandleFunc("GET /api/workspaces/{id}/model-connections/{name}/credential", requireWorkspaceRole(authorizationStore, "manager", handleRevealWorkspaceModelConnection(workspaceStore, modelStore)))
+		}
 		mux.HandleFunc("GET /api/workspaces/{id}/plugins/{name}/files", requireWorkspaceRole(authorizationStore, "reader", handleWorkspacePluginFiles(h, workspaceStore)))
 		mux.HandleFunc("GET /api/workspaces/{id}/agents/{name}/definition", requireWorkspaceRole(authorizationStore, "reader", handleAgentConversation(h, workspaceStore, "definition")))
 		mux.HandleFunc("GET /api/workspaces/{id}/missions/{name}/definition", requireWorkspaceRole(authorizationStore, "reader", handleMissionDefinition(h)))

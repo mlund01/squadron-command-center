@@ -1,4 +1,4 @@
-import type { AdminAccess, AdminUser, AgentInfo, AgentConversationContext, AgentConversationState, AgentConversationSummary, AuditEvent, CommandCenterRole, ConfigSource, CostSummaryResponse, HumanInputsResponse, LocalPluginFile, LocalPluginFileContent, MissionEventsResponse, MissionHistoryResponse, MissionRunDetail, MissionRunIdentity, MissionSchedule, MissionTaskDetail, ResolveHumanInputResponse, RunMissionResponse, ServicePrincipal, UserStatus, Workspace, WorkspaceConfigSnapshot, WorkspaceRole, WorkspaceVariable, WorkspaceWorker } from './types';
+import type { AdminAccess, AdminUser, AgentInfo, AgentConversationContext, AgentConversationState, AgentConversationSummary, AuditEvent, CommandCenterRole, ConfigSource, CostSummaryResponse, HumanInputsResponse, LocalPluginFile, LocalPluginFileContent, MissionEventsResponse, MissionHistoryResponse, MissionRunDetail, MissionRunIdentity, MissionSchedule, MissionTaskDetail, ModelProviderKind, ResolveHumanInputResponse, RunMissionResponse, ServicePrincipal, UserStatus, Workspace, WorkspaceConfigSnapshot, WorkspaceModelConnection, WorkspaceRole, WorkspaceVariable, WorkspaceWorker } from './types';
 
 const BASE_URL = '/api';
 
@@ -102,6 +102,23 @@ export function deleteWorkspaceVariable(workspaceId: string, name: string): Prom
 
 export function revealWorkspaceVariable(workspaceId: string, name: string): Promise<{ value: string }> {
   return fetchJSON(`/workspaces/${encodeURIComponent(workspaceId)}/variables/${encodeURIComponent(name)}`);
+}
+
+export type WorkspaceModelConnectionInput = { name?: string; provider: ModelProviderKind; baseUrl: string; apiKey?: string; promptCaching: boolean };
+export function listWorkspaceModelConnections(workspaceId: string): Promise<WorkspaceModelConnection[]> {
+  return fetchJSON<{ connections: WorkspaceModelConnection[] }>(`/workspaces/${encodeURIComponent(workspaceId)}/model-connections`).then((result) => result.connections);
+}
+export function createWorkspaceModelConnection(workspaceId: string, input: WorkspaceModelConnectionInput): Promise<void> {
+  return fetchJSON(`/workspaces/${encodeURIComponent(workspaceId)}/model-connections`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+export function updateWorkspaceModelConnection(workspaceId: string, name: string, input: WorkspaceModelConnectionInput): Promise<void> {
+  return fetchJSON(`/workspaces/${encodeURIComponent(workspaceId)}/model-connections/${encodeURIComponent(name)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+export function deleteWorkspaceModelConnection(workspaceId: string, name: string): Promise<void> {
+  return fetchJSON(`/workspaces/${encodeURIComponent(workspaceId)}/model-connections/${encodeURIComponent(name)}`, { method: 'DELETE' });
+}
+export function revealWorkspaceModelConnectionKey(workspaceId: string, name: string): Promise<{ value: string }> {
+  return fetchJSON(`/workspaces/${encodeURIComponent(workspaceId)}/model-connections/${encodeURIComponent(name)}/credential`);
 }
 
 export function getMissionDefinition(workspaceId: string, missionName: string): Promise<{ name: string; source?: ConfigSource | null }> {

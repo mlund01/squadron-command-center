@@ -59,6 +59,15 @@ export interface WorkspaceVariable {
   value: string;
   updatedAt?: string;
 }
+export type ModelProviderKind = 'anthropic' | 'openai' | 'gemini' | 'openai_compatible';
+export interface WorkspaceModelConnection {
+  name: string;
+  provider: ModelProviderKind;
+  baseUrl?: string;
+  hasApiKey: boolean;
+  promptCaching: boolean;
+  updatedAt?: string;
+}
 export interface SharedFolderInfo { name: string; path: string; label: string; description?: string; editable: boolean; isShared: boolean; missions?: string[] }
 
 export interface AgentInfo {

@@ -569,7 +569,7 @@ func (c *Connection) handleRegister(env *protocol.Envelope) {
 		Accepted:   true,
 	})
 	c.Send(ack)
-	go c.syncWorkspaceVariables()
+	go c.syncWorkspaceRuntime()
 
 	log.Printf("Instance registered: %s (id=%s)", payload.InstanceName, instanceID)
 
@@ -578,6 +578,33 @@ func (c *Connection) handleRegister(env *protocol.Envelope) {
 		Scope: "global",
 	})
 	c.Send(subEnv)
+}
+
+func (c *Connection) syncWorkspaceRuntime() {
+	c.syncWorkspaceModelConnections()
+	c.syncWorkspaceVariables()
+}
+
+func (c *Connection) syncWorkspaceModelConnections() {
+	store, ok := c.hub.workerStore.(workspaceModelConnectionStore)
+	if !ok || c.workspaceID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	connections, err := store.WorkspaceModelConnectionsForRunner(ctx, c.workspaceID)
+	if err != nil {
+		log.Printf("load workspace model connections: %v", err)
+		return
+	}
+	envelope, err := protocol.NewEvent("sync_model_connections", map[string]any{"connections": connections})
+	if err != nil {
+		log.Printf("encode workspace model connections: %v", err)
+		return
+	}
+	if err := c.Send(envelope); err != nil {
+		log.Printf("sync workspace model connections: %v", err)
+	}
 }
 
 func (c *Connection) syncWorkspaceVariables() {
