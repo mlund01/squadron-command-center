@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarClock, ChevronDown, Code2, Database, GitBranch, Layers3, Maximize2, Minimize2, Network, Repeat2, UsersRound, Webhook, X } from 'lucide-react';
+import { Bot, CalendarClock, ChevronDown, Code2, Database, GitBranch, Layers3, Maximize2, Minimize2, Network, Repeat2, Webhook, X } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { getMissionDefinition, getWorkspaceConfig } from '@/api/client';
 import type { MissionInfo, TaskInfo } from '@/api/types';
@@ -62,7 +62,7 @@ export function MissionDetailPage() {
       <TriggerPanel mission={mission} />
       <MissionSchedulesPanel createOpen={scheduleOpen} instanceId={snapshot.data?.instanceId ?? ''} mission={mission} onCreateOpenChange={setScheduleOpen} workspaceId={workspaceId} />
       <DatasetsPanel mission={mission} />
-      <AgentsPanel mission={mission} />
+      <CommanderPanel mission={mission} />
     </div>
   </div>;
 }
@@ -70,7 +70,7 @@ export function MissionDetailPage() {
 function MissionOverview({ mission }: { mission: MissionInfo }) {
   const stats = [
     ['Tasks', mission.tasks?.length ?? 0, Layers3],
-    ['Agents', mission.agents?.length ?? 0, UsersRound],
+    ['Commander', mission.commander ? stripRef(mission.commander) : '—', Bot],
     ['Inputs', mission.inputs?.length ?? 0, Network],
     ['Max parallel', mission.maxParallel || 1, Repeat2],
   ] as const;
@@ -90,7 +90,10 @@ function TaskDefinitionDrawer({ onClose, task }: { onClose: () => void; task: Ta
       <div className="mx-auto w-full max-w-3xl p-5 sm:p-6">
         <section><p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Objective</p><MarkdownContent className="mt-3 text-[11px] [&_p]:leading-5" content={task.objective || task.description || 'No objective provided.'} /></section>
         <dl className="mt-6 divide-y border-y">
-          <InspectorRow label="Execution" value={task.agent || (task.commander ? 'Commander' : 'Mission agents')} />
+          <InspectorRow label="Execution" value="Task executor" />
+          <InspectorRow label="Models" value={references(task.models)} />
+          <InspectorRow label="Tools" value={references(task.tools)} />
+          <InspectorRow label="Retries" value={`${task.maxRetries ?? 0}${task.retryDelaySeconds ? ` · ${task.retryDelaySeconds}s delay` : ''}`} />
           <InspectorRow label="Depends on" value={references(task.dependsOn)} />
           <InspectorRow label="Sends to" value={references(task.sendTo)} />
         </dl>
@@ -103,7 +106,7 @@ function TaskDefinitionDrawer({ onClose, task }: { onClose: () => void; task: Ta
 
 function InputsPanel({ mission }: { mission: MissionInfo }) { return <StaticPanel icon={Network} title="Inputs" count={mission.inputs?.length ?? 0}>{mission.inputs?.length ? <div className="divide-y">{mission.inputs.map((input) => <div className="flex items-start gap-4 py-2.5" key={input.name}><div className="min-w-0 flex-1"><p className="text-xs font-medium">{input.name}</p>{input.description && <MarkdownContent className="mt-1 text-[10px] text-muted-foreground [&_p]:leading-4" content={input.description} />}</div><span className="text-[10px] text-muted-foreground">{input.protected ? 'Protected' : input.type || 'value'}{input.required ? ' · required' : ''}</span></div>)}</div> : <Empty text="No mission inputs." />}</StaticPanel>; }
 function DatasetsPanel({ mission }: { mission: MissionInfo }) { return <StaticPanel icon={Database} title="Datasets" count={mission.datasets?.length ?? 0}>{mission.datasets?.length ? <div className="divide-y">{mission.datasets.map((dataset) => <div className="py-2.5" key={dataset.name}><p className="text-xs font-medium">{dataset.name}</p><MarkdownContent className="mt-1 text-[10px] text-muted-foreground" content={dataset.description || `${dataset.schema?.length ?? 0} fields`} /></div>)}</div> : <Empty text="No mission datasets." />}</StaticPanel>; }
-function AgentsPanel({ mission }: { mission: MissionInfo }) { return <StaticPanel icon={UsersRound} title="Execution" count={mission.agents?.length ?? 0}>{mission.commander && <InspectorRow label="Commander" value={mission.commander} />}{mission.agents?.length ? <div className="mt-2 flex flex-wrap gap-2">{mission.agents.map((agent) => <span className="rounded border bg-muted/30 px-2 py-1 text-[10px]" key={agent}>{stripRef(agent)}</span>)}</div> : <Empty text="No mission-level agents." />}</StaticPanel>; }
+function CommanderPanel({ mission }: { mission: MissionInfo }) { return <StaticPanel icon={Bot} title="Commander & executors" count={mission.commander ? 1 : 0}><p className="py-2 text-[11px] leading-5 text-muted-foreground">One commander coordinates this mission. Task executors receive only their assigned tools; the commander cannot call those tools directly.</p><dl className="divide-y border-t">{mission.commander && <InspectorRow label="Commander" value={stripRef(mission.commander)} />}<InspectorRow label="Model pool" value={references(mission.models)} /><InspectorRow label="Tool pool" value={references(mission.tools)} /></dl></StaticPanel>; }
 function TriggerPanel({ mission }: { mission: MissionInfo }) { return <StaticPanel icon={Webhook} title="Event triggers" count={mission.trigger ? 1 : 0}>{mission.trigger ? <div className="flex items-start gap-3 py-2.5"><Webhook className="mt-0.5 size-3 text-muted-foreground" /><div><p className="text-xs">Webhook</p><p className="mt-1 text-[10px] text-muted-foreground">{mission.trigger.webhookPath || 'Configured path'}{mission.trigger.hasSecret ? ' · secret protected' : ''}</p></div></div> : <Empty text="No event triggers." />}</StaticPanel>; }
 
 function StaticPanel({ children, count, icon: Icon, title }: { children: React.ReactNode; count: number; icon: typeof Network; title: string }) { return <section className="rounded-md border bg-card"><div className="flex items-center gap-2 border-b px-4 py-3"><Icon className="size-3.5 text-muted-foreground" /><h2 className="text-xs font-semibold">{title}</h2><span className="ml-auto text-[10px] tabular-nums text-muted-foreground">{count}</span></div><div className="px-4 py-2">{children}</div></section>; }
@@ -111,4 +114,4 @@ function InspectorRow({ label, value }: { label: string; value: string }) { retu
 function Empty({ text }: { text: string }) { return <p className="py-5 text-center text-[11px] text-muted-foreground">{text}</p>; }
 function DetailState({ text }: { text: string }) { return <div className="grid min-h-80 place-items-center rounded-md border bg-card px-6 text-center text-sm text-muted-foreground">{text}</div>; }
 function references(values?: string[]) { return values?.length ? values.map(stripRef).join(', ') : '—'; }
-function stripRef(value: string) { return value.replace(/^(tasks|agents|datasets|missions)\./, ''); }
+function stripRef(value: string) { return value.replace(/^(tasks|agents|datasets|missions|models|tools)\./, ''); }

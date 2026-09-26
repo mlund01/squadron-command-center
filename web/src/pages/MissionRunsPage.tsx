@@ -8,6 +8,7 @@ import { MarkdownContent } from '@/components/MarkdownContent';
 import { MissionDetailNav } from '@/components/MissionDetailNav';
 import { HumanInputPrompt } from '@/components/HumanInputPrompt';
 import { MissionGraph, type MissionTaskTelemetry } from '@/components/MissionGraph';
+import { MissionRuntimeRun } from '@/components/MissionRuntimeRun';
 import { RunMissionDialog } from '@/components/RunMissionDialog';
 import { Button } from '@/components/ui/button';
 import { RunExecutionTimeline } from '@/components/RunExecutionTimeline';
@@ -83,9 +84,9 @@ function MissionRunTelemetry({ instanceId, mission, runId, runsPath }: { instanc
   const [selectedTaskName, setSelectedTaskName] = useState('');
   const [selectedIterationIndex, setSelectedIterationIndex] = useState<number | undefined>();
   const queryClient = useQueryClient();
-  const detail = useQuery({ queryKey: ['mission-run', instanceId, runId], queryFn: () => getMissionRun(instanceId, runId), refetchInterval: (query) => query.state.data?.mission.status === 'running' ? 2_000 : false, retry: false });
-  const events = useQuery({ queryKey: ['mission-run-events', instanceId, runId], queryFn: () => getMissionRunEvents(instanceId, runId), refetchInterval: detail.data?.mission.status === 'running' ? 2_000 : false, retry: false });
-  const humanInputs = useQuery({ queryKey: ['human-inputs', instanceId, runId, 'open'], queryFn: () => listHumanInputs(instanceId, runId), refetchInterval: detail.data?.mission.status === 'running' ? 2_000 : false, retry: false });
+  const detail = useQuery({ queryKey: ['mission-run', instanceId, runId], queryFn: () => getMissionRun(instanceId, runId), refetchInterval: (query) => isLiveRun(query.state.data?.runtime?.state ?? query.state.data?.mission.status) ? 2_000 : false, retry: false });
+  const events = useQuery({ queryKey: ['mission-run-events', instanceId, runId], queryFn: () => getMissionRunEvents(instanceId, runId), refetchInterval: isLiveRun(detail.data?.runtime?.state ?? detail.data?.mission.status) ? 2_000 : false, retry: false });
+  const humanInputs = useQuery({ queryKey: ['human-inputs', instanceId, runId, 'open'], queryFn: () => listHumanInputs(instanceId, runId), refetchInterval: isLiveRun(detail.data?.runtime?.state ?? detail.data?.mission.status) ? 2_000 : false, retry: false });
   const stop = useMutation({
     mutationFn: () => stopMission(instanceId, runId),
     onSuccess: async () => { await Promise.all([
@@ -96,6 +97,16 @@ function MissionRunTelemetry({ instanceId, mission, runId, runsPath }: { instanc
   });
   if (detail.isLoading || events.isLoading) return <RunState text="Loading run telemetry…" />;
   if (detail.isError || events.isError || !detail.data) return <RunState text="The runner could not load this run’s telemetry." />;
+  if (detail.data.runtime) return <div className="space-y-6">
+    <div className="flex flex-wrap items-start justify-between gap-4">
+      <div><Link className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground" to={runsPath}><ArrowLeft className="size-3" />All runs</Link><div className="mt-2 flex items-center gap-2"><h2 className="text-sm font-semibold">{runId}</h2><RunStatus status={detail.data.runtime.state} /></div><p className="mt-1 text-[10px] text-muted-foreground">Started {formatTimestamp(detail.data.mission.startedAt)}</p></div>
+      <div className="flex items-center gap-2"><span className="rounded border bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">Revision {detail.data.runtime.revision} · {events.data?.events.length ?? 0} persisted events</span>{['running', 'waiting'].includes(detail.data.runtime.state) && <Button disabled={stop.isPending} onClick={() => stop.mutate()} size="xs" variant="outline"><Square className="size-3" />{stop.isPending ? 'Stopping…' : 'Stop'}</Button>}</div>
+    </div>
+    <MissionInputs value={detail.data.mission.inputsJson} />
+    {humanInputs.data?.humanInputs.map((request) => <HumanInputPrompt instanceId={instanceId} key={request.toolCallId} onResolved={() => { queryClient.invalidateQueries({ queryKey: ['human-inputs', instanceId, runId] }); queryClient.invalidateQueries({ queryKey: ['mission-run', instanceId, runId] }); queryClient.invalidateQueries({ queryKey: ['mission-run-events', instanceId, runId] }); }} request={request} />)}
+    {stop.isError && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">{stop.error instanceof Error ? stop.error.message : 'The mission could not be stopped.'}</p>}
+    <MissionRuntimeRun events={events.data?.events ?? []} mission={mission} run={detail.data.mission} runtime={detail.data.runtime} />
+  </div>;
   const telemetry = summarizeRun(detail.data, events.data?.events ?? [], mission);
   const selectedDefinition = mission.tasks?.find((task) => task.name === selectedTaskName);
   const selectedRun = selectedDefinition ? detail.data.tasks.find((task) => task.taskName === selectedDefinition.name) : undefined;
@@ -290,6 +301,7 @@ function textValue(value: unknown) { return typeof value === 'string' ? value : 
 function numberValue(value: unknown) { return typeof value === 'number' && Number.isFinite(value) ? value : 0; }
 function sum<T extends Record<string, unknown>>(values: T[], key: keyof T) { return values.reduce((total, value) => total + numberValue(value[key]), 0); }
 function runDurationMs(run: MissionRun) { const start = Date.parse(run.startedAt); const end = run.finishedAt ? Date.parse(run.finishedAt) : run.status === 'running' ? Date.now() : Number.NaN; return Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : undefined; }
+function isLiveRun(status?: string) { return status === 'pending' || status === 'running' || status === 'waiting' || status === 'stopping'; }
 function timestampsDuration(start?: string, finish?: string) { if (!start) return undefined; const startMs = Date.parse(start); const endMs = finish ? Date.parse(finish) : Date.now(); return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs ? endMs - startMs : undefined; }
 function percentile(values: number[], quantile: number) { if (!values.length) return undefined; return values[Math.min(values.length - 1, Math.max(0, Math.ceil(values.length * quantile) - 1))]; }
 function formatDuration(milliseconds?: number) { if (milliseconds == null || !Number.isFinite(milliseconds)) return '—'; const seconds = Math.max(0, Math.floor(milliseconds / 1000)); const hours = Math.floor(seconds / 3600); const minutes = Math.floor((seconds % 3600) / 60); if (hours) return `${hours}h ${minutes}m`; if (minutes) return `${minutes}m ${seconds % 60}s`; return `${seconds}s`; }

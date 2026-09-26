@@ -119,6 +119,8 @@ export interface MissionInfo {
   description?: string;
   source?: ConfigSource | null;
   commander?: string;
+  models?: string[];
+  tools?: string[];
   agents?: string[];
   inputs?: MissionInputInfo[];
   datasets?: DatasetInfo[];
@@ -145,6 +147,10 @@ export interface TaskInfo {
   name: string;
   description?: string;
   objective?: string;
+  models?: string[];
+  tools?: string[];
+  maxRetries?: number;
+  retryDelaySeconds?: number;
   agent?: string;
   commander?: string;
   dependsOn?: string[];
@@ -244,7 +250,53 @@ export interface MissionTaskRun {
   error?: string;
 }
 
-export interface MissionRunDetail { mission: MissionRun; tasks: MissionTaskRun[] }
+export interface MissionRuntimeContentPart {
+  type: string;
+  text?: string;
+  toolUseId?: string;
+  toolName?: string;
+  toolInputJson?: string;
+  isError?: boolean;
+  imageData?: string;
+  imageMediaType?: string;
+  documentData?: string;
+  documentMediaType?: string;
+  documentFilename?: string;
+}
+export interface MissionRuntimeMessage {
+  id?: string;
+  role: string;
+  parts: MissionRuntimeContentPart[];
+  model?: { id: string; model?: string; inputTokens?: number; outputTokens?: number; cacheWriteTokens?: number; cacheReadTokens?: number };
+}
+export interface MissionRuntimeAttempt {
+  id: string;
+  number: number;
+  model: string;
+  tools?: string[];
+  runAs?: string;
+  dispatchedAt: string;
+  phase?: string;
+  messages?: MissionRuntimeMessage[];
+  toolOperations?: Array<{ toolUseId: string; toolName: string; status: string; startedAt?: string; isError?: boolean }>;
+}
+export interface MissionRuntimeTask {
+  name: string;
+  state: string;
+  attempt: number;
+  summary?: string;
+  error?: string;
+  retryReadyAt?: string;
+  humanInput?: { question: string; shortSummary?: string; requestedAt: string; deadlineAt?: string };
+  attempts?: MissionRuntimeAttempt[];
+}
+export interface MissionRuntimeInfo {
+  revision: number;
+  state: string;
+  commander: { id: string; state: string; messages: MissionRuntimeMessage[] };
+  tasks: MissionRuntimeTask[];
+}
+export interface MissionRunDetail { mission: MissionRun; tasks: MissionTaskRun[]; runtime?: MissionRuntimeInfo }
 export interface MissionTaskDetail {
   task: MissionTaskRun;
   outputs: Array<{ id: string; taskId: string; datasetName?: string; datasetIndex?: number; itemId?: string; outputJson: string; createdAt: string }>;

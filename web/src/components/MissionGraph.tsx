@@ -15,7 +15,7 @@ import {
   type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Bot, GitBranch, Maximize2, Minimize2, Network, Repeat2 } from 'lucide-react';
+import { GitBranch, Maximize2, Minimize2, Repeat2 } from 'lucide-react';
 import type { MissionInfo, TaskInfo } from '@/api/types';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -169,7 +169,7 @@ function TaskNode({ data }: NodeProps<GraphTaskNode>) {
       </div>
       <p className="mt-2 line-clamp-2 text-[10px] leading-4 text-muted-foreground">{markdownExcerpt(telemetry?.error || task.objective || task.description || 'No objective provided.')}</p>
       <div className="mt-2 flex items-center gap-1.5 text-[9px] text-muted-foreground">
-        {task.agent ? <><Bot className="size-2.5" /><span className="truncate">{task.agent}</span></> : task.commander ? <><Network className="size-2.5" /><span>Commander</span></> : <span>Mission agents</span>}
+        <span>Task executor</span>
         {telemetry?.iteration ? <span className="ml-auto shrink-0 tabular-nums">{telemetry.iteration.total} {telemetry.iteration.parallel ? 'parallel' : 'sequential'} · {telemetry.iteration.completed}/{telemetry.iteration.total}</span> : telemetry?.durationMs != null && <span className="ml-auto tabular-nums">{formatCompactDuration(telemetry.durationMs)}</span>}
       </div>
     </div>
