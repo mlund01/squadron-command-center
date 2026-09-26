@@ -5,6 +5,7 @@ import { MarkdownContent } from '@/components/MarkdownContent';
 import { MissionGraph, type MissionTaskTelemetry } from '@/components/MissionGraph';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import './MissionRuntimeRun.css';
 
 type RuntimeEvent = MissionEventRecord & {
   data: Record<string, unknown>;
@@ -35,6 +36,9 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime }: { 
   const completed = runtime.tasks.filter((task) => task.state === 'completed').length;
   const waits = runtime.tasks.filter((task) => task.humanInput).length;
   const retries = runtime.tasks.reduce((total, task) => total + Math.max(0, task.attempt - 1), 0);
+  const commanderActive = runtime.commander.state === 'active';
+  const executorActive = runtime.tasks.some((task) => task.state === 'running' || task.state === 'dispatching');
+  const commanderStatus = commanderActive ? executorActive ? 'Waiting for task executors' : 'Commander deciding' : undefined;
   const choose = (next: Selection) => { setSelection(next); setTab('chat'); };
 
   return <>
@@ -60,7 +64,7 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime }: { 
       <nav aria-label="Session view" className="flex h-9 shrink-0 gap-1 border-b px-5"><TabButton active={tab === 'chat'} label="Chat" onClick={() => setTab('chat')} /><TabButton active={tab === 'trace'} label="Trace" onClick={() => setTab('trace')} /></nav>
       <div className="min-h-0 flex-1 overflow-y-auto"><div className="mx-auto w-full max-w-4xl space-y-5 p-5 sm:p-6">
         {tab === 'chat' ? selection.kind === 'commander'
-          ? <Conversation empty="The commander has not produced a message yet." messages={runtime.commander.messages} mode="commander" />
+          ? <Conversation empty="The commander has not produced a message yet." messages={runtime.commander.messages} mode="commander" status={commanderStatus} />
           : selectedTask ? <TaskConversation task={selectedTask} /> : <p className="text-xs text-muted-foreground">Task telemetry is not available yet.</p>
           : <RuntimeTrace events={events} run={run} selection={selection} task={selectedTask} />}
       </div></div>
@@ -99,15 +103,22 @@ function TaskConversation({ task }: { task: MissionRuntimeTask }) {
     {task.error && <p className="border-l-2 border-destructive px-3 text-[11px] text-destructive">{task.error}</p>}
     {task.attempts && task.attempts.length > 1 && <div className="flex flex-wrap gap-1.5">{task.attempts.map((candidate) => <Button key={candidate.id} onClick={() => setAttemptId(candidate.id)} size="xs" variant={candidate.id === attempt?.id ? 'secondary' : 'outline'}>Attempt {candidate.number}</Button>)}</div>}
     {attempt && <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-y py-3 text-[10px] sm:grid-cols-4"><Fact label="Model" value={attempt.model} /><Fact label="Attempt" value={String(attempt.number)} /><Fact label="Phase" value={attempt.phase || task.state} /><Fact label="Started" value={formatTime(attempt.dispatchedAt)} /><div className="col-span-2 sm:col-span-4"><Fact label="Granted tools" value={attempt.tools?.join(', ') || 'None'} /></div></div>}
-    {attempt ? <Conversation empty="The executor has not produced a message yet." messages={attempt.messages ?? []} mode="executor" /> : <p className="text-xs text-muted-foreground">This task has not been dispatched.</p>}
-    {task.summary && !attempt?.messages?.some((message) => message.role === 'assistant' && message.parts.some((part) => part.type === 'text' && part.text?.trim() === task.summary?.trim())) && <section className="border-t pt-4"><p className="text-[9px] uppercase tracking-wider text-muted-foreground">Accepted result</p><MarkdownContent className="mt-2 text-[11px]" content={task.summary} /></section>}
+    {attempt ? <Conversation empty="The executor has not produced a message yet." messages={attempt.messages ?? []} mode="executor" status={task.state === 'running' || task.state === 'dispatching' ? 'Task executor working' : undefined} /> : <p className="text-xs text-muted-foreground">This task has not been dispatched.</p>}
+    {task.summary && !hasMatchingAssistantResult(attempt?.messages ?? [], task.summary) && <section className="border-t pt-4"><p className="text-[9px] uppercase tracking-wider text-muted-foreground">Accepted result</p><MarkdownContent className="mt-2 text-[11px]" content={task.summary} /></section>}
   </>;
+}
+
+function hasMatchingAssistantResult(messages: MissionRuntimeMessage[], summary: string): boolean {
+  const accepted = summary.trim();
+  const untruncated = accepted.endsWith('...') ? accepted.slice(0, -3).trimEnd() : accepted;
+  return messages.some((message) => message.role === 'assistant' && message.parts.some((part) =>
+    part.type === 'text' && (part.text?.trim() === accepted || (accepted.endsWith('...') && part.text?.trim().startsWith(untruncated)))));
 }
 
 function Fact({ label, value }: { label: string; value: string }) { return <div className="min-w-0"><p className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</p><p className="mt-1 break-words font-medium">{value}</p></div>; }
 
-function Conversation({ empty, messages, mode }: { empty: string; messages: MissionRuntimeMessage[]; mode: 'commander' | 'executor' }) {
-  if (!messages.length) return <p className="py-10 text-center text-xs text-muted-foreground">{empty}</p>;
+function Conversation({ empty, messages, mode, status }: { empty: string; messages: MissionRuntimeMessage[]; mode: 'commander' | 'executor'; status?: string }) {
+  if (!messages.length) return status ? <WorkingIndicator label={status} /> : <p className="py-10 text-center text-xs text-muted-foreground">{empty}</p>;
   const results = new Map<string, MissionRuntimeContentPart>();
   const uses = new Set<string>();
   const media = new Map<string, MissionRuntimeContentPart[]>();
@@ -122,7 +133,11 @@ function Conversation({ empty, messages, mode }: { empty: string; messages: Miss
     return <section className="space-y-2" key={message.id ?? index}>
     <div className="flex items-center gap-2 text-[9px] text-muted-foreground"><span className="font-semibold uppercase tracking-wider text-foreground">{message.role === 'assistant' ? mode === 'commander' ? 'Commander' : 'Task executor' : message.role}</span>{message.model?.model && <span>· {message.model.model}</span>}</div>
     {visibleParts.map((part, partIndex) => <ContentPart key={`${part.toolUseId ?? part.type}:${partIndex}`} media={part.toolUseId ? media.get(part.toolUseId) : undefined} mode={mode} part={part} result={part.toolUseId ? results.get(part.toolUseId) : undefined} skipResult={false} />)}
-  </section>})}</div>;
+  </section>})}{status && <WorkingIndicator label={status} />}</div>;
+}
+
+function WorkingIndicator({ label }: { label: string }) {
+  return <div aria-live="polite" className="flex items-center gap-3 py-2 text-[11px] text-muted-foreground"><Bot className="size-3.5 shrink-0" /><span className="runtime-working-shimmer rounded px-2 py-1">{label}</span></div>;
 }
 
 type CommanderSnapshot = { ready: string[]; completed: string[]; results: Record<string, { Summary?: string }> };

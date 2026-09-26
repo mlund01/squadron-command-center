@@ -78,6 +78,7 @@ export function MissionGraph({
     () => layoutMission(mission.tasks ?? [], selectedTask, telemetry, routeChoices),
     [mission.tasks, routeChoices, selectedTask, telemetry],
   );
+  const graphStructureKey = `${mission.name}:${(mission.tasks ?? []).map((task) => `${task.name}:${(task.dependsOn ?? []).join(',')}:${(task.sendTo ?? []).join(',')}`).join('|')}`;
   const handleNodeClick: NodeMouseHandler = (_event, node) => {
     const task = (node.data as TaskNodeData).task;
     if (task) onSelectTask?.(task);
@@ -99,11 +100,26 @@ export function MissionGraph({
 
   useEffect(() => {
     if (!flow) return;
-    const frame = window.requestAnimationFrame(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    let attempts = 0;
+    const fitWhenMeasured = () => {
+      if (cancelled) return;
+      const measured = graph.nodes.every((node) => {
+        const size = flow.getNode(node.id)?.measured;
+        return (size?.width ?? 0) > 0 && (size?.height ?? 0) > 0;
+      });
+      if (!measured && attempts++ < 20) {
+        timer = window.setTimeout(fitWhenMeasured, 40);
+        return;
+      }
       void flow.fitView({ duration: 180, maxZoom: 1, padding: expanded ? 0.08 : 0.18 });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [expanded, flow]);
+    };
+    const frame = window.requestAnimationFrame(fitWhenMeasured);
+    return () => { cancelled = true; window.cancelAnimationFrame(frame); if (timer) window.clearTimeout(timer); };
+    // Refit on graph or canvas-size changes, but not on telemetry refreshes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, flow, graphStructureKey]);
 
   if (graph.nodes.length === 0) {
     return <div className="grid h-full min-h-80 place-items-center text-xs text-muted-foreground">This mission has no tasks.</div>;
