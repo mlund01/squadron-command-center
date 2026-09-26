@@ -116,7 +116,7 @@ function TaskConversation({ active, task }: { active: boolean; task: MissionRunt
   const [attemptId, setAttemptId] = useState(task.attempts?.at(-1)?.id ?? '');
   const attempt = task.attempts?.find((candidate) => candidate.id === attemptId) ?? task.attempts?.at(-1);
   return <>
-    {task.humanInput && <div className="border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-[11px]"><p className="font-medium">Waiting for human input</p><p className="mt-1 text-muted-foreground">{task.humanInput.shortSummary || task.humanInput.question}</p></div>}
+    {task.humanInput && <div className="border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-[11px]"><p className="font-medium">Waiting for human input{task.humanInput.shortSummary ? ` · ${task.humanInput.shortSummary}` : ''}</p><MarkdownContent className="mt-2 text-muted-foreground" content={task.humanInput.question} /><p className="mt-2 text-[10px] text-muted-foreground">Close this panel to answer on the run page.</p></div>}
     {task.retryReadyAt && <p className="flex items-center gap-2 text-[10px] text-muted-foreground"><RefreshCcw className="size-3" />Retry scheduled for {formatTime(task.retryReadyAt)}</p>}
     {task.error && <p className="border-l-2 border-destructive px-3 text-[11px] text-destructive">{task.error}</p>}
     {task.attempts && task.attempts.length > 1 && <div className="flex flex-wrap gap-1.5">{task.attempts.map((candidate) => <Button key={candidate.id} onClick={() => setAttemptId(candidate.id)} size="xs" variant={candidate.id === attempt?.id ? 'secondary' : 'outline'}>Attempt {candidate.number}</Button>)}</div>}

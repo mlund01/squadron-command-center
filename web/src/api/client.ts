@@ -81,7 +81,21 @@ export function revealWorkerCredential(
 }
 
 export function getWorkspaceConfig(workspaceId: string): Promise<WorkspaceConfigSnapshot> {
-  return fetchJSON(`/workspaces/${workspaceId}/config`);
+  return fetchJSON<WorkspaceConfigSnapshot>(`/workspaces/${workspaceId}/config`).then((snapshot) => ({
+    ...snapshot,
+    // The runner may briefly publish an unready config while reconnecting.
+    // Go encodes its nil slices as null, but every page expects collections.
+    config: {
+      ...snapshot.config,
+      agents: snapshot.config?.agents ?? [],
+      missions: snapshot.config?.missions ?? [],
+      models: snapshot.config?.models ?? [],
+      skills: snapshot.config?.skills ?? [],
+      plugins: snapshot.config?.plugins ?? [],
+      variables: snapshot.config?.variables ?? [],
+      sharedFolders: snapshot.config?.sharedFolders ?? [],
+    },
+  }));
 }
 
 export function listWorkspaceVariables(workspaceId: string): Promise<WorkspaceVariable[]> {
