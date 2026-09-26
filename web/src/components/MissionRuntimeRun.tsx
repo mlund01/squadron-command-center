@@ -14,7 +14,7 @@ type RuntimeEvent = MissionEventRecord & {
 };
 type Selection = { kind: 'commander' } | { kind: 'task'; name: string };
 
-export function MissionRuntimeRun({ events: records, mission, run, runtime }: { events: MissionEventRecord[]; mission: MissionInfo; run: MissionRun; runtime: MissionRuntimeInfo }) {
+export function MissionRuntimeRun({ events: records, mission, run, runtime, status }: { events: MissionEventRecord[]; mission: MissionInfo; run: MissionRun; runtime: MissionRuntimeInfo; status: string }) {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [tab, setTab] = useState<'chat' | 'trace'>('chat');
   const [expanded, setExpanded] = useState(false);
@@ -48,15 +48,21 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime }: { 
   const completed = executedTasks.filter((task) => task.state === 'completed').length;
   const waits = executedTasks.filter((task) => task.humanInput).length;
   const retries = executedTasks.reduce((total, task) => total + Math.max(0, task.attempt - 1), 0);
-  const commanderActive = runtime.commander.state === 'active';
-  const executorActive = runtime.tasks.some((task) => task.state === 'running' || task.state === 'dispatching');
+  const runActive = status === 'running' || status === 'waiting';
+  const commanderActive = runActive && runtime.commander.state === 'active';
+  const executorActive = runActive && runtime.tasks.some((task) => task.state === 'running' || task.state === 'dispatching');
   const commanderStatus = commanderActive ? executorActive ? 'Waiting for task executors' : 'Commander deciding' : undefined;
+  const failureEvent = [...events].reverse().find((event) => event.eventType === 'mission.failed');
+  const failureReason = stringValue(failureEvent?.data.Error ?? failureEvent?.data.error) || runtime.tasks.find((task) => task.state === 'failed')?.error;
+  const staleTerminalCheckpoint = ['completed', 'failed', 'stopped'].includes(status) && status !== runtime.state;
   const choose = (next: Selection) => { setSelection(next); setTab('chat'); };
 
   return <>
+    {status === 'failed' && <section className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-[11px]" role="alert"><p className="font-semibold text-destructive">Mission failed</p><p className="mt-1 text-muted-foreground">{failureReason || (staleTerminalCheckpoint ? 'The run ended before its last runtime checkpoint reached a terminal state. Earlier failure details were not persisted.' : 'Inspect the failed task or trace for details.')}</p></section>}
+    {status === 'stopped' && staleTerminalCheckpoint && <p className="rounded-md border px-4 py-3 text-[11px] text-muted-foreground">This run was stopped. Its last runtime checkpoint remains available for inspection.</p>}
     <section className="grid overflow-hidden rounded-md border bg-card sm:grid-cols-2 lg:grid-cols-4" aria-label="Run summary">
       <Metric label="Task executions" value={`${completed}/${executedTasks.length}`} detail={`${executedTasks.filter((task) => task.state === 'running').length} running`} />
-      <Metric label="Commander turns" value={String(commanderTurns)} detail={runtime.commander.state} />
+      <Metric label="Commander turns" value={String(commanderTurns)} detail={staleTerminalCheckpoint ? 'Last checkpoint: ' + runtime.commander.state : runtime.commander.state} />
       <Metric label="Waiting for input" value={String(waits)} detail={waits ? 'Action needed' : 'None'} />
       <Metric label="Retries" value={String(retries)} detail={`${runtime.revision} durable revisions`} />
     </section>
@@ -69,7 +75,7 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime }: { 
       <header className="flex h-16 shrink-0 items-center gap-3 border-b px-5">
         <span className="grid size-8 shrink-0 place-items-center rounded-full border bg-muted/40">{selection.kind === 'commander' ? <Bot className="size-4" /> : <Activity className="size-4" />}</span>
         <div className="min-w-0 flex-1"><p className="text-[9px] uppercase tracking-wider text-muted-foreground">{selection.kind === 'commander' ? 'Mission commander' : iterationParentNames.has(selection.name) ? 'Iteration' : 'Task executor'}</p><h2 className="mt-0.5 truncate text-xs font-semibold">{selection.kind === 'commander' ? mission.name : selection.name}</h2></div>
-        <span className="text-[10px] capitalize text-muted-foreground">{selection.kind === 'commander' ? runtime.commander.state : selectedTask?.state}</span>
+        <span className="text-[10px] capitalize text-muted-foreground">{selection.kind === 'commander' && staleTerminalCheckpoint ? 'Last checkpoint: ' + runtime.commander.state : selection.kind === 'commander' ? runtime.commander.state : selectedTask?.state}</span>
         <button aria-label={expanded ? 'Exit expanded view' : 'Expand session'} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setExpanded((value) => !value)}>{expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}</button>
         <button aria-label="Close session" className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setSelection(null)}><X className="size-3.5" /></button>
       </header>
@@ -77,7 +83,7 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime }: { 
       <div className="min-h-0 flex-1 overflow-y-auto"><div className="mx-auto w-full max-w-4xl space-y-5 p-5 sm:p-6">
         {tab === 'chat' ? selection.kind === 'commander'
           ? <Conversation empty="The commander has not produced a message yet." messages={runtime.commander.messages} mode="commander" status={commanderStatus} />
-          : selectedTask ? iterationParentNames.has(selectedTask.name) ? <IterationOverview children={selectedIterationChildren} onSelect={choose} task={selectedTask} /> : <TaskConversation task={selectedTask} /> : <p className="text-xs text-muted-foreground">Task telemetry is not available yet.</p>
+          : selectedTask ? iterationParentNames.has(selectedTask.name) ? <IterationOverview children={selectedIterationChildren} onSelect={choose} task={selectedTask} /> : <TaskConversation active={runActive} task={selectedTask} /> : <p className="text-xs text-muted-foreground">Task telemetry is not available yet.</p>
           : <RuntimeTrace events={events} run={run} selection={selection} task={selectedTask} />}
       </div></div>
     </aside>}
@@ -106,7 +112,7 @@ function TaskTimeline({ events, onSelect, run, selected, tasks }: { events: Runt
   </div></div></section>;
 }
 
-function TaskConversation({ task }: { task: MissionRuntimeTask }) {
+function TaskConversation({ active, task }: { active: boolean; task: MissionRuntimeTask }) {
   const [attemptId, setAttemptId] = useState(task.attempts?.at(-1)?.id ?? '');
   const attempt = task.attempts?.find((candidate) => candidate.id === attemptId) ?? task.attempts?.at(-1);
   return <>
@@ -115,7 +121,7 @@ function TaskConversation({ task }: { task: MissionRuntimeTask }) {
     {task.error && <p className="border-l-2 border-destructive px-3 text-[11px] text-destructive">{task.error}</p>}
     {task.attempts && task.attempts.length > 1 && <div className="flex flex-wrap gap-1.5">{task.attempts.map((candidate) => <Button key={candidate.id} onClick={() => setAttemptId(candidate.id)} size="xs" variant={candidate.id === attempt?.id ? 'secondary' : 'outline'}>Attempt {candidate.number}</Button>)}</div>}
     {attempt && <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-y py-3 text-[10px] sm:grid-cols-4"><Fact label="Model" value={attempt.model} /><Fact label="Attempt" value={String(attempt.number)} /><Fact label="Phase" value={attempt.phase || task.state} /><Fact label="Started" value={formatTime(attempt.dispatchedAt)} /><div className="col-span-2 sm:col-span-4"><Fact label="Granted tools" value={attempt.tools?.join(', ') || 'None'} /></div></div>}
-    {attempt ? <Conversation empty="The executor has not produced a message yet." messages={attempt.messages ?? []} mode="executor" status={task.state === 'running' || task.state === 'dispatching' ? 'Task executor working' : undefined} /> : <p className="text-xs text-muted-foreground">This task has not been dispatched.</p>}
+    {attempt ? <Conversation empty="The executor has not produced a message yet." messages={attempt.messages ?? []} mode="executor" status={active && (task.state === 'running' || task.state === 'dispatching') ? 'Task executor working' : undefined} /> : <p className="text-xs text-muted-foreground">This task has not been dispatched.</p>}
     {task.summary && !hasMatchingAssistantResult(attempt?.messages ?? [], task.summary) && <section className="border-t pt-4"><p className="text-[9px] uppercase tracking-wider text-muted-foreground">Accepted result</p><MarkdownContent className="mt-2 text-[11px]" content={task.summary} /></section>}
   </>;
 }
