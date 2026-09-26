@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, Bot, ChevronDown, Clock3, Maximize2, MessageSquareText, Minimize2, RefreshCcw, Wrench, X } from 'lucide-react';
+import { Activity, ArrowUpRight, Bot, ChevronDown, Clock3, Maximize2, MessageSquareText, Minimize2, RefreshCcw, Wrench, X } from 'lucide-react';
+import { Link, useParams } from 'react-router-dom';
 import type { MissionEventRecord, MissionInfo, MissionRun, MissionRuntimeContentPart, MissionRuntimeInfo, MissionRuntimeMessage, MissionRuntimeTask } from '@/api/types';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { MissionGraph, type MissionTaskTelemetry } from '@/components/MissionGraph';
@@ -15,6 +16,7 @@ type RuntimeEvent = MissionEventRecord & {
 type Selection = { kind: 'commander' } | { kind: 'task'; name: string };
 
 export function MissionRuntimeRun({ events: records, mission, run, runtime, status }: { events: MissionEventRecord[]; mission: MissionInfo; run: MissionRun; runtime: MissionRuntimeInfo; status: string }) {
+  const { workspaceId = '' } = useParams();
   const [selection, setSelection] = useState<Selection | null>(null);
   const [tab, setTab] = useState<'chat' | 'trace'>('chat');
   const [expanded, setExpanded] = useState(false);
@@ -42,6 +44,10 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime, stat
     const route = objectValue(event.data.Route ?? event.data.route);
     return [event.taskName, stringValue(route.Target ?? route.target)];
   }).filter(([source, target]) => source && target)), [events]);
+  const launchedRuns = useMemo(() => events.filter((event) => event.eventType === 'cross_mission_launch.completed').map((event) => {
+    const launch = objectValue(event.data.Launch ?? event.data.launch);
+    return { mission: stringValue(launch.target ?? launch.Target), runId: stringValue(launch.childRunId ?? launch.ChildRunID) };
+  }).filter((launch) => launch.mission && launch.runId), [events]);
   const selectedTask = selection?.kind === 'task' ? taskByName.get(selection.name) : undefined;
   const selectedIterationChildren = selectedTask && iterationParentNames.has(selectedTask.name) ? runtime.tasks.filter((task) => isIterationChild(task.name, selectedTask.name)).sort((a, b) => iterationIndex(a.name) - iterationIndex(b.name)) : [];
   const commanderTurns = runtime.commander.messages.filter((message) => message.role === 'assistant').length;
@@ -66,6 +72,7 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime, stat
       <Metric label="Waiting for input" value={String(waits)} detail={waits ? 'Action needed' : 'None'} />
       <Metric label="Retries" value={String(retries)} detail={`${runtime.revision} durable revisions`} />
     </section>
+    {launchedRuns.length > 0 && <section aria-label="Routed mission runs" className="rounded-md border bg-card px-4 py-3 text-[11px]"><p className="font-semibold">Continued in another mission</p><div className="mt-2 flex flex-wrap gap-x-5 gap-y-2">{launchedRuns.map((launch) => <Link className="inline-flex items-center gap-1.5 text-primary hover:underline" key={`${launch.mission}/${launch.runId}`} to={`/w/${workspaceId}/missions/${encodeURIComponent(launch.mission)}/runs/${encodeURIComponent(launch.runId)}`}>{launch.mission} · {launch.runId}<ArrowUpRight className="size-3" /></Link>)}</div></section>}
     <section className="overflow-hidden rounded-md border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"><div><h2 className="text-xs font-semibold">Execution canvas</h2><p className="mt-1 text-[10px] text-muted-foreground">The commander follows this graph. Select a task to inspect its executor session.</p></div><Button onClick={() => choose({ kind: 'commander' })} size="xs" variant="outline"><MessageSquareText className="size-3" />Commander conversation</Button></div>
       <div className="h-[35rem] min-w-0"><MissionGraph mission={mission} onSelectTask={(task) => choose({ kind: 'task', name: task.name })} routeChoices={routeChoices} selectedTask={selection?.kind === 'task' ? baseTaskName(selection.name) : undefined} telemetry={telemetry} /></div>
