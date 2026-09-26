@@ -20,22 +20,34 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime }: { 
   const [expanded, setExpanded] = useState(false);
   const events = useMemo(() => records.map(parseRuntimeEvent), [records]);
   const taskByName = useMemo(() => new Map(runtime.tasks.map((task) => [task.name, task])), [runtime.tasks]);
+  const iterationParentNames = useMemo(() => new Set((mission.tasks ?? []).filter((task) => task.iterator).map((task) => task.name)), [mission.tasks]);
+  const executedTasks = runtime.tasks.filter((task) => !iterationParentNames.has(task.name));
   const telemetry = useMemo(() => Object.fromEntries((mission.tasks ?? []).map((task) => {
     const children = runtime.tasks.filter((candidate) => candidate.name === task.name || candidate.name.startsWith(`${task.name}[`));
+    const iterationChildren = task.iterator ? children.filter((child) => isIterationChild(child.name, task.name)) : [];
     const parent = taskByName.get(task.name);
     const state = parent?.state ?? (children.some((child) => child.state === 'running') ? 'running' : 'blocked');
     const status = state === 'ready' || state === 'blocked' || state === 'dispatching' ? 'configured' : state === 'retry_pending' || state === 'waiting' ? 'running' : state;
-    return [task.name, { status, error: parent?.error } satisfies MissionTaskTelemetry];
+    const iteration = task.iterator && iterationChildren.length ? {
+      completed: iterationChildren.filter((child) => child.state === 'completed').length,
+      failed: iterationChildren.filter((child) => child.state === 'failed').length,
+      running: iterationChildren.filter((child) => child.state === 'running' || child.state === 'dispatching').length,
+      total: iterationChildren.length,
+      parallel: task.iterator.parallel,
+      lanes: [],
+    } : undefined;
+    return [task.name, { status, error: parent?.error, iteration } satisfies MissionTaskTelemetry];
   })), [mission.tasks, runtime.tasks, taskByName]);
   const routeChoices = useMemo(() => Object.fromEntries(events.filter((event) => event.eventType === 'route.selected').map((event) => {
     const route = objectValue(event.data.Route ?? event.data.route);
     return [event.taskName, stringValue(route.Target ?? route.target)];
   }).filter(([source, target]) => source && target)), [events]);
   const selectedTask = selection?.kind === 'task' ? taskByName.get(selection.name) : undefined;
+  const selectedIterationChildren = selectedTask && iterationParentNames.has(selectedTask.name) ? runtime.tasks.filter((task) => isIterationChild(task.name, selectedTask.name)).sort((a, b) => iterationIndex(a.name) - iterationIndex(b.name)) : [];
   const commanderTurns = runtime.commander.messages.filter((message) => message.role === 'assistant').length;
-  const completed = runtime.tasks.filter((task) => task.state === 'completed').length;
-  const waits = runtime.tasks.filter((task) => task.humanInput).length;
-  const retries = runtime.tasks.reduce((total, task) => total + Math.max(0, task.attempt - 1), 0);
+  const completed = executedTasks.filter((task) => task.state === 'completed').length;
+  const waits = executedTasks.filter((task) => task.humanInput).length;
+  const retries = executedTasks.reduce((total, task) => total + Math.max(0, task.attempt - 1), 0);
   const commanderActive = runtime.commander.state === 'active';
   const executorActive = runtime.tasks.some((task) => task.state === 'running' || task.state === 'dispatching');
   const commanderStatus = commanderActive ? executorActive ? 'Waiting for task executors' : 'Commander deciding' : undefined;
@@ -43,7 +55,7 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime }: { 
 
   return <>
     <section className="grid overflow-hidden rounded-md border bg-card sm:grid-cols-2 lg:grid-cols-4" aria-label="Run summary">
-      <Metric label="Tasks completed" value={`${completed}/${runtime.tasks.length}`} detail={`${runtime.tasks.filter((task) => task.state === 'running').length} running`} />
+      <Metric label="Task executions" value={`${completed}/${executedTasks.length}`} detail={`${executedTasks.filter((task) => task.state === 'running').length} running`} />
       <Metric label="Commander turns" value={String(commanderTurns)} detail={runtime.commander.state} />
       <Metric label="Waiting for input" value={String(waits)} detail={waits ? 'Action needed' : 'None'} />
       <Metric label="Retries" value={String(retries)} detail={`${runtime.revision} durable revisions`} />
@@ -52,11 +64,11 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime }: { 
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"><div><h2 className="text-xs font-semibold">Execution canvas</h2><p className="mt-1 text-[10px] text-muted-foreground">The commander follows this graph. Select a task to inspect its executor session.</p></div><Button onClick={() => choose({ kind: 'commander' })} size="xs" variant="outline"><MessageSquareText className="size-3" />Commander conversation</Button></div>
       <div className="h-[35rem] min-w-0"><MissionGraph mission={mission} onSelectTask={(task) => choose({ kind: 'task', name: task.name })} routeChoices={routeChoices} selectedTask={selection?.kind === 'task' ? baseTaskName(selection.name) : undefined} telemetry={telemetry} /></div>
     </section>
-    <TaskTimeline events={events} onSelect={choose} run={run} runtime={runtime} selected={selection} />
+    <TaskTimeline events={events} onSelect={choose} run={run} selected={selection} tasks={executedTasks} />
     {selection && <aside aria-label={selection.kind === 'commander' ? 'Commander session' : `${selection.name} task executor`} className={cn('fixed z-50 flex min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xl', expanded ? 'inset-3 sm:inset-4' : 'inset-y-3 right-3 w-[min(43rem,calc(100vw-1.5rem))] sm:inset-y-4 sm:right-4 sm:w-[min(43rem,calc(100vw-2rem))]')} role="dialog">
       <header className="flex h-16 shrink-0 items-center gap-3 border-b px-5">
         <span className="grid size-8 shrink-0 place-items-center rounded-full border bg-muted/40">{selection.kind === 'commander' ? <Bot className="size-4" /> : <Activity className="size-4" />}</span>
-        <div className="min-w-0 flex-1"><p className="text-[9px] uppercase tracking-wider text-muted-foreground">{selection.kind === 'commander' ? 'Mission commander' : 'Task executor'}</p><h2 className="mt-0.5 truncate text-xs font-semibold">{selection.kind === 'commander' ? mission.name : selection.name}</h2></div>
+        <div className="min-w-0 flex-1"><p className="text-[9px] uppercase tracking-wider text-muted-foreground">{selection.kind === 'commander' ? 'Mission commander' : iterationParentNames.has(selection.name) ? 'Iteration' : 'Task executor'}</p><h2 className="mt-0.5 truncate text-xs font-semibold">{selection.kind === 'commander' ? mission.name : selection.name}</h2></div>
         <span className="text-[10px] capitalize text-muted-foreground">{selection.kind === 'commander' ? runtime.commander.state : selectedTask?.state}</span>
         <button aria-label={expanded ? 'Exit expanded view' : 'Expand session'} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setExpanded((value) => !value)}>{expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}</button>
         <button aria-label="Close session" className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setSelection(null)}><X className="size-3.5" /></button>
@@ -65,7 +77,7 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime }: { 
       <div className="min-h-0 flex-1 overflow-y-auto"><div className="mx-auto w-full max-w-4xl space-y-5 p-5 sm:p-6">
         {tab === 'chat' ? selection.kind === 'commander'
           ? <Conversation empty="The commander has not produced a message yet." messages={runtime.commander.messages} mode="commander" status={commanderStatus} />
-          : selectedTask ? <TaskConversation task={selectedTask} /> : <p className="text-xs text-muted-foreground">Task telemetry is not available yet.</p>
+          : selectedTask ? iterationParentNames.has(selectedTask.name) ? <IterationOverview children={selectedIterationChildren} onSelect={choose} task={selectedTask} /> : <TaskConversation task={selectedTask} /> : <p className="text-xs text-muted-foreground">Task telemetry is not available yet.</p>
           : <RuntimeTrace events={events} run={run} selection={selection} task={selectedTask} />}
       </div></div>
     </aside>}
@@ -75,7 +87,7 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime }: { 
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) { return <div className="border-t p-4 first:border-t-0 sm:border-t-0 sm:border-l sm:first:border-l-0"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p><p className="mt-2 text-lg font-semibold tabular-nums">{value}</p><p className="mt-1 text-[10px] text-muted-foreground">{detail}</p></div>; }
 function TabButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) { return <button aria-current={active ? 'page' : undefined} className={cn('border-b-2 px-3 text-[10px] font-medium', active ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')} onClick={onClick} type="button">{label}</button>; }
 
-function TaskTimeline({ events, onSelect, run, runtime, selected }: { events: RuntimeEvent[]; onSelect: (selection: Selection) => void; run: MissionRun; runtime: MissionRuntimeInfo; selected: Selection | null }) {
+function TaskTimeline({ events, onSelect, run, selected, tasks }: { events: RuntimeEvent[]; onSelect: (selection: Selection) => void; run: MissionRun; selected: Selection | null; tasks: MissionRuntimeTask[] }) {
   const [now, setNow] = useState(0);
   useEffect(() => {
     if (run.finishedAt) return;
@@ -90,7 +102,7 @@ function TaskTimeline({ events, onSelect, run, runtime, selected }: { events: Ru
   return <section className="overflow-hidden rounded-md border bg-card"><div className="border-b px-4 py-3"><h2 className="text-xs font-semibold">Task execution timeline</h2><p className="mt-1 text-[10px] text-muted-foreground">All tasks share the mission clock. Overlapping bars ran in parallel; separate bars show retries.</p></div><div className="overflow-x-auto"><div className="min-w-[640px] p-4">
     <div className="grid grid-cols-[13rem_minmax(0,1fr)] gap-3 pb-2 text-[9px] uppercase tracking-wider text-muted-foreground"><span>Session</span><div className="flex justify-between"><span>Start</span><span>{formatDuration(duration)}</span></div></div>
     <button className={cn('grid w-full grid-cols-[13rem_minmax(0,1fr)] items-center gap-3 rounded px-2 py-2 text-left hover:bg-accent/40', selected?.kind === 'commander' && 'bg-accent/40')} onClick={() => onSelect({ kind: 'commander' })}><span className="flex items-center gap-2 text-[10px] font-medium"><Bot className="size-3" />Commander</span><span className="relative h-5 bg-muted/25"><span className="absolute inset-y-1 left-0 right-0 rounded-sm bg-sky-500/75" /></span></button>
-    {runtime.tasks.map((task) => <button className={cn('grid w-full grid-cols-[13rem_minmax(0,1fr)] items-center gap-3 rounded px-2 py-2 text-left hover:bg-accent/40', selected?.kind === 'task' && selected.name === task.name && 'bg-accent/40')} key={task.name} onClick={() => onSelect({ kind: 'task', name: task.name })}><span className="min-w-0"><span className="block truncate text-[10px] font-medium">{task.name}</span><span className="mt-0.5 block text-[9px] text-muted-foreground">{task.state.replaceAll('_', ' ')}{task.attempt > 1 ? ` · ${task.attempt} attempts` : ''}</span></span><span className="relative h-6 bg-muted/25">{task.attempts?.map((attempt) => { const attemptStart = Date.parse(attempt.dispatchedAt); const terminal = events.find((event) => event.attemptId === attempt.id && ['task.completed', 'task.attempt_failed', 'task.failed'].includes(event.eventType)); const attemptEnd = terminal ? Date.parse(terminal.createdAt) : end; const left = Math.max(0, Math.min(100, (attemptStart - start) / duration * 100)); const width = Math.max(0.8, Math.min(100 - left, (attemptEnd - attemptStart) / duration * 100)); return <span className={cn('absolute inset-y-1 rounded-sm', terminal?.eventType === 'task.attempt_failed' || terminal?.eventType === 'task.failed' ? 'bg-destructive' : task.state === 'running' && !terminal ? 'animate-pulse bg-primary' : 'bg-emerald-500')} key={attempt.id} style={{ left: `${left}%`, width: `${width}%` }} title={`Attempt ${attempt.number} · ${formatDuration(attemptEnd - attemptStart)}`} />; })}</span></button>)}
+    {tasks.map((task) => <button className={cn('grid w-full grid-cols-[13rem_minmax(0,1fr)] items-center gap-3 rounded px-2 py-2 text-left hover:bg-accent/40', selected?.kind === 'task' && selected.name === task.name && 'bg-accent/40')} key={task.name} onClick={() => onSelect({ kind: 'task', name: task.name })}><span className="min-w-0"><span className="block truncate text-[10px] font-medium">{task.name}</span><span className="mt-0.5 block text-[9px] text-muted-foreground">{task.state.replaceAll('_', ' ')}{task.attempt > 1 ? ` · ${task.attempt} attempts` : ''}</span></span><span className="relative h-6 bg-muted/25">{task.attempts?.map((attempt) => { const attemptStart = Date.parse(attempt.dispatchedAt); const terminal = events.find((event) => event.attemptId === attempt.id && ['task.completed', 'task.attempt_failed', 'task.failed'].includes(event.eventType)); const attemptEnd = terminal ? Date.parse(terminal.createdAt) : end; const left = Math.max(0, Math.min(100, (attemptStart - start) / duration * 100)); const width = Math.max(0.8, Math.min(100 - left, (attemptEnd - attemptStart) / duration * 100)); return <span className={cn('absolute inset-y-1 rounded-sm', terminal?.eventType === 'task.attempt_failed' || terminal?.eventType === 'task.failed' ? 'bg-destructive' : task.state === 'running' && !terminal ? 'animate-pulse bg-primary' : 'bg-emerald-500')} key={attempt.id} style={{ left: `${left}%`, width: `${width}%` }} title={`Attempt ${attempt.number} · ${formatDuration(attemptEnd - attemptStart)}`} />; })}</span></button>)}
   </div></div></section>;
 }
 
@@ -106,6 +118,16 @@ function TaskConversation({ task }: { task: MissionRuntimeTask }) {
     {attempt ? <Conversation empty="The executor has not produced a message yet." messages={attempt.messages ?? []} mode="executor" status={task.state === 'running' || task.state === 'dispatching' ? 'Task executor working' : undefined} /> : <p className="text-xs text-muted-foreground">This task has not been dispatched.</p>}
     {task.summary && !hasMatchingAssistantResult(attempt?.messages ?? [], task.summary) && <section className="border-t pt-4"><p className="text-[9px] uppercase tracking-wider text-muted-foreground">Accepted result</p><MarkdownContent className="mt-2 text-[11px]" content={task.summary} /></section>}
   </>;
+}
+
+function IterationOverview({ children, onSelect, task }: { children: MissionRuntimeTask[]; onSelect: (selection: Selection) => void; task: MissionRuntimeTask }) {
+  const completed = children.filter((child) => child.state === 'completed').length;
+  return <section className="space-y-4">
+    <div><p className="text-[9px] uppercase tracking-wider text-muted-foreground">Iteration progress</p><p className="mt-1 text-xs font-medium">{completed} of {children.length} task executions completed</p></div>
+    {task.error && <p className="border-l-2 border-destructive px-3 text-[11px] text-destructive">{task.error}</p>}
+    {children.length ? <div className="space-y-2">{children.map((child) => <button className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-[11px] hover:bg-accent/40" key={child.name} onClick={() => onSelect({ kind: 'task', name: child.name })} type="button"><span className="font-medium">{child.name}</span><span className="capitalize text-muted-foreground">{child.state.replaceAll('_', ' ')}</span></button>)}</div> : <p className="text-[11px] text-muted-foreground">Waiting for the dataset to expand into task executions.</p>}
+    {task.summary && <details className="border-t pt-3 text-[11px]"><summary className="cursor-pointer font-medium">Combined result</summary><MarkdownContent className="mt-2" content={task.summary} /></details>}
+  </section>;
 }
 
 function hasMatchingAssistantResult(messages: MissionRuntimeMessage[], summary: string): boolean {
@@ -191,6 +213,8 @@ function parseRuntimeEvent(event: MissionEventRecord): RuntimeEvent { let data: 
 function objectValue(value: unknown): Record<string, unknown> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function stringValue(value: unknown): string { return typeof value === 'string' ? value : ''; }
 function baseTaskName(value: string): string { return value.replace(/\[\d+\]$/, ''); }
+function isIterationChild(name: string, parent: string): boolean { return name.startsWith(`${parent}[`) && baseTaskName(name) === parent; }
+function iterationIndex(name: string): number { return Number(name.match(/\[(\d+)\]$/)?.[1] ?? 0); }
 function prettyJSON(value: string): string { try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return value; } }
 function humanizeEvent(value: string): string { return value.replaceAll('.', ' ').replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase()); }
 function formatTime(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(date); }
