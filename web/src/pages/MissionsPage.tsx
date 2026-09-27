@@ -147,7 +147,7 @@ function MissionCard({ item, workspaceId }: { item: MissionView; workspaceId: st
   const { mission, nodes, edges, schedule } = item;
   const href = `/w/${workspaceId}/missions/${encodeURIComponent(mission.name)}`;
   const tasks = mission.tasks?.length ?? 0;
-  const agents = mission.agents?.length ?? 0;
+  const models = mission.models?.length ?? 0;
   const inputs = mission.inputs?.length ?? 0;
 
   return (
@@ -173,7 +173,7 @@ function MissionCard({ item, workspaceId }: { item: MissionView; workspaceId: st
         <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-t pt-3 text-[11px] text-muted-foreground">
           <span>{tasks} task{tasks === 1 ? '' : 's'}</span>
           <span>·</span>
-          <span>{agents} agent{agents === 1 ? '' : 's'}</span>
+          <span>{models} executor model{models === 1 ? '' : 's'}</span>
           {inputs > 0 && <><span>·</span><span>{inputs} input{inputs === 1 ? '' : 's'}</span></>}
           <span className="flex-1" />
           <span className="flex items-center gap-1.5"><CheckCircle2 className="size-3" />Configured</span>

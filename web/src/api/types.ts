@@ -119,7 +119,6 @@ export interface MissionInfo {
   commander?: string;
   models?: string[];
   tools?: string[];
-  agents?: string[];
   inputs?: MissionInputInfo[];
   datasets?: DatasetInfo[];
   tasks?: TaskInfo[];
