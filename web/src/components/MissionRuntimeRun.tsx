@@ -91,7 +91,7 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime, stat
       <div className="min-h-0 flex-1 overflow-y-auto"><div className="mx-auto w-full max-w-4xl space-y-5 p-5 sm:p-6">
         {tab === 'chat' ? selection.kind === 'commander'
           ? <Conversation empty="The commander has not produced a message yet." messages={runtime.commander.messages} mode="commander" status={commanderStatus} />
-          : selectedTask ? iterationParentNames.has(selectedTask.name) ? <IterationOverview children={selectedIterationChildren} onSelect={choose} task={selectedTask} /> : <TaskConversation active={runActive} task={selectedTask} /> : <p className="text-xs text-muted-foreground">Task telemetry is not available yet.</p>
+          : selectedTask ? iterationParentNames.has(selectedTask.name) ? <IterationOverview children={selectedIterationChildren} onSelect={choose} task={selectedTask} /> : <TaskConversation active={runActive} events={events} task={selectedTask} /> : <p className="text-xs text-muted-foreground">Task telemetry is not available yet.</p>
           : <RuntimeTrace events={events} run={run} selection={selection} task={selectedTask} />}
       </div></div>
     </aside>}
@@ -176,15 +176,21 @@ function TaskTimeline({ events, onSelect, recoveries, run, selected, tasks }: { 
   </div></div></section>;
 }
 
-function TaskConversation({ active, task }: { active: boolean; task: MissionRuntimeTask }) {
+function TaskConversation({ active, events, task }: { active: boolean; events: RuntimeEvent[]; task: MissionRuntimeTask }) {
   const [attemptId, setAttemptId] = useState(task.attempts?.at(-1)?.id ?? '');
   const attempt = task.attempts?.find((candidate) => candidate.id === attemptId) ?? task.attempts?.at(-1);
+  const turns = attempt?.messages?.filter((message) => message.model) ?? [];
+  const inputTokens = turns.reduce((total, message) => total + (message.model?.inputTokens ?? 0), 0);
+  const outputTokens = turns.reduce((total, message) => total + (message.model?.outputTokens ?? 0), 0);
+  const terminalEvent = attempt && events.find((event) => event.attemptId === attempt.id && ['task.completed', 'task.attempt_failed', 'task.failed'].includes(event.eventType));
+  const attemptEnd = terminalEvent?.createdAt ?? (active && attempt?.id === task.attempts?.at(-1)?.id && ['running', 'dispatching', 'waiting'].includes(task.state) ? new Date().toISOString() : undefined);
+  const attemptDuration = attempt && attemptEnd ? Date.parse(attemptEnd) - Date.parse(attempt.dispatchedAt) : undefined;
   return <>
     {task.humanInput && <div className="border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-[11px]"><p className="font-medium">Waiting for human input{task.humanInput.shortSummary ? ` · ${task.humanInput.shortSummary}` : ''}</p><MarkdownContent className="mt-2 text-muted-foreground" content={task.humanInput.question} /><p className="mt-2 text-[10px] text-muted-foreground">Close this panel to answer on the run page.</p></div>}
     {task.retryReadyAt && <p className="flex items-center gap-2 text-[10px] text-muted-foreground"><RefreshCcw className="size-3" />Retry scheduled for {formatTime(task.retryReadyAt)}</p>}
     {task.error && <p className="border-l-2 border-destructive px-3 text-[11px] text-destructive">{task.error}</p>}
     {task.attempts && task.attempts.length > 1 && <div className="flex flex-wrap gap-1.5">{task.attempts.map((candidate) => <Button key={candidate.id} onClick={() => setAttemptId(candidate.id)} size="xs" variant={candidate.id === attempt?.id ? 'secondary' : 'outline'}>Attempt {candidate.number}</Button>)}</div>}
-    {attempt && <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-y py-3 text-[10px] sm:grid-cols-4"><Fact label="Model" value={attempt.model} /><Fact label="Attempt" value={String(attempt.number)} /><Fact label="Phase" value={attempt.phase || task.state} /><Fact label="Started" value={formatTime(attempt.dispatchedAt)} /><div className="col-span-2 sm:col-span-4"><Fact label="Granted tools" value={attempt.tools?.join(', ') || 'None'} /></div></div>}
+    {attempt && <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-y py-3 text-[10px] sm:grid-cols-4"><Fact label="Model" value={attempt.model} /><Fact label="Attempt" value={String(attempt.number)} /><Fact label="Phase" value={attempt.phase || task.state} /><Fact label="Started" value={formatTime(attempt.dispatchedAt)} />{attempt.runAs && <Fact label="Run as" value={attempt.runAs} />}{attemptDuration != null && Number.isFinite(attemptDuration) && <Fact label="Elapsed" value={formatDuration(attemptDuration)} />}{turns.length > 0 && <><Fact label="Model turns" value={turns.length.toLocaleString()} /><Fact label="Tokens" value={`${inputTokens.toLocaleString()} in · ${outputTokens.toLocaleString()} out`} /></>}<div className="col-span-2 sm:col-span-4"><Fact label="Granted tools" value={attempt.tools?.join(', ') || 'None'} /></div></div>}
     {attempt ? <Conversation empty="The executor has not produced a message yet." messages={attempt.messages ?? []} mode="executor" status={active && (task.state === 'running' || task.state === 'dispatching') ? 'Task executor working' : undefined} /> : <p className="text-xs text-muted-foreground">This task has not been dispatched.</p>}
     {task.summary && !hasMatchingAssistantResult(attempt?.messages ?? [], task.summary) && <section className="border-t pt-4"><p className="text-[9px] uppercase tracking-wider text-muted-foreground">Accepted result</p><MarkdownContent className="mt-2 text-[11px]" content={task.summary} /></section>}
   </>;
