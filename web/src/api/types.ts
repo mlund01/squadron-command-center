@@ -82,6 +82,7 @@ export interface AgentInfo {
   pruning?: { PruneOn: number; PruneTo: number } | null;
   compaction?: { TokenLimit: number; TurnRetention: number } | null;
   toolResponse?: { MaxTokens: number } | null;
+  memory?: { mode: 'disabled' | 'session' | 'persistent'; scope?: string; retentionDays?: number } | null;
   localSkills?: Array<{ name: string; description: string }>;
   source?: ConfigSource | null;
   lineage?: { missions: Array<{ name: string }> };

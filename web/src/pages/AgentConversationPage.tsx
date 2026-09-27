@@ -293,6 +293,7 @@ function AgentInspector({ agent, loading, connected, onCollapse, onViewSource }:
         <Setting label="Compaction" value={agent.compaction?.TokenLimit ? `${agent.compaction.TokenLimit.toLocaleString()} tokens` : 'Disabled'} />
         {agent.compaction && <Setting label="Retained turns" value={String(agent.compaction.TurnRetention)} />}
         <Setting label="Tool response limit" value={`${(agent.toolResponse?.MaxTokens || 16000).toLocaleString()} tokens`} />
+        <Setting label="File memory" value={agent.memory?.mode && agent.memory.mode !== 'disabled' ? `${agent.memory.mode === 'persistent' ? 'Persistent · owner-scoped' : 'Session-scoped'} · ${agent.memory.retentionDays} days` : 'Disabled'} />
         <Setting label="Scope" value={agent.mission || 'Workspace'} />
       </dl></details>
     </>}
