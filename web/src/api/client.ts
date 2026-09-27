@@ -240,9 +240,8 @@ function agentApiPath(workspaceId: string, name: string) {
   return `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(name)}`;
 }
 
-export function getAgentDefinition(workspaceId: string, name: string, mission?: string): Promise<AgentInfo> {
-  const query = new URLSearchParams(mission ? { mission } : {});
-  return fetchJSON(`${agentApiPath(workspaceId, name)}/definition?${query}`);
+export function getAgentDefinition(workspaceId: string, name: string): Promise<AgentInfo> {
+  return fetchJSON(`${agentApiPath(workspaceId, name)}/definition`);
 }
 
 export function sendAgentConversation(workspaceId: string, name: string, context: AgentConversationContext, content: string, sessionId?: string): Promise<AgentConversationState> {
@@ -254,13 +253,11 @@ export function sendAgentConversation(workspaceId: string, name: string, context
 
 export function listAgentConversations(workspaceId: string, name: string, context: AgentConversationContext): Promise<AgentConversationSummary[]> {
   const query = new URLSearchParams({ purpose: context.purpose, mode: context.mode });
-  if (context.mission) query.set('mission', context.mission);
   return fetchJSON<{ conversations: AgentConversationSummary[] }>(agentApiPath(workspaceId, name) + '/conversations?' + query).then((result) => result.conversations);
 }
 
 export function getAgentConversation(workspaceId: string, name: string, context: AgentConversationContext, sessionId: string): Promise<AgentConversationState> {
   const query = new URLSearchParams({ purpose: context.purpose, mode: context.mode });
-  if (context.mission) query.set('mission', context.mission);
   return fetchJSON(`${agentApiPath(workspaceId, name)}/conversations/${encodeURIComponent(sessionId)}?${query}`);
 }
 

@@ -49,6 +49,10 @@ func handleAgentConversation(h *hub.Hub, store WorkspaceStore, operation string)
 			body.Mission, body.Purpose, body.Mode = r.URL.Query().Get("mission"), r.URL.Query().Get("purpose"), r.URL.Query().Get("mode")
 		}
 		body.Operation, body.Owner, body.AgentName = operation, user.ID, r.PathValue("name")
+		if body.Mission != "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Managed agents are not scoped to missions."})
+			return
+		}
 		if operation != "send" && operation != "list" {
 			body.SessionID = r.PathValue("sessionId")
 		}

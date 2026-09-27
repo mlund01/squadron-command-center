@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowUp, ArrowUpRight, Bot, Check, ChevronDown, Code2, History as HistoryIcon, MessageSquare, PanelRight, PanelRightClose, PanelRightOpen, Play, Plus, Settings2, Sparkles, Square, Target, Wrench } from 'lucide-react';
+import { ArrowLeft, ArrowUp, Bot, Check, ChevronDown, Code2, History as HistoryIcon, MessageSquare, PanelRight, PanelRightClose, PanelRightOpen, Play, Plus, Settings2, Sparkles, Square, Target, Wrench } from 'lucide-react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { getAgentConversation, getAgentDefinition, getWorkspaceConfig, listAgentConversations, sendAgentConversation, stopAgentConversation } from '@/api/client';
 import type { AgentConversationContext, AgentConversationState, AgentInfo, SessionMode } from '@/api/types';
@@ -18,16 +18,15 @@ import { cn } from '@/lib/utils';
 export function AgentConversationPage({ purpose }: { purpose: 'authoring' | 'session' }) {
   const { workspaceId = '', agentName = '' } = useParams();
   const [params] = useSearchParams();
-  const mission = params.get('mission') || undefined;
-  return <Conversation key={`${workspaceId}:${agentName}:${mission}:${purpose}:${params.get('new') ?? ''}`} workspaceId={workspaceId} name={agentName} mission={mission} purpose={purpose} />;
+  return <Conversation key={`${workspaceId}:${agentName}:${purpose}:${params.get('new') ?? ''}`} workspaceId={workspaceId} name={agentName} purpose={purpose} />;
 }
 
-function Conversation({ workspaceId, name, mission, purpose }: { workspaceId: string; name: string; mission?: string; purpose: 'authoring' | 'session' }) {
+function Conversation({ workspaceId, name, purpose }: { workspaceId: string; name: string; purpose: 'authoring' | 'session' }) {
   const authoring = purpose === 'authoring';
   const [params, setParams] = useSearchParams();
   const sessionId = params.get('conversation') || undefined;
   const mode: SessionMode = !authoring && params.get('mode') === 'task' ? 'task' : 'interactive';
-  const context: AgentConversationContext = { purpose, mode, mission };
+  const context: AgentConversationContext = { purpose, mode };
   const [draft, setDraft] = useState('');
   const [showConfig, setShowConfig] = useState(false);
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
@@ -39,28 +38,27 @@ function Conversation({ workspaceId, name, mission, purpose }: { workspaceId: st
   const textarea = useRef<HTMLTextAreaElement>(null);
   const queries = useQueryClient();
   const basePath = `/w/${workspaceId}/agents/${encodeURIComponent(name)}`;
-  const scopeParams = new URLSearchParams(mission ? { mission } : {});
-  const sessionParams = new URLSearchParams(scopeParams);
+  const sessionParams = new URLSearchParams();
   const authoringConversation = authoring ? sessionId : params.get('authoringConversation');
   if (authoringConversation) {
     sessionParams.set('authoringConversation', authoringConversation);
   }
   const snapshot = useQuery({ queryKey: ['workspace-config', workspaceId], queryFn: () => getWorkspaceConfig(workspaceId), refetchInterval: 5_000, retry: false });
   const definition = useQuery({
-    queryKey: ['agent-definition', workspaceId, name, mission],
-    queryFn: () => getAgentDefinition(workspaceId, name, mission),
+    queryKey: ['agent-definition', workspaceId, name],
+    queryFn: () => getAgentDefinition(workspaceId, name),
     enabled: snapshot.data?.connected === true,
     refetchInterval: 15_000,
     retry: false,
   });
   const history = useQuery({
-    queryKey: ['agent-conversation-history', workspaceId, name, mission, purpose],
+    queryKey: ['agent-conversation-history', workspaceId, name, purpose],
     queryFn: () => listAgentConversations(workspaceId, name, context),
     enabled: snapshot.data?.connected === true,
     refetchInterval: 15_000,
     retry: false,
   });
-  const queryKey = ['agent-conversation', workspaceId, name, mission, purpose, mode, sessionId];
+  const queryKey = ['agent-conversation', workspaceId, name, purpose, mode, sessionId];
   const conversation = useQuery({
     queryKey,
     queryFn: () => getAgentConversation(workspaceId, name, context, sessionId!),
@@ -75,7 +73,7 @@ function Conversation({ workspaceId, name, mission, purpose }: { workspaceId: st
       setDraft('');
       followAnswer.current = true;
       queries.setQueryData<AgentConversationState>(
-        ['agent-conversation', workspaceId, name, mission, purpose, mode, response.sessionId],
+        ['agent-conversation', workspaceId, name, purpose, mode, response.sessionId],
         (previous) => ({
           ...response,
           messages: [...(previous?.messages ?? []), { id: -Date.now(), role: 'user', content, createdAt: new Date().toISOString() }],
@@ -83,7 +81,7 @@ function Conversation({ workspaceId, name, mission, purpose }: { workspaceId: st
       );
       setParams((current) => { current.set('conversation', response.sessionId); if (!authoring) current.set('mode', mode); return current; }, { replace: true });
       void queries.invalidateQueries({ queryKey: ['agent-conversation', workspaceId, name] });
-      void queries.invalidateQueries({ queryKey: ['agent-conversation-history', workspaceId, name, mission, purpose] });
+      void queries.invalidateQueries({ queryKey: ['agent-conversation-history', workspaceId, name, purpose] });
     },
   });
   const stop = useMutation({
@@ -94,7 +92,7 @@ function Conversation({ workspaceId, name, mission, purpose }: { workspaceId: st
   const working = send.isPending || conversation.data?.running === true;
   const connected = snapshot.data?.connected === true;
   const error = send.error || stop.error || conversation.error;
-  const agent = definition.data ?? snapshot.data?.config.agents?.find((candidate) => candidate.name === name && (candidate.mission || undefined) === mission);
+  const agent = definition.data ?? snapshot.data?.config.agents?.find((candidate) => candidate.name === name);
 
   useEffect(() => {
     if (followAnswer.current && scrollArea.current) scrollArea.current.scrollTop = scrollArea.current.scrollHeight;
@@ -129,7 +127,7 @@ function Conversation({ workspaceId, name, mission, purpose }: { workspaceId: st
           <Button asChild variant="ghost" size="icon-sm"><Link to={`/w/${workspaceId}/agents`} aria-label="Back to agents"><ArrowLeft /></Link></Button>
           <div className="min-w-0">
             <div className="flex items-center gap-2"><h1 className="truncate text-sm font-semibold" title={name}>{name}</h1><span className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">{authoring ? 'Authoring' : 'Session'}</span></div>
-            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{mission ? `Mission · ${mission}` : 'Workspace agent'}{!authoring && ` · ${agent?.model || 'Loading model…'}`}</p>
+            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">Managed agent{!authoring && ` · ${agent?.model || 'Loading model…'}`}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -282,7 +280,6 @@ function AgentInspector({ agent, loading, connected, onCollapse, onViewSource }:
     </div>
     <p className="mt-2 text-[11px] leading-5 text-muted-foreground">{connected ? 'The configuration reported by the workspace runner.' : 'Last reported configuration. The workspace runner is disconnected.'}</p>
     {loading && !agent ? <p className="mt-6 text-xs text-muted-foreground">Loading details…</p> : !agent ? <p className="mt-6 text-xs text-muted-foreground">Configuration unavailable.</p> : <>
-      <InspectorSection title="Lineage"><AgentMissionLineage lineage={agent.lineage} /></InspectorSection>
       <InspectorSection title="Model"><p className="break-words text-xs">{agent.model}</p><p className="mt-1 text-[11px] text-muted-foreground">Reasoning: {agent.reasoning || 'Not explicitly enabled'}</p></InspectorSection>
       <InspectorSection title="Purpose"><MarkdownContent className="text-xs [&_p]:leading-6" content={agent.role || 'No separate role configured.'} /></InspectorSection>
       <InspectorSection title="Personality"><MarkdownContent className="text-xs text-muted-foreground [&_p]:leading-6" content={agent.description || 'Not configured.'} /></InspectorSection>
@@ -294,30 +291,9 @@ function AgentInspector({ agent, loading, connected, onCollapse, onViewSource }:
         {agent.compaction && <Setting label="Retained turns" value={String(agent.compaction.TurnRetention)} />}
         <Setting label="Tool response limit" value={`${(agent.toolResponse?.MaxTokens || 16000).toLocaleString()} tokens`} />
         <Setting label="File memory" value={agent.memory?.mode && agent.memory.mode !== 'disabled' ? `${agent.memory.mode === 'persistent' ? 'Persistent · owner-scoped' : 'Session-scoped'} · ${agent.memory.retentionDays} days` : 'Disabled'} />
-        <Setting label="Scope" value={agent.mission || 'Workspace'} />
+        <Setting label="Scope" value="Workspace" />
       </dl></details>
     </>}
-  </div>;
-}
-
-function AgentMissionLineage({ lineage }: { lineage?: AgentInfo['lineage'] }) {
-  const { workspaceId } = useParams();
-  const [expanded, setExpanded] = useState(false);
-  if (!lineage) return <p className="text-xs text-muted-foreground">Mission lineage unavailable.</p>;
-  const missions = lineage.missions;
-  if (missions.length === 0) return <p className="text-xs text-muted-foreground">No missions reference this agent.</p>;
-  return <div>
-    <p className="text-xs">Used by <span className="font-semibold">{missions.length} {missions.length === 1 ? 'mission' : 'missions'}</span></p>
-    <ul className="mt-2 max-h-48 space-y-0.5 overflow-y-auto" aria-label="Missions using this agent">
-      {(expanded ? missions : missions.slice(0, 4)).map((mission) => (
-        <li key={mission.name}>
-          <Link to={`/w/${workspaceId}/missions?${new URLSearchParams({ search: mission.name })}`} className="flex items-start justify-between gap-2 rounded-sm px-2 py-1.5 text-[11px] leading-4 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`View ${mission.name} in missions`}>
-            <span className="min-w-0 [overflow-wrap:anywhere]">{mission.name}</span><ArrowUpRight className="mt-0.5 size-3 shrink-0" />
-          </Link>
-        </li>
-      ))}
-    </ul>
-    {missions.length > 4 && <Button variant="ghost" size="sm" className="mt-1 h-7 px-2 text-[11px]" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? 'Show fewer' : `Show all ${missions.length} missions`}<ChevronDown className={cn('size-3', expanded && 'rotate-180')} /></Button>}
   </div>;
 }
 

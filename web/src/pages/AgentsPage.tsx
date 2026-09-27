@@ -3,16 +3,12 @@ import { Bot, BrainCircuit, Search, ShieldCheck, Sparkles, Wrench } from 'lucide
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { getWorkspaceConfig, listWorkspaces } from '@/api/client';
-import type { AgentInfo, MissionInfo } from '@/api/types';
+import type { AgentInfo } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-
-type AgentFilter = 'all' | 'workspace' | 'mission';
 
 export function AgentsPage() {
   const { workspaceId } = useParams();
-  const [filter, setFilter] = useState<AgentFilter>('all');
   const [search, setSearch] = useState('');
   const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: listWorkspaces });
   const workspace = workspaces.data?.find((candidate) => candidate.id === workspaceId);
@@ -26,29 +22,23 @@ export function AgentsPage() {
   });
 
   const agents = useMemo(() => snapshot.data?.config.agents ?? [], [snapshot.data]);
-  const missions = useMemo(() => snapshot.data?.config.missions ?? [], [snapshot.data]);
   const visibleAgents = useMemo(() => {
     const query = search.trim().toLowerCase();
     return agents.filter((agent) => {
-      const scopeMatches = filter === 'all'
-        || (filter === 'workspace' && !agent.mission)
-        || (filter === 'mission' && Boolean(agent.mission));
-      const text = [agent.name, agent.role, agent.description, agent.model, agent.mission, ...(agent.tools ?? []), ...(agent.skills ?? [])]
+      const text = [agent.name, agent.role, agent.description, agent.model, ...(agent.tools ?? []), ...(agent.skills ?? [])]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
-      return scopeMatches && (!query || text.includes(query));
+      return !query || text.includes(query);
     });
-  }, [agents, filter, search]);
+  }, [agents, search]);
 
-  const workspaceAgents = agents.filter((agent) => !agent.mission).length;
-  const missionAgents = agents.length - workspaceAgents;
   const capabilityCount = new Set(agents.flatMap((agent) => [...(agent.tools ?? []), ...(agent.skills ?? [])])).size;
 
   return (
     <div>
       <PageHeader
-        description="The reusable AI capabilities available to this workspace and its missions."
+        description="Independent AI assistants for interactive and task sessions."
         eyebrow={workspace?.name ?? 'Workspace'}
         title="Agents"
       />
@@ -69,19 +59,6 @@ export function AgentsPage() {
       ) : (
         <>
           <div className="mb-5 flex flex-wrap items-center gap-3 border-b pb-4">
-            <div className="flex items-center gap-1">
-              {(['all', 'workspace', 'mission'] as const).map((value) => (
-                <Button
-                  className="capitalize"
-                  key={value}
-                  onClick={() => setFilter(value)}
-                  size="xs"
-                  variant={filter === value ? 'secondary' : 'ghost'}
-                >
-                  {value === 'mission' ? 'Mission-scoped' : value}
-                </Button>
-              ))}
-            </div>
             <div className="flex-1" />
             <label className="relative min-w-56 sm:w-64">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -91,19 +68,13 @@ export function AgentsPage() {
 
           <div className="mb-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-muted-foreground">
             <InlineStat label="agents" value={agents.length} />
-            <InlineStat label="workspace" value={workspaceAgents} />
-            <InlineStat label="mission-scoped" value={missionAgents} />
             <InlineStat label="capabilities" value={capabilityCount} />
           </div>
 
           {visibleAgents.length > 0 ? (
             <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
               {visibleAgents.map((agent) => (
-                <AgentCard
-                  agent={agent}
-                  key={`${agent.mission ?? 'workspace'}:${agent.name}`}
-                  missions={missions}
-                />
+                <AgentCard agent={agent} key={agent.name} />
               ))}
             </div>
           ) : (
@@ -115,19 +86,15 @@ export function AgentsPage() {
   );
 }
 
-function AgentCard({ agent, missions }: { agent: AgentInfo; missions: MissionInfo[] }) {
+function AgentCard({ agent }: { agent: AgentInfo }) {
   const { workspaceId } = useParams();
-  const scope = agent.mission ? `?${new URLSearchParams({ mission: agent.mission })}` : '';
-  const missionUsage = agent.mission
-    ? [agent.mission]
-    : missions.filter((mission) => mission.agents?.includes(agent.name)).map((mission) => mission.name);
   const capabilities = [
     ...(agent.tools ?? []).map((tool) => ({ kind: 'tool' as const, name: formatCapability(tool) })),
     ...(agent.skills ?? []).map((skill) => ({ kind: 'skill' as const, name: formatCapability(skill) })),
   ];
 
   return (
-    <Link to={`/w/${workspaceId}/agents/${encodeURIComponent(agent.name)}${scope}`} className="flex min-h-52 flex-col rounded-md border bg-card p-4 transition-colors hover:border-foreground/30 focus-visible:outline-2 focus-visible:outline-ring" aria-label={`Open ${agent.name}${agent.mission ? ` in ${agent.mission}` : ''}`}>
+    <Link to={`/w/${workspaceId}/agents/${encodeURIComponent(agent.name)}`} className="flex min-h-52 flex-col rounded-md border bg-card p-4 transition-colors hover:border-foreground/30 focus-visible:outline-2 focus-visible:outline-ring" aria-label={`Open ${agent.name}`}>
       <div className="flex items-start gap-3">
         <div className="grid size-8 shrink-0 place-items-center rounded border bg-muted text-primary">
           <Bot className="size-4" />
@@ -154,9 +121,7 @@ function AgentCard({ agent, missions }: { agent: AgentInfo; missions: MissionInf
           <Wrench className="size-3 shrink-0" />
           <span className="shrink-0">{capabilities.length} capabilit{capabilities.length === 1 ? 'y' : 'ies'}</span>
           <span className="shrink-0">·</span>
-          <span className="truncate" title={agent.mission ? `Mission · ${agent.mission}` : undefined}>
-            {agent.mission ? `Mission · ${agent.mission}` : missionUsage.length > 0 ? `Used by ${missionUsage.length} mission${missionUsage.length === 1 ? '' : 's'}` : 'Available workspace-wide'}
-          </span>
+          <span className="truncate">Independent sessions</span>
         </div>
         {capabilities.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">

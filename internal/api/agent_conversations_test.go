@@ -27,6 +27,7 @@ func TestAgentConversationRejectsInvalidRequests(t *testing.T) {
 		{"simple cross-origin POST", `{}`, "text/plain", true, true, http.StatusUnsupportedMediaType},
 		{"authoring cannot be task", `{"purpose":"authoring","mode":"task","content":"hello"}`, "application/json", true, true, http.StatusBadRequest},
 		{"unknown mode", `{"purpose":"session","mode":"other","content":"hello"}`, "application/json", true, true, http.StatusBadRequest},
+		{"mission scope", `{"purpose":"session","mode":"interactive","mission":"release","content":"hello"}`, "application/json", true, true, http.StatusBadRequest},
 		{"empty message", `{"purpose":"session","mode":"interactive","content":"  "}`, "application/json", true, true, http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,7 +83,7 @@ func TestAgentConversationProxyUsesAuthenticatedContext(t *testing.T) {
 		t.Fatalf("registration: %s, %v", ack.Type, err)
 	}
 	store := &fakeWorkspaceStore{user: controlplane.User{ID: "authenticated-user", Role: controlplane.RoleAdmin}}
-	request := authenticatedRequest(http.MethodPost, "/", bytes.NewBufferString(`{"owner":"spoofed-user","agentName":"wrong-agent","operation":"stop","purpose":"session","mode":"task","mission":"release","content":"test task"}`))
+	request := authenticatedRequest(http.MethodPost, "/", bytes.NewBufferString(`{"owner":"spoofed-user","agentName":"wrong-agent","operation":"stop","purpose":"session","mode":"task","content":"test task"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.SetPathValue("id", "workspace-1")
 	request.SetPathValue("name", "reviewer")
@@ -105,7 +106,7 @@ func TestAgentConversationProxyUsesAuthenticatedContext(t *testing.T) {
 	if err := protocol.DecodePayload(&outbound, &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Owner != "authenticated-user" || body.AgentName != "reviewer" || body.Operation != "send" || body.Mission != "release" || body.Mode != "task" {
+	if body.Owner != "authenticated-user" || body.AgentName != "reviewer" || body.Operation != "send" || body.Mission != "" || body.Mode != "task" {
 		t.Fatalf("wrong trusted context: %#v", body)
 	}
 	result, _ := protocol.NewResponse(outbound.RequestID, "agent_conversation_result", map[string]any{"sessionId": "cc_test", "running": true})

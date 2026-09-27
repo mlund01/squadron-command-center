@@ -77,7 +77,6 @@ export interface AgentInfo {
   model: string;
   tools?: string[];
   skills?: string[];
-  mission?: string;
   reasoning?: string;
   pruning?: { PruneOn: number; PruneTo: number } | null;
   compaction?: { TokenLimit: number; TurnRetention: number } | null;
@@ -85,7 +84,6 @@ export interface AgentInfo {
   memory?: { mode: 'disabled' | 'session' | 'persistent'; scope?: string; retentionDays?: number } | null;
   localSkills?: Array<{ name: string; description: string }>;
   source?: ConfigSource | null;
-  lineage?: { missions: Array<{ name: string }> };
 }
 
 export interface ConfigSource {
@@ -98,7 +96,6 @@ export interface ConfigSource {
 
 export type SessionMode = 'interactive' | 'task';
 export interface AgentConversationContext {
-  mission?: string;
   purpose: 'authoring' | 'session';
   mode: SessionMode;
 }
