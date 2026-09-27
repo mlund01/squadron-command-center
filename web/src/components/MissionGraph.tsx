@@ -183,7 +183,7 @@ function TaskNode({ data }: NodeProps<GraphTaskNode>) {
         <span className="min-w-0 flex-1 truncate text-xs font-semibold">{task.name}</span>
         {task.router ? <GitBranch className="size-3.5 shrink-0 text-muted-foreground" /> : task.iterator ? <Repeat2 className="size-3.5 shrink-0 text-muted-foreground" /> : null}
       </div>
-      <p className="mt-2 line-clamp-2 text-[10px] leading-4 text-muted-foreground">{markdownExcerpt(telemetry?.error || task.objective || task.description || 'No objective provided.')}</p>
+      <p className="mt-2 line-clamp-2 text-[10px] leading-4 text-muted-foreground">{telemetry?.error ? telemetry.error : markdownExcerpt(task.objective || task.description || 'No objective provided.')}</p>
       <div className="mt-2 flex items-center gap-1.5 text-[9px] text-muted-foreground">
         <span>Task executor</span>
         {telemetry?.iteration ? <span className="ml-auto shrink-0 tabular-nums">{telemetry.iteration.total} {telemetry.iteration.parallel ? 'parallel' : 'sequential'} · {telemetry.iteration.completed}/{telemetry.iteration.total}</span> : telemetry?.durationMs != null && <span className="ml-auto tabular-nums">{formatCompactDuration(telemetry.durationMs)}</span>}
