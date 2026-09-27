@@ -54,6 +54,7 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime, stat
   const completed = executedTasks.filter((task) => task.state === 'completed').length;
   const waits = executedTasks.filter((task) => task.humanInput).length;
   const retries = executedTasks.reduce((total, task) => total + Math.max(0, task.attempt - 1), 0);
+  const recoveries = events.filter((event) => event.eventType === 'mission.recovered');
   const runActive = status === 'running' || status === 'waiting';
   const commanderActive = runActive && runtime.commander.state === 'active';
   const executorActive = runActive && runtime.tasks.some((task) => task.state === 'running' || task.state === 'dispatching');
@@ -77,7 +78,7 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime, stat
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"><div><h2 className="text-xs font-semibold">Execution canvas</h2><p className="mt-1 text-[10px] text-muted-foreground">The commander follows this graph. Select a task to inspect its executor session.</p></div><Button onClick={() => choose({ kind: 'commander' })} size="xs" variant="outline"><MessageSquareText className="size-3" />Commander conversation</Button></div>
       <div className="h-[35rem] min-w-0"><MissionGraph mission={mission} onSelectTask={(task) => choose({ kind: 'task', name: task.name })} routeChoices={routeChoices} selectedTask={selection?.kind === 'task' ? baseTaskName(selection.name) : undefined} telemetry={telemetry} /></div>
     </section>
-    <TaskTimeline events={events} onSelect={choose} run={run} selected={selection} tasks={executedTasks} />
+    <TaskTimeline events={events} onSelect={choose} recoveries={recoveries} run={run} selected={selection} tasks={executedTasks} />
     {selection && <aside aria-label={selection.kind === 'commander' ? 'Commander session' : `${selection.name} task executor`} className={cn('fixed z-50 flex min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xl', expanded ? 'inset-3 sm:inset-4' : 'inset-y-3 right-3 w-[min(43rem,calc(100vw-1.5rem))] sm:inset-y-4 sm:right-4 sm:w-[min(43rem,calc(100vw-2rem))]')} role="dialog">
       <header className="flex h-16 shrink-0 items-center gap-3 border-b px-5">
         <span className="grid size-8 shrink-0 place-items-center rounded-full border bg-muted/40">{selection.kind === 'commander' ? <Bot className="size-4" /> : <Activity className="size-4" />}</span>
@@ -100,7 +101,63 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime, stat
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) { return <div className="border-t p-4 first:border-t-0 sm:border-t-0 sm:border-l sm:first:border-l-0"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p><p className="mt-2 text-lg font-semibold tabular-nums">{value}</p><p className="mt-1 text-[10px] text-muted-foreground">{detail}</p></div>; }
 function TabButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) { return <button aria-current={active ? 'page' : undefined} className={cn('border-b-2 px-3 text-[10px] font-medium', active ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')} onClick={onClick} type="button">{label}</button>; }
 
-function TaskTimeline({ events, onSelect, run, selected, tasks }: { events: RuntimeEvent[]; onSelect: (selection: Selection) => void; run: MissionRun; selected: Selection | null; tasks: MissionRuntimeTask[] }) {
+type RecoveryAttempt = { taskName: string; attemptId: string; tools: { toolUseId: string; toolName: string }[] };
+
+function recoveryAttempts(event: RuntimeEvent): RecoveryAttempt[] {
+  const restart = objectValue(event.data.Restart ?? event.data.restart);
+  return arrayOfObjects(restart.attempts ?? restart.Attempts).map((value) => ({
+    taskName: stringValue(value.taskName ?? value.TaskName),
+    attemptId: stringValue(value.attemptId ?? value.AttemptID),
+    tools: arrayOfObjects(value.inFlightTools ?? value.InFlight).map((tool) => ({
+      toolUseId: stringValue(tool.toolUseId ?? tool.ToolUseID),
+      toolName: stringValue(tool.toolName ?? tool.ToolName),
+    })),
+  }));
+}
+
+function eventAfterRecovery(event: RuntimeEvent, recovery: RuntimeEvent, attemptId: string): boolean {
+  return event.attemptId === attemptId && Date.parse(event.createdAt) >= Date.parse(recovery.createdAt);
+}
+
+function RecoverySummary({ events, recoveries }: { events: RuntimeEvent[]; recoveries: RuntimeEvent[] }) {
+  return <div aria-label="Worker recovery" className="border-b px-4 py-3 text-[11px]">
+    <div className="flex items-center gap-2 font-medium">
+      <RefreshCcw className="size-3.5 text-primary" />
+      <span>Worker recovered {recoveries.length > 1 ? `${recoveries.length} times` : 'during this run'}</span>
+      <span className="font-normal text-muted-foreground">· latest {formatTime(recoveries.at(-1)?.createdAt ?? '')}</span>
+    </div>
+    <details className="mt-2 text-[10px]">
+      <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Recovery details</summary>
+      <div className="mt-2 space-y-3">{recoveries.map((recovery) => {
+        const restart = objectValue(recovery.data.Restart ?? recovery.data.restart);
+        const checkpointAt = stringValue(restart.lastCheckpointAt ?? restart.LastCheckpointAt);
+        const attempts = recoveryAttempts(recovery);
+        return <div key={recovery.id}>
+          <p className="font-medium">Recovery recorded {formatTime(recovery.createdAt)}{checkpointAt && <span className="font-normal text-muted-foreground"> · last checkpoint {formatTime(checkpointAt)}</span>}</p>
+          {attempts.length ? <ul className="mt-1 space-y-1 text-muted-foreground">{attempts.map((attempt) => <RecoveryAttemptRow attempt={attempt} events={events} key={attempt.attemptId} recovery={recovery} />)}</ul> : <p className="mt-1 text-muted-foreground">No task attempt was active at the last checkpoint.</p>}
+        </div>;
+      })}</div>
+    </details>
+  </div>;
+}
+
+function RecoveryAttemptRow({ attempt, events, recovery }: { attempt: RecoveryAttempt; events: RuntimeEvent[]; recovery: RuntimeEvent }) {
+  const related = events.filter((event) => eventAfterRecovery(event, recovery, attempt.attemptId));
+  const blocked = related.some((event) => event.eventType === 'task.recovery_blocked');
+  const resumed = related.some((event) => event.eventType === 'task.lease_acquired');
+  return <li>
+    <span className="font-medium text-foreground">{attempt.taskName}</span> · same attempt {attempt.attemptId}{blocked ? ' · operator action needed' : resumed ? ' · resumed from checkpoint' : ' · awaiting resume'}
+    {attempt.tools.map((tool) => {
+      const replayEvents = related.filter((event) => stringValue(objectValue(event.data.ToolReplay ?? event.data.toolReplay).toolUseId) === tool.toolUseId);
+      const replayed = replayEvents.some((event) => event.eventType === 'task.tool_replay_completed');
+      const replayStarted = replayEvents.some((event) => event.eventType === 'task.tool_replay_started');
+      const outcome = replayed ? 'safe replay completed' : replayStarted ? 'safe replay started' : blocked ? 'outcome uncertain' : 'in flight at recovery';
+      return <span className="block pl-3" key={tool.toolUseId}>{tool.toolName} · {outcome}</span>;
+    })}
+  </li>;
+}
+
+function TaskTimeline({ events, onSelect, recoveries, run, selected, tasks }: { events: RuntimeEvent[]; onSelect: (selection: Selection) => void; recoveries: RuntimeEvent[]; run: MissionRun; selected: Selection | null; tasks: MissionRuntimeTask[] }) {
   const [now, setNow] = useState(0);
   useEffect(() => {
     if (run.finishedAt) return;
@@ -112,8 +169,8 @@ function TaskTimeline({ events, onSelect, run, selected, tasks }: { events: Runt
   const start = Date.parse(run.startedAt);
   const end = run.finishedAt ? Date.parse(run.finishedAt) : Math.max(now, start + 1, ...events.map((event) => Date.parse(event.createdAt)).filter(Number.isFinite));
   const duration = Math.max(1, end - start);
-  return <section className="overflow-hidden rounded-md border bg-card"><div className="border-b px-4 py-3"><h2 className="text-xs font-semibold">Task execution timeline</h2><p className="mt-1 text-[10px] text-muted-foreground">All tasks share the mission clock. Overlapping bars ran in parallel; separate bars show retries.</p></div><div className="overflow-x-auto"><div className="min-w-[640px] p-4">
-    <div className="grid grid-cols-[13rem_minmax(0,1fr)] gap-3 pb-2 text-[9px] uppercase tracking-wider text-muted-foreground"><span>Session</span><div className="flex justify-between"><span>Start</span><span>{formatDuration(duration)}</span></div></div>
+  return <section className="overflow-hidden rounded-md border bg-card"><div className="border-b px-4 py-3"><h2 className="text-xs font-semibold">Task execution timeline</h2><p className="mt-1 text-[10px] text-muted-foreground">All tasks share the mission clock. Overlapping bars ran in parallel; separate bars show retries.</p></div>{recoveries.length > 0 && <RecoverySummary events={events} recoveries={recoveries} />}<div className="overflow-x-auto"><div className="min-w-[640px] p-4">
+    <div className="grid grid-cols-[13rem_minmax(0,1fr)] gap-3 pb-2 text-[9px] uppercase tracking-wider text-muted-foreground"><span>Session</span><div className="relative flex justify-between"><span>Start</span><span>{formatDuration(duration)}</span>{events.filter((event) => event.eventType === 'mission.recovered').map((event) => <span aria-label={`Worker recovery at ${formatTime(event.createdAt)}`} className="absolute -bottom-1 top-0 w-0.5 bg-violet-500" key={event.id} style={{ left: `${Math.max(0, Math.min(100, (Date.parse(event.createdAt) - start) / duration * 100))}%` }} title={`Worker recovery recorded ${formatTime(event.createdAt)}`} />)}</div></div>
     <button className={cn('grid w-full grid-cols-[13rem_minmax(0,1fr)] items-center gap-3 rounded px-2 py-2 text-left hover:bg-accent/40', selected?.kind === 'commander' && 'bg-accent/40')} onClick={() => onSelect({ kind: 'commander' })}><span className="flex items-center gap-2 text-[10px] font-medium"><Bot className="size-3" />Commander</span><span className="relative h-5 bg-muted/25"><span className="absolute inset-y-1 left-0 right-0 rounded-sm bg-sky-500/75" /></span></button>
     {tasks.map((task) => <button className={cn('grid w-full grid-cols-[13rem_minmax(0,1fr)] items-center gap-3 rounded px-2 py-2 text-left hover:bg-accent/40', selected?.kind === 'task' && selected.name === task.name && 'bg-accent/40')} key={task.name} onClick={() => onSelect({ kind: 'task', name: task.name })}><span className="min-w-0"><span className="block truncate text-[10px] font-medium">{task.name}</span><span className="mt-0.5 block text-[9px] text-muted-foreground">{task.state.replaceAll('_', ' ')}{task.attempt > 1 ? ` · ${task.attempt} attempts` : ''}</span></span><span className="relative h-6 bg-muted/25">{task.attempts?.map((attempt) => { const attemptStart = Date.parse(attempt.dispatchedAt); const terminal = events.find((event) => event.attemptId === attempt.id && ['task.completed', 'task.attempt_failed', 'task.failed'].includes(event.eventType)); const attemptEnd = terminal ? Date.parse(terminal.createdAt) : end; const left = Math.max(0, Math.min(100, (attemptStart - start) / duration * 100)); const width = Math.max(0.8, Math.min(100 - left, (attemptEnd - attemptStart) / duration * 100)); return <span className={cn('absolute inset-y-1 rounded-sm', terminal?.eventType === 'task.attempt_failed' || terminal?.eventType === 'task.failed' ? 'bg-destructive' : task.state === 'running' && !terminal ? 'animate-pulse bg-primary' : 'bg-emerald-500')} key={attempt.id} style={{ left: `${left}%`, width: `${width}%` }} title={`Attempt ${attempt.number} · ${formatDuration(attemptEnd - attemptStart)}`} />; })}</span></button>)}
   </div></div></section>;
@@ -218,12 +275,13 @@ function ContentPart({ media, mode, part, result, skipResult }: { media?: Missio
 }
 
 function RuntimeTrace({ events, run, selection, task }: { events: RuntimeEvent[]; run: MissionRun; selection: Selection; task?: MissionRuntimeTask }) {
-  const relevant = selection.kind === 'commander' ? events.filter((event) => event.eventType.startsWith('commander.') || event.eventType === 'task.dispatched' || event.eventType === 'route.selected' || event.eventType.startsWith('human_input.') || event.eventType.startsWith('mission.')) : events.filter((event) => event.taskName === selection.name);
-  return <><div className="flex items-center gap-2 text-[10px] text-muted-foreground"><Clock3 className="size-3" />{relevant.length} persisted events · mission clock started {formatTime(run.startedAt)}</div>{task?.attempts?.map((attempt) => <div className="border-l-2 border-primary/50 pl-3" key={attempt.id}><p className="text-[11px] font-medium">Attempt {attempt.number} · {attempt.model}</p><p className="mt-1 text-[10px] text-muted-foreground">{formatTime(attempt.dispatchedAt)} · {attempt.phase || task.state}</p>{attempt.toolOperations?.map((tool) => <p className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground" key={tool.toolUseId}><Wrench className="size-3" />{tool.toolName} · {tool.status.replaceAll('_', ' ')}</p>)}</div>)}<ol className="space-y-0 border-l border-border pl-4">{relevant.map((event) => <li className="relative py-2 text-[10px]" key={event.id}><span className="absolute -left-[1.17rem] top-3 size-1.5 rounded-full bg-primary" /><p className="font-medium">{humanizeEvent(event.eventType)}</p><p className="mt-0.5 text-muted-foreground">{formatTime(event.createdAt)}{event.attemptId ? ` · ${event.attemptId}` : ''}</p></li>)}</ol>{!relevant.length && <p className="py-8 text-center text-xs text-muted-foreground">No persisted events yet.</p>}</>;
+  const relevant = selection.kind === 'commander' ? events.filter((event) => event.eventType.startsWith('commander.') || event.eventType === 'task.dispatched' || event.eventType === 'route.selected' || event.eventType.startsWith('human_input.') || event.eventType.startsWith('mission.')) : events.filter((event) => event.taskName === selection.name || (event.eventType === 'mission.recovered' && recoveryAttempts(event).some((attempt) => attempt.taskName === selection.name)));
+  return <><div className="flex items-center gap-2 text-[10px] text-muted-foreground"><Clock3 className="size-3" />{relevant.length} persisted events · mission clock started {formatTime(run.startedAt)}</div>{task?.attempts?.map((attempt) => <div className="border-l-2 border-primary/50 pl-3" key={attempt.id}><p className="text-[11px] font-medium">Attempt {attempt.number} · {attempt.model}</p><p className="mt-1 text-[10px] text-muted-foreground">{formatTime(attempt.dispatchedAt)} · {attempt.phase || task.state}</p>{attempt.toolOperations?.map((tool) => <p className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground" key={tool.toolUseId}><Wrench className="size-3" />{tool.toolName} · {tool.status.replaceAll('_', ' ')}</p>)}</div>)}<ol className="space-y-0 border-l border-border pl-4">{relevant.map((event) => <li className="relative py-2 text-[10px]" key={event.id}><span className="absolute -left-[1.17rem] top-3 size-1.5 rounded-full bg-primary" /><p className="font-medium">{humanizeEvent(event.eventType)}</p><p className="mt-0.5 text-muted-foreground">{formatTime(event.createdAt)}{event.attemptId ? ` · ${event.attemptId}` : ''}</p>{event.eventType === 'mission.recovered' && <p className="mt-1 text-muted-foreground">Last checkpoint {formatTime(stringValue(objectValue(event.data.Restart ?? event.data.restart).lastCheckpointAt))} · {arrayOfObjects(objectValue(event.data.Restart ?? event.data.restart).attempts).length} original task attempt(s) retained</p>}{event.eventType.startsWith('task.tool_replay_') && <p className="mt-1 text-muted-foreground">{stringValue(objectValue(event.data.ToolReplay ?? event.data.toolReplay).toolName)} · replay-safe invocation of the original tool call</p>}</li>)}</ol>{!relevant.length && <p className="py-8 text-center text-xs text-muted-foreground">No persisted events yet.</p>}</>;
 }
 
 function parseRuntimeEvent(event: MissionEventRecord): RuntimeEvent { let data: Record<string, unknown> = {}; try { data = objectValue(JSON.parse(event.dataJson)); } catch { /* malformed historical event remains visible by type */ } return { ...event, data, taskName: stringValue(data.TaskName ?? data.taskName), attemptId: stringValue(data.AttemptID ?? data.attemptId) }; }
 function objectValue(value: unknown): Record<string, unknown> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
+function arrayOfObjects(value: unknown): Record<string, unknown>[] { return Array.isArray(value) ? value.map(objectValue) : []; }
 function stringValue(value: unknown): string { return typeof value === 'string' ? value : ''; }
 function baseTaskName(value: string): string { return value.replace(/\[\d+\]$/, ''); }
 function isIterationChild(name: string, parent: string): boolean { return name.startsWith(`${parent}[`) && baseTaskName(name) === parent; }
