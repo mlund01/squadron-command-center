@@ -5,6 +5,7 @@ import type { MissionEventRecord, MissionInfo, MissionRun, MissionRuntimeContent
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { MissionGraph, type MissionTaskTelemetry } from '@/components/MissionGraph';
 import { Button } from '@/components/ui/button';
+import { parseCommanderSnapshot, type CommanderSnapshot } from '@/lib/commander-snapshot';
 import { cn } from '@/lib/utils';
 import './MissionRuntimeRun.css';
 
@@ -222,7 +223,7 @@ function Conversation({ empty, messages, mode, status }: { empty: string; messag
   const media = new Map<string, MissionRuntimeContentPart[]>();
   messages.forEach((message) => message.parts.forEach((part) => { if (part.type === 'tool_result' && part.toolUseId) results.set(part.toolUseId, part); if (part.type === 'tool_use' && part.toolUseId) uses.add(part.toolUseId); if ((part.type === 'tool_image' || part.type === 'tool_document') && part.toolUseId) media.set(part.toolUseId, [...(media.get(part.toolUseId) ?? []), part]); }));
   return <div className="space-y-5">{messages.map((message, index) => {
-    const snapshot = mode === 'commander' ? commanderSnapshot(message) : null;
+    const snapshot = mode === 'commander' ? parseCommanderSnapshot(message) : null;
     const taskInput = mode === 'executor' ? executorInput(message) : null;
     const visibleParts = message.parts.filter((part) => !(part.toolUseId && uses.has(part.toolUseId) && ['tool_result', 'tool_image', 'tool_document'].includes(part.type)));
     if (!snapshot && !taskInput && !visibleParts.some((part) => ['text', 'thinking', 'tool_use', 'tool_result', 'image', 'document', 'tool_image', 'tool_document'].includes(part.type))) return null;
@@ -238,22 +239,8 @@ function WorkingIndicator({ label }: { label: string }) {
   return <div aria-live="polite" className="flex items-center gap-3 py-2 text-[11px] text-muted-foreground"><Bot className="size-3.5 shrink-0" /><span className="runtime-working-shimmer rounded px-2 py-1">{label}</span></div>;
 }
 
-type CommanderSnapshot = { ready: string[]; completed: string[]; results: Record<string, { Summary?: string }> };
-function commanderSnapshot(message: MissionRuntimeMessage): CommanderSnapshot | null {
-  if (message.role !== 'user' || message.parts.length !== 1 || message.parts[0].type !== 'text') return null;
-  try {
-    const value = objectValue(JSON.parse(message.parts[0].text || ''));
-    if (typeof value.run_id !== 'string' || !Array.isArray(value.ready_tasks)) return null;
-    const tasks = objectValue(value.tasks);
-    return {
-      ready: value.ready_tasks.filter((name): name is string => typeof name === 'string'),
-      completed: Object.entries(tasks).filter(([, state]) => objectValue(state).State === 'completed').map(([name]) => name),
-      results: objectValue(value.results) as CommanderSnapshot['results'],
-    };
-  } catch { return null; }
-}
 function CommanderState({ snapshot }: { snapshot: CommanderSnapshot }) {
-  return <details className="text-[10px] text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">Mission state · {snapshot.ready.length ? `${snapshot.ready.join(', ')} ready` : 'No tasks ready'}</summary><div className="mt-2 space-y-2 pl-3">{snapshot.completed.length > 0 && <p>Completed: {snapshot.completed.join(', ')}</p>}{Object.entries(snapshot.results).map(([task, result]) => result.Summary && <div key={task}><p className="font-medium">{task} result</p><MarkdownContent className="mt-1 text-[10px]" content={result.Summary} /></div>)}</div></details>;
+  return <details className="text-[10px] text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">Mission state · {snapshot.ready.length ? `${snapshot.ready.join(', ')} ready` : 'No tasks ready'}</summary><div className="mt-2 space-y-2 pl-3">{Object.keys(snapshot.stateCounts).length > 0 && <p>Task states: {Object.entries(snapshot.stateCounts).map(([state, count]) => `${count} ${state.replaceAll('_', ' ')}`).join(' · ')}</p>}{snapshot.completed.length > 0 && <p>Completed: {snapshot.completed.join(', ')}</p>}{Object.entries(snapshot.results).map(([task, result]) => result.Summary && <div key={task}><p className="font-medium">{task} result</p><MarkdownContent className="mt-1 text-[10px]" content={result.Summary} /></div>)}</div></details>;
 }
 
 type ExecutorInput = { objective: string; inputs: Record<string, unknown> };
