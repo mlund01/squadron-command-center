@@ -121,14 +121,23 @@ func handleResolveHumanInput(h *hub.Hub) http.HandlerFunc {
 			return
 		}
 		if !result.Accepted {
-			status := http.StatusBadGateway
-			if result.Reason == "not found" {
-				status = http.StatusNotFound
-			}
-			writeJSON(w, status, map[string]string{"error": result.Reason})
+			writeJSON(w, humanInputResolveStatus(result.Reason), map[string]string{"error": result.Reason})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"humanInput": result.HumanInput})
+	}
+}
+
+func humanInputResolveStatus(reason string) int {
+	switch reason {
+	case "not found":
+		return http.StatusNotFound
+	case "already resolved":
+		return http.StatusConflict
+	case "expired":
+		return http.StatusGone
+	default:
+		return http.StatusBadGateway
 	}
 }
 

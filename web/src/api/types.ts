@@ -218,7 +218,7 @@ export interface HumanInputRequest {
   additionalContext?: string;
   choices?: string[];
   multiSelect?: boolean;
-  state: 'open' | 'resolved';
+  state: 'open' | 'resolved' | 'expired';
   requestedAt: string;
   resolvedAt?: string;
   response?: string;

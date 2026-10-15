@@ -206,8 +206,9 @@ export function stopMission(instanceId: string, missionId: string): Promise<{ st
   return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/stop`, { method: 'POST' });
 }
 
-export function listHumanInputs(instanceId: string, missionId: string, state: 'open' | 'resolved' = 'open'): Promise<HumanInputsResponse> {
-  const query = new URLSearchParams({ missionId, state, order: 'oldest', limit: '100' });
+export function listHumanInputs(instanceId: string, missionId = '', state: 'open' | 'resolved' | 'expired' = 'open', options: { offset?: number; limit?: number } = {}): Promise<HumanInputsResponse> {
+  const query = new URLSearchParams({ state, order: state === 'open' ? 'oldest' : 'newest', limit: String(options.limit ?? 100), offset: String(options.offset ?? 0) });
+  if (missionId) query.set('missionId', missionId);
   return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/human-inputs?${query}`);
 }
 
