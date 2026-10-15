@@ -6,6 +6,7 @@ import { MarkdownContent } from '@/components/MarkdownContent';
 import { MissionGraph, type MissionTaskTelemetry } from '@/components/MissionGraph';
 import { Button } from '@/components/ui/button';
 import { parseCommanderSnapshot, type CommanderSnapshot } from '@/lib/commander-snapshot';
+import { attemptTimelineStatus, isLiveRunStatus, timelineTaskStateLabel } from '@/lib/runtime-timeline';
 import { cn } from '@/lib/utils';
 import './MissionRuntimeRun.css';
 
@@ -53,10 +54,10 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime, stat
   const selectedIterationChildren = selectedTask && iterationParentNames.has(selectedTask.name) ? runtime.tasks.filter((task) => isIterationChild(task.name, selectedTask.name)).sort((a, b) => iterationIndex(a.name) - iterationIndex(b.name)) : [];
   const commanderTurns = runtime.commander.messages.filter((message) => message.role === 'assistant').length;
   const completed = executedTasks.filter((task) => task.state === 'completed').length;
-  const waits = executedTasks.filter((task) => task.humanInput).length;
+  const runActive = isLiveRunStatus(status);
+  const waits = runActive ? executedTasks.filter((task) => task.humanInput).length : 0;
   const retries = executedTasks.reduce((total, task) => total + Math.max(0, task.attempt - 1), 0);
   const recoveries = events.filter((event) => event.eventType === 'mission.recovered');
-  const runActive = status === 'running' || status === 'waiting';
   const commanderActive = runActive && runtime.commander.state === 'active';
   const executorActive = runActive && runtime.tasks.some((task) => task.state === 'running' || task.state === 'dispatching');
   const commanderStatus = commanderActive ? executorActive ? 'Waiting for task executors' : 'Commander deciding' : undefined;
@@ -79,7 +80,7 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime, stat
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"><div><h2 className="text-xs font-semibold">Execution canvas</h2><p className="mt-1 text-[10px] text-muted-foreground">The commander follows this graph. Select a task to inspect its executor session.</p></div><Button onClick={() => choose({ kind: 'commander' })} size="xs" variant="outline"><MessageSquareText className="size-3" />Commander conversation</Button></div>
       <div className="h-[35rem] min-w-0"><MissionGraph mission={mission} onSelectTask={(task) => choose({ kind: 'task', name: task.name })} routeChoices={routeChoices} selectedTask={selection?.kind === 'task' ? baseTaskName(selection.name) : undefined} telemetry={telemetry} /></div>
     </section>
-    <TaskTimeline events={events} onSelect={choose} recoveries={recoveries} run={run} selected={selection} tasks={executedTasks} />
+    <TaskTimeline events={events} onSelect={choose} recoveries={recoveries} run={run} selected={selection} status={status} tasks={executedTasks} />
     {selection && <aside aria-label={selection.kind === 'commander' ? 'Commander session' : `${selection.name} task executor`} className={cn('fixed z-50 flex min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xl', expanded ? 'inset-3 sm:inset-4' : 'inset-y-3 right-3 w-[min(43rem,calc(100vw-1.5rem))] sm:inset-y-4 sm:right-4 sm:w-[min(43rem,calc(100vw-2rem))]')} role="dialog">
       <header className="flex h-16 shrink-0 items-center gap-3 border-b px-5">
         <span className="grid size-8 shrink-0 place-items-center rounded-full border bg-muted/40">{selection.kind === 'commander' ? <Bot className="size-4" /> : <Activity className="size-4" />}</span>
@@ -158,23 +159,39 @@ function RecoveryAttemptRow({ attempt, events, recovery }: { attempt: RecoveryAt
   </li>;
 }
 
-function TaskTimeline({ events, onSelect, recoveries, run, selected, tasks }: { events: RuntimeEvent[]; onSelect: (selection: Selection) => void; recoveries: RuntimeEvent[]; run: MissionRun; selected: Selection | null; tasks: MissionRuntimeTask[] }) {
+function TaskTimeline({ events, onSelect, recoveries, run, selected, status, tasks }: { events: RuntimeEvent[]; onSelect: (selection: Selection) => void; recoveries: RuntimeEvent[]; run: MissionRun; selected: Selection | null; status: string; tasks: MissionRuntimeTask[] }) {
+  const live = isLiveRunStatus(status);
   const [now, setNow] = useState(0);
   useEffect(() => {
-    if (run.finishedAt) return;
+    if (run.finishedAt || !live) return;
     const refresh = () => setNow(Date.now());
     refresh();
     const interval = window.setInterval(refresh, 1_000);
     return () => window.clearInterval(interval);
-  }, [run.finishedAt]);
+  }, [run.finishedAt, live]);
   const start = Date.parse(run.startedAt);
-  const end = run.finishedAt ? Date.parse(run.finishedAt) : Math.max(now, start + 1, ...events.map((event) => Date.parse(event.createdAt)).filter(Number.isFinite));
+  const end = run.finishedAt ? Date.parse(run.finishedAt) : Math.max(live ? now : 0, start + 1, ...events.map((event) => Date.parse(event.createdAt)).filter(Number.isFinite));
   const duration = Math.max(1, end - start);
-  return <section className="overflow-hidden rounded-md border bg-card"><div className="border-b px-4 py-3"><h2 className="text-xs font-semibold">Task execution timeline</h2><p className="mt-1 text-[10px] text-muted-foreground">All tasks share the mission clock. Overlapping bars ran in parallel; separate bars show retries.</p></div>{recoveries.length > 0 && <RecoverySummary events={events} recoveries={recoveries} />}<div className="overflow-x-auto"><div className="min-w-[640px] p-4">
+  return <section className="overflow-hidden rounded-md border bg-card"><div className="border-b px-4 py-3"><h2 className="text-xs font-semibold">Task execution timeline</h2><p className="mt-1 text-[10px] text-muted-foreground">All tasks share the mission clock. Overlapping bars ran in parallel; separate bars show retries. Amber marks a human-input wait or stopped work.</p></div>{recoveries.length > 0 && <RecoverySummary events={events} recoveries={recoveries} />}<div className="overflow-x-auto"><div className="min-w-[640px] p-4">
     <div className="grid grid-cols-[13rem_minmax(0,1fr)] gap-3 pb-2 text-[9px] uppercase tracking-wider text-muted-foreground"><span>Session</span><div className="relative flex justify-between"><span>Start</span><span>{formatDuration(duration)}</span>{events.filter((event) => event.eventType === 'mission.recovered').map((event) => <span aria-label={`Worker recovery at ${formatTime(event.createdAt)}`} className="absolute -bottom-1 top-0 w-0.5 bg-violet-500" key={event.id} style={{ left: `${Math.max(0, Math.min(100, (Date.parse(event.createdAt) - start) / duration * 100))}%` }} title={`Worker recovery recorded ${formatTime(event.createdAt)}`} />)}</div></div>
     <button className={cn('grid w-full grid-cols-[13rem_minmax(0,1fr)] items-center gap-3 rounded px-2 py-2 text-left hover:bg-accent/40', selected?.kind === 'commander' && 'bg-accent/40')} onClick={() => onSelect({ kind: 'commander' })}><span className="flex items-center gap-2 text-[10px] font-medium"><Bot className="size-3" />Commander</span><span className="relative h-5 bg-muted/25"><span className="absolute inset-y-1 left-0 right-0 rounded-sm bg-sky-500/75" /></span></button>
-    {tasks.map((task) => <button className={cn('grid w-full grid-cols-[13rem_minmax(0,1fr)] items-center gap-3 rounded px-2 py-2 text-left hover:bg-accent/40', selected?.kind === 'task' && selected.name === task.name && 'bg-accent/40')} key={task.name} onClick={() => onSelect({ kind: 'task', name: task.name })}><span className="min-w-0"><span className="block truncate text-[10px] font-medium">{task.name}</span><span className="mt-0.5 block text-[9px] text-muted-foreground">{task.state.replaceAll('_', ' ')}{task.attempt > 1 ? ` · ${task.attempt} attempts` : ''}</span></span><span className="relative h-6 bg-muted/25">{task.attempts?.map((attempt) => { const attemptStart = Date.parse(attempt.dispatchedAt); const terminal = events.find((event) => event.attemptId === attempt.id && ['task.completed', 'task.attempt_failed', 'task.failed'].includes(event.eventType)); const attemptEnd = terminal ? Date.parse(terminal.createdAt) : end; const left = Math.max(0, Math.min(100, (attemptStart - start) / duration * 100)); const width = Math.max(0.8, Math.min(100 - left, (attemptEnd - attemptStart) / duration * 100)); return <span className={cn('absolute inset-y-1 rounded-sm', terminal?.eventType === 'task.attempt_failed' || terminal?.eventType === 'task.failed' ? 'bg-destructive' : task.state === 'running' && !terminal ? 'animate-pulse bg-primary' : 'bg-emerald-500')} key={attempt.id} style={{ left: `${left}%`, width: `${width}%` }} title={`Attempt ${attempt.number} · ${formatDuration(attemptEnd - attemptStart)}`} />; })}</span></button>)}
+    {tasks.map((task) => <TimelineTaskRow duration={duration} end={end} events={events} key={task.name} onSelect={onSelect} runStatus={status} selected={selected?.kind === 'task' && selected.name === task.name} start={start} task={task} />)}
   </div></div></section>;
+}
+
+function TimelineTaskRow({ duration, end, events, onSelect, runStatus, selected, start, task }: { duration: number; end: number; events: RuntimeEvent[]; onSelect: (selection: Selection) => void; runStatus: string; selected: boolean; start: number; task: MissionRuntimeTask }) {
+  return <button className={cn('grid w-full grid-cols-[13rem_minmax(0,1fr)] items-center gap-3 rounded px-2 py-2 text-left hover:bg-accent/40', selected && 'bg-accent/40')} onClick={() => onSelect({ kind: 'task', name: task.name })} type="button">
+    <span className="min-w-0"><span className="block truncate text-[10px] font-medium">{task.name}</span><span className="mt-0.5 block text-[9px] text-muted-foreground">{timelineTaskStateLabel(task.state, runStatus)}{task.attempt > 1 ? ` · ${task.attempt} attempts` : ''}</span></span>
+    <span className="relative h-6 bg-muted/25">{task.attempts?.map((attempt) => {
+      const attemptStart = Date.parse(attempt.dispatchedAt);
+      const terminal = events.find((event) => event.attemptId === attempt.id && ['task.completed', 'task.attempt_failed', 'task.failed'].includes(event.eventType));
+      const attemptEnd = terminal ? Date.parse(terminal.createdAt) : end;
+      const left = Math.max(0, Math.min(100, (attemptStart - start) / duration * 100));
+      const width = Math.max(0.8, Math.min(100 - left, (attemptEnd - attemptStart) / duration * 100));
+      const appearance = attemptTimelineStatus(terminal?.eventType, task.state, runStatus);
+      return <span className={cn('absolute inset-y-1 rounded-sm', appearance === 'failed' && 'bg-destructive', appearance === 'completed' && 'bg-emerald-500', appearance === 'running' && 'animate-pulse bg-primary', appearance === 'waiting' && 'bg-amber-500', appearance === 'stopped' && 'bg-amber-500/60', appearance === 'incomplete' && 'bg-muted-foreground/45')} key={attempt.id} style={{ left: `${left}%`, width: `${width}%` }} title={`Attempt ${attempt.number} · ${appearance} · ${formatDuration(attemptEnd - attemptStart)}`} />;
+    })}</span>
+  </button>;
 }
 
 function TaskConversation({ active, events, task }: { active: boolean; events: RuntimeEvent[]; task: MissionRuntimeTask }) {
@@ -187,8 +204,8 @@ function TaskConversation({ active, events, task }: { active: boolean; events: R
   const attemptEnd = terminalEvent?.createdAt ?? (active && attempt?.id === task.attempts?.at(-1)?.id && ['running', 'dispatching', 'waiting'].includes(task.state) ? new Date().toISOString() : undefined);
   const attemptDuration = attempt && attemptEnd ? Date.parse(attemptEnd) - Date.parse(attempt.dispatchedAt) : undefined;
   return <>
-    {task.humanInput && <div className="border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-[11px]"><p className="font-medium">Waiting for human input{task.humanInput.shortSummary ? ` · ${task.humanInput.shortSummary}` : ''}</p><MarkdownContent className="mt-2 text-muted-foreground" content={task.humanInput.question} /><p className="mt-2 text-[10px] text-muted-foreground">Close this panel to answer on the run page.</p></div>}
-    {task.retryReadyAt && <p className="flex items-center gap-2 text-[10px] text-muted-foreground"><RefreshCcw className="size-3" />Retry scheduled for {formatTime(task.retryReadyAt)}</p>}
+    {task.humanInput && <div className="border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-[11px]"><p className="font-medium">{active ? 'Waiting for human input' : 'Human input at last checkpoint'}{task.humanInput.shortSummary ? ` · ${task.humanInput.shortSummary}` : ''}</p><MarkdownContent className="mt-2 text-muted-foreground" content={task.humanInput.question} />{active && <p className="mt-2 text-[10px] text-muted-foreground">Close this panel to answer on the run page.</p>}</div>}
+    {task.retryReadyAt && <p className="flex items-center gap-2 text-[10px] text-muted-foreground"><RefreshCcw className="size-3" />{active ? 'Retry scheduled for' : 'Retry scheduled at last checkpoint for'} {formatTime(task.retryReadyAt)}</p>}
     {task.error && <p className="border-l-2 border-destructive px-3 text-[11px] text-destructive">{task.error}</p>}
     {task.attempts && task.attempts.length > 1 && <div className="flex flex-wrap gap-1.5">{task.attempts.map((candidate) => <Button key={candidate.id} onClick={() => setAttemptId(candidate.id)} size="xs" variant={candidate.id === attempt?.id ? 'secondary' : 'outline'}>Attempt {candidate.number}</Button>)}</div>}
     {attempt && <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-y py-3 text-[10px] sm:grid-cols-4"><Fact label="Model" value={attempt.model} /><Fact label="Attempt" value={String(attempt.number)} /><Fact label="Phase" value={attempt.phase || task.state} /><Fact label="Started" value={formatTime(attempt.dispatchedAt)} />{attempt.runAs && <Fact label="Run as" value={attempt.runAs} />}{attemptDuration != null && Number.isFinite(attemptDuration) && <Fact label="Elapsed" value={formatDuration(attemptDuration)} />}{turns.length > 0 && <><Fact label="Model turns" value={turns.length.toLocaleString()} /><Fact label="Tokens" value={`${inputTokens.toLocaleString()} in · ${outputTokens.toLocaleString()} out`} /></>}<div className="col-span-2 sm:col-span-4"><Fact label="Granted tools" value={attempt.tools?.join(', ') || 'None'} /></div></div>}
