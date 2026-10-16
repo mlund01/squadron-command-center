@@ -1,4 +1,5 @@
 import type { AdminAccess, AdminUser, AgentInfo, AgentConversationContext, AgentConversationState, AgentConversationSummary, AuditEvent, CommandCenterRole, ConfigSource, CostSummaryResponse, HumanInputsResponse, LocalPluginFile, LocalPluginFileContent, MissionEventsResponse, MissionHistoryResponse, MissionRunDetail, MissionRunIdentity, MissionSchedule, MissionTaskDetail, ModelProviderKind, ResolveHumanInputResponse, RunMissionResponse, ServicePrincipal, UserStatus, Workspace, WorkspaceConfigSnapshot, WorkspaceModelConnection, WorkspaceRole, WorkspaceVariable, WorkspaceWorker } from './types';
+import { normalizeMissionHistory } from '@/lib/mission-history';
 
 const BASE_URL = '/api';
 
@@ -153,7 +154,7 @@ export function getLocalPluginFile(workspaceId: string, pluginName: string, path
 }
 
 export function getMissionHistory(instanceId: string, limit = 500): Promise<MissionHistoryResponse> {
-  return fetchJSON(`/instances/${instanceId}/history?limit=${limit}`);
+  return fetchJSON<{ missions: MissionHistoryResponse['missions'] | null; total: number }>(`/instances/${instanceId}/history?limit=${limit}`).then(normalizeMissionHistory);
 }
 
 export function listMissionRunIdentities(instanceId: string, missionName: string): Promise<MissionRunIdentity[]> {

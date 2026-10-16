@@ -23,7 +23,7 @@ export function MissionRunsPage() {
     queryKey: ['mission-history', snapshot.data?.instanceId],
     queryFn: () => getMissionHistory(snapshot.data!.instanceId),
     enabled: Boolean(snapshot.data?.connected && snapshot.data?.instanceId),
-    refetchInterval: (query) => query.state.data?.missions.some((run) => run.status === 'running') ? 2_000 : 5_000,
+    refetchInterval: (query) => query.state.data?.missions?.some((run) => run.status === 'running') ? 2_000 : 5_000,
     retry: false,
   });
   const costs = useQuery({ queryKey: ['mission-costs', snapshot.data?.instanceId], queryFn: () => getCostSummary(snapshot.data!.instanceId), enabled: Boolean(snapshot.data?.connected && snapshot.data?.instanceId), refetchInterval: 5_000, retry: false });

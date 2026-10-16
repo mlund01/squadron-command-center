@@ -29,7 +29,7 @@ export function RunsPage() {
     queryKey: ['mission-history', snapshot.data?.instanceId],
     queryFn: () => getMissionHistory(snapshot.data!.instanceId),
     enabled: Boolean(snapshot.data?.instanceId && snapshot.data.connected),
-    refetchInterval: (query) => query.state.data?.missions.some((run) => run.status === 'running') ? 2_000 : 5_000,
+    refetchInterval: (query) => query.state.data?.missions?.some((run) => run.status === 'running') ? 2_000 : 5_000,
     refetchIntervalInBackground: false,
     retry: false,
   });
