@@ -1,4 +1,4 @@
-import type { AdminAccess, AdminUser, AgentInfo, AgentConversationContext, AgentConversationState, AgentConversationSummary, AuditEvent, CommandCenterRole, ConfigSource, CostSummaryResponse, HumanInputsResponse, LocalPluginFile, LocalPluginFileContent, MissionEventsResponse, MissionHistoryResponse, MissionRunDetail, MissionRunIdentity, MissionSchedule, MissionTaskDetail, ModelProviderKind, ResolveHumanInputResponse, RunMissionResponse, ServicePrincipal, UserStatus, Workspace, WorkspaceConfigSnapshot, WorkspaceModelConnection, WorkspaceRole, WorkspaceVariable, WorkspaceWorker } from './types';
+import type { AdminAccess, AdminUser, AgentInfo, AgentConversationContext, AgentConversationState, AgentConversationSummary, AuditEvent, CommandCenterRole, ConfigSource, CostSummaryResponse, HumanInputDetailResponse, HumanInputsResponse, LocalPluginFile, LocalPluginFileContent, MissionEventsResponse, MissionHistoryResponse, MissionRunDetail, MissionRunIdentity, MissionSchedule, MissionTaskDetail, ModelProviderKind, ResolveHumanInputResponse, RunMissionResponse, ServicePrincipal, UserStatus, Workspace, WorkspaceConfigSnapshot, WorkspaceModelConnection, WorkspaceRole, WorkspaceVariable, WorkspaceWorker } from './types';
 import { normalizeMissionHistory } from '@/lib/mission-history';
 
 const BASE_URL = '/api';
@@ -207,10 +207,14 @@ export function stopMission(instanceId: string, missionId: string): Promise<{ st
   return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/stop`, { method: 'POST' });
 }
 
-export function listHumanInputs(instanceId: string, missionId = '', state: 'open' | 'resolved' | 'expired' = 'open', options: { offset?: number; limit?: number } = {}): Promise<HumanInputsResponse> {
+export function listHumanInputs(instanceId: string, missionId = '', state: 'open' | 'resolved' | 'expired' | 'canceled' = 'open', options: { offset?: number; limit?: number } = {}): Promise<HumanInputsResponse> {
   const query = new URLSearchParams({ state, order: state === 'open' ? 'oldest' : 'newest', limit: String(options.limit ?? 100), offset: String(options.offset ?? 0) });
   if (missionId) query.set('missionId', missionId);
   return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/human-inputs?${query}`);
+}
+
+export function getHumanInput(instanceId: string, toolCallId: string): Promise<HumanInputDetailResponse> {
+  return fetchJSON(`/instances/${encodeURIComponent(instanceId)}/human-inputs/${encodeURIComponent(toolCallId)}`);
 }
 
 export function resolveHumanInput(instanceId: string, toolCallId: string, response: string): Promise<ResolveHumanInputResponse> {

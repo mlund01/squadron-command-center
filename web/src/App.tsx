@@ -27,6 +27,7 @@ import { WorkspacesPage } from '@/pages/WorkspacesPage';
 const MissionDetailPage = lazy(() => import('@/pages/MissionDetailPage').then((module) => ({ default: module.MissionDetailPage })));
 const MissionRunsPage = lazy(() => import('@/pages/MissionRunsPage').then((module) => ({ default: module.MissionRunsPage })));
 const HumanInputsPage = lazy(() => import('@/pages/HumanInputsPage').then((module) => ({ default: module.HumanInputsPage })));
+const HumanInputDetailPage = lazy(() => import('@/pages/HumanInputDetailPage').then((module) => ({ default: module.HumanInputDetailPage })));
 
 export default function App() {
   return (
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="agents/:agentName/session" element={<AgentConversationPage purpose="session" />} />
           <Route path="runs" element={<RunsPage />} />
           <Route path="human-input" element={<LazyPage><HumanInputsPage /></LazyPage>} />
+          <Route path="human-input/:callId" element={<LazyPage><HumanInputDetailPage /></LazyPage>} />
           <Route path="connections" element={<WorkspaceConnectionsPage />} />
           <Route path="config" element={<WorkspaceConfigPage />} />
           <Route path="plugins" element={<WorkspacePluginsPage />} />

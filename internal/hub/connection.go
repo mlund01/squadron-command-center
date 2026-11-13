@@ -230,7 +230,8 @@ func (c *Connection) fanOutMissionEvent(env *protocol.Envelope) {
 	// buffers — if no one's listening the event is dropped; if someone
 	// is, everyone gets a copy immediately.
 	if payload.EventType == protocol.EventHumanInputRequested ||
-		payload.EventType == protocol.EventHumanInputResolved {
+		payload.EventType == protocol.EventHumanInputResolved ||
+		payload.EventType == protocol.EventHumanInputCanceled {
 		c.fanOutHumanInputEvent(&payload)
 	}
 

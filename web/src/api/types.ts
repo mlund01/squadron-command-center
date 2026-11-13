@@ -218,9 +218,13 @@ export interface HumanInputRequest {
   additionalContext?: string;
   choices?: string[];
   multiSelect?: boolean;
-  state: 'open' | 'resolved' | 'expired';
+  state: 'open' | 'resolved' | 'expired' | 'canceled';
   requestedAt: string;
+  deadlineAt?: string;
   resolvedAt?: string;
+  expiredAt?: string;
+  canceledAt?: string;
+  cancelReason?: string;
   response?: string;
   responderUserId?: string;
 }
@@ -228,6 +232,10 @@ export interface HumanInputRequest {
 export interface HumanInputsResponse {
   humanInputs: HumanInputRequest[];
   total: number;
+}
+
+export interface HumanInputDetailResponse {
+  humanInput: HumanInputRequest;
 }
 
 export interface ResolveHumanInputResponse {
@@ -281,6 +289,7 @@ export interface MissionRuntimeTask {
   name: string;
   state: string;
   attempt: number;
+  cost?: number;
   summary?: string;
   error?: string;
   retryReadyAt?: string;
@@ -290,7 +299,8 @@ export interface MissionRuntimeTask {
 export interface MissionRuntimeInfo {
   revision: number;
   state: string;
-  commander: { id: string; state: string; messages: MissionRuntimeMessage[] };
+  totalCost?: number;
+  commander: { id: string; state: string; cost?: number; messages: MissionRuntimeMessage[] };
   tasks: MissionRuntimeTask[];
 }
 export interface MissionRunDetail { mission: MissionRun; tasks: MissionTaskRun[]; runtime?: MissionRuntimeInfo }

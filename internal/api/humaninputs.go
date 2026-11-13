@@ -72,7 +72,48 @@ func handleListHumanInputs(h *hub.Hub) http.HandlerFunc {
 	}
 }
 
-func handleResolveHumanInput(h *hub.Hub) http.HandlerFunc {
+func handleGetHumanInput(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		instanceID := r.PathValue("id")
+		toolCallID := r.PathValue("callId")
+		if toolCallID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tool call ID is required"})
+			return
+		}
+		if h.GetConnection(instanceID) == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "instance disconnected"})
+			return
+		}
+		reqEnv, err := protocol.NewRequest(protocol.TypeGetHumanInput, &protocol.GetHumanInputPayload{ToolCallID: toolCallID})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		resp, err := h.SendRequest(instanceID, reqEnv, proxyTimeout)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+			return
+		}
+		if resp.Type == protocol.TypeError {
+			var errPayload protocol.ErrorPayload
+			_ = protocol.DecodePayload(resp, &errPayload)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": errPayload.Message})
+			return
+		}
+		var result protocol.GetHumanInputResultPayload
+		if err := protocol.DecodePayload(resp, &result); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if !result.Found {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "human input not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"humanInput": result.HumanInput})
+	}
+}
+
+func handleResolveHumanInput(h *hub.Hub, store AuthorizationStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		instanceID := r.PathValue("id")
 		toolCallID := r.PathValue("callId")
@@ -92,6 +133,9 @@ func handleResolveHumanInput(h *hub.Hub) http.HandlerFunc {
 		}
 		if body.Response == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "response is required"})
+			return
+		}
+		if !authorizeHumanInputResponder(w, r, h, store, instanceID, toolCallID) {
 			return
 		}
 
@@ -128,13 +172,60 @@ func handleResolveHumanInput(h *hub.Hub) http.HandlerFunc {
 	}
 }
 
+// Answering a mission question changes its execution, so read access to
+// the transcript alone is insufficient. Require the user's mission Run grant.
+func authorizeHumanInputResponder(w http.ResponseWriter, r *http.Request, h missionRunProxy, store AuthorizationStore, instanceID, toolCallID string) bool {
+	instance := h.GetRegistry().GetInstance(instanceID)
+	if instance == nil || instance.WorkspaceID == "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "workspace access is required"})
+		return false
+	}
+	user, ok := currentControlPlaneUser(w, r, store)
+	if !ok {
+		return false
+	}
+	req, err := protocol.NewRequest(protocol.TypeGetHumanInput, &protocol.GetHumanInputPayload{ToolCallID: toolCallID})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "request lookup failed"})
+		return false
+	}
+	resp, err := h.SendRequest(instanceID, req, proxyTimeout)
+	if err != nil || resp.Type == protocol.TypeError {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "request lookup unavailable"})
+		return false
+	}
+	var detail protocol.GetHumanInputResultPayload
+	if err := protocol.DecodePayload(resp, &detail); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "invalid request lookup"})
+		return false
+	}
+	if !detail.Found {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "human input not found"})
+		return false
+	}
+	if detail.HumanInput.MissionName == "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "mission Run permission is required"})
+		return false
+	}
+	allowed, err := store.CanRunMission(r.Context(), user, instance.WorkspaceID, detail.HumanInput.MissionName)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authorization unavailable"})
+		return false
+	}
+	if !allowed {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "mission Run permission is required"})
+		return false
+	}
+	return true
+}
+
 func humanInputResolveStatus(reason string) int {
 	switch reason {
 	case "not found":
 		return http.StatusNotFound
 	case "already resolved":
 		return http.StatusConflict
-	case "expired":
+	case "expired", "canceled":
 		return http.StatusGone
 	default:
 		return http.StatusBadGateway

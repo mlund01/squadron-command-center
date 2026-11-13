@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { CircleHelp, Info, Send } from 'lucide-react';
+import { ArrowUpRight, CircleHelp, Info, Send } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { resolveHumanInput } from '@/api/client';
 import type { HumanInputRequest } from '@/api/types';
 import { MarkdownContent } from '@/components/MarkdownContent';
@@ -9,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { humanInputSubmitErrorMessage } from '@/lib/human-input-display';
 import { cn } from '@/lib/utils';
 
-export function HumanInputPrompt({ instanceId, onResolved, request }: { instanceId: string; onResolved: () => void; request: HumanInputRequest }) {
+export function HumanInputPrompt({ detailHref, instanceId, onResolved, request }: { detailHref?: string; instanceId: string; onResolved: () => void; request: HumanInputRequest }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showOther, setShowOther] = useState(false);
   const [response, setResponse] = useState('');
@@ -42,7 +43,8 @@ export function HumanInputPrompt({ instanceId, onResolved, request }: { instance
   return <section className="overflow-hidden rounded-md border border-amber-500/40 bg-card">
     <div className="flex items-start gap-3 border-b border-amber-500/25 bg-amber-500/10 px-4 py-3">
       <CircleHelp className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-300" />
-      <div className="min-w-0"><p className="text-[10px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-300">Input requested{request.taskName ? ` · ${request.taskName}` : ''}</p>{request.shortSummary && <p className="mt-1 text-xs font-medium">{request.shortSummary}</p>}</div>
+      <div className="min-w-0 flex-1"><p className="text-[10px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-300">Input requested{request.taskName ? ` · ${request.taskName}` : ''}</p>{request.shortSummary && <p className="mt-1 text-xs font-medium">{request.shortSummary}</p>}</div>
+      {detailHref && <Link className="inline-flex shrink-0 items-center gap-1 text-[11px] text-primary hover:underline" to={detailHref}>Open request<ArrowUpRight className="size-3" /></Link>}
     </div>
     <div className="p-4">
       <MarkdownContent className="text-sm [&_p]:leading-6" content={request.question} />

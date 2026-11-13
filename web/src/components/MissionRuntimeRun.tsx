@@ -60,20 +60,27 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime, stat
   const recoveries = events.filter((event) => event.eventType === 'mission.recovered');
   const commanderActive = runActive && runtime.commander.state === 'active';
   const executorActive = runActive && runtime.tasks.some((task) => task.state === 'running' || task.state === 'dispatching');
-  const commanderStatus = commanderActive ? executorActive ? 'Waiting for task executors' : 'Commander deciding' : undefined;
+  const commanderStatus = !commanderActive ? undefined
+    : waits > 0 ? 'Waiting for human input'
+      : executorActive ? 'Waiting for task executors'
+        : status === 'waiting' ? 'Waiting to resume'
+          : 'Commander deciding';
   const failureEvent = [...events].reverse().find((event) => event.eventType === 'mission.failed');
   const failureReason = stringValue(failureEvent?.data.Error ?? failureEvent?.data.error) || runtime.tasks.find((task) => task.state === 'failed')?.error;
   const staleTerminalCheckpoint = ['completed', 'failed', 'stopped'].includes(status) && status !== runtime.state;
+  const wallTime = Math.max(0, Date.parse(run.finishedAt ?? new Date().toISOString()) - Date.parse(run.startedAt));
   const choose = (next: Selection) => { setSelection(next); setTab('chat'); };
 
   return <>
     {status === 'failed' && <section className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-[11px]" role="alert"><p className="font-semibold text-destructive">Mission failed</p><p className="mt-1 text-muted-foreground">{failureReason || (staleTerminalCheckpoint ? 'The run ended before its last runtime checkpoint reached a terminal state. Earlier failure details were not persisted.' : 'Inspect the failed task or trace for details.')}</p></section>}
     {status === 'stopped' && staleTerminalCheckpoint && <p className="rounded-md border px-4 py-3 text-[11px] text-muted-foreground">This run was stopped. Its last runtime checkpoint remains available for inspection.</p>}
-    <section className="grid overflow-hidden rounded-md border bg-card sm:grid-cols-2 lg:grid-cols-4" aria-label="Run summary">
+    <section className="grid overflow-hidden rounded-md border bg-card sm:grid-cols-2 lg:grid-cols-3" aria-label="Run summary">
       <Metric label="Task executions" value={`${completed}/${executedTasks.length}`} detail={`${executedTasks.filter((task) => task.state === 'running').length} running`} />
       <Metric label="Commander turns" value={String(commanderTurns)} detail={staleTerminalCheckpoint ? 'Last checkpoint: ' + runtime.commander.state : runtime.commander.state} />
       <Metric label="Waiting for input" value={String(waits)} detail={waits ? 'Action needed' : 'None'} />
       <Metric label="Retries" value={String(retries)} detail={`${runtime.revision} durable revisions`} />
+      <Metric label="Wall time" value={formatDuration(wallTime)} detail="Mission elapsed time" />
+      <Metric label="Estimated cost" value={formatRuntimeCost(runtime.totalCost)} detail="All commander and executor turns" />
     </section>
     {launchedRuns.length > 0 && <section aria-label="Routed mission runs" className="rounded-md border bg-card px-4 py-3 text-[11px]"><p className="font-semibold">Continued in another mission</p><div className="mt-2 flex flex-wrap gap-x-5 gap-y-2">{launchedRuns.map((launch) => <Link className="inline-flex items-center gap-1.5 text-primary hover:underline" key={`${launch.mission}/${launch.runId}`} to={`/w/${workspaceId}/missions/${encodeURIComponent(launch.mission)}/runs/${encodeURIComponent(launch.runId)}`}>{launch.mission} · {launch.runId}<ArrowUpRight className="size-3" /></Link>)}</div></section>}
     <section className="overflow-hidden rounded-md border bg-card">
@@ -92,7 +99,7 @@ export function MissionRuntimeRun({ events: records, mission, run, runtime, stat
       <nav aria-label="Session view" className="flex h-9 shrink-0 gap-1 border-b px-5"><TabButton active={tab === 'chat'} label="Chat" onClick={() => setTab('chat')} /><TabButton active={tab === 'trace'} label="Trace" onClick={() => setTab('trace')} /></nav>
       <div className="min-h-0 flex-1 overflow-y-auto"><div className="mx-auto w-full max-w-4xl space-y-5 p-5 sm:p-6">
         {tab === 'chat' ? selection.kind === 'commander'
-          ? <Conversation empty="The commander has not produced a message yet." messages={runtime.commander.messages} mode="commander" status={commanderStatus} />
+          ? <><div className="text-[10px] text-muted-foreground">Commander estimated cost · <span className="font-medium text-foreground">{formatRuntimeCost(runtime.commander.cost)}</span></div><Conversation empty="The commander has not produced a message yet." messages={runtime.commander.messages} mode="commander" status={commanderStatus} /></>
           : selectedTask ? iterationParentNames.has(selectedTask.name) ? <IterationOverview children={selectedIterationChildren} onSelect={choose} task={selectedTask} /> : <TaskConversation active={runActive} events={events} task={selectedTask} /> : <p className="text-xs text-muted-foreground">Task telemetry is not available yet.</p>
           : <RuntimeTrace events={events} run={run} selection={selection} task={selectedTask} />}
       </div></div>
@@ -207,6 +214,7 @@ function TaskConversation({ active, events, task }: { active: boolean; events: R
     {task.humanInput && <div className="border-l-2 border-amber-500 bg-amber-500/5 px-3 py-2 text-[11px]"><p className="font-medium">{active ? 'Waiting for human input' : 'Human input at last checkpoint'}{task.humanInput.shortSummary ? ` · ${task.humanInput.shortSummary}` : ''}</p><MarkdownContent className="mt-2 text-muted-foreground" content={task.humanInput.question} />{active && <p className="mt-2 text-[10px] text-muted-foreground">Close this panel to answer on the run page.</p>}</div>}
     {task.retryReadyAt && <p className="flex items-center gap-2 text-[10px] text-muted-foreground"><RefreshCcw className="size-3" />{active ? 'Retry scheduled for' : 'Retry scheduled at last checkpoint for'} {formatTime(task.retryReadyAt)}</p>}
     {task.error && <p className="border-l-2 border-destructive px-3 text-[11px] text-destructive">{task.error}</p>}
+    {task.cost != null && <p className="text-[10px] text-muted-foreground">Task estimated cost across all attempts · <span className="font-medium text-foreground">{formatRuntimeCost(task.cost)}</span></p>}
     {task.attempts && task.attempts.length > 1 && <div className="flex flex-wrap gap-1.5">{task.attempts.map((candidate) => <Button key={candidate.id} onClick={() => setAttemptId(candidate.id)} size="xs" variant={candidate.id === attempt?.id ? 'secondary' : 'outline'}>Attempt {candidate.number}</Button>)}</div>}
     {attempt && <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-y py-3 text-[10px] sm:grid-cols-4"><Fact label="Model" value={attempt.model} /><Fact label="Attempt" value={String(attempt.number)} /><Fact label="Phase" value={attempt.phase || task.state} /><Fact label="Started" value={formatTime(attempt.dispatchedAt)} />{attempt.runAs && <Fact label="Run as" value={attempt.runAs} />}{attemptDuration != null && Number.isFinite(attemptDuration) && <Fact label="Elapsed" value={formatDuration(attemptDuration)} />}{turns.length > 0 && <><Fact label="Model turns" value={turns.length.toLocaleString()} /><Fact label="Tokens" value={`${inputTokens.toLocaleString()} in · ${outputTokens.toLocaleString()} out`} /></>}<div className="col-span-2 sm:col-span-4"><Fact label="Granted tools" value={attempt.tools?.join(', ') || 'None'} /></div></div>}
     {attempt ? <Conversation empty="The executor has not produced a message yet." messages={attempt.messages ?? []} mode="executor" status={active && (task.state === 'running' || task.state === 'dispatching') ? 'Task executor working' : undefined} /> : <p className="text-xs text-muted-foreground">This task has not been dispatched.</p>}
@@ -216,8 +224,9 @@ function TaskConversation({ active, events, task }: { active: boolean; events: R
 
 function IterationOverview({ children, onSelect, task }: { children: MissionRuntimeTask[]; onSelect: (selection: Selection) => void; task: MissionRuntimeTask }) {
   const completed = children.filter((child) => child.state === 'completed').length;
+  const childCost = children.reduce((total, child) => total + (child.cost ?? 0), 0);
   return <section className="space-y-4">
-    <div><p className="text-[9px] uppercase tracking-wider text-muted-foreground">Iteration progress</p><p className="mt-1 text-xs font-medium">{completed} of {children.length} task executions completed</p></div>
+    <div><p className="text-[9px] uppercase tracking-wider text-muted-foreground">Iteration progress</p><p className="mt-1 text-xs font-medium">{completed} of {children.length} task executions completed</p>{children.some((child) => child.cost != null) && <p className="mt-1 text-[10px] text-muted-foreground">Child executor cost · {formatRuntimeCost(childCost)}</p>}</div>
     {task.error && <p className="border-l-2 border-destructive px-3 text-[11px] text-destructive">{task.error}</p>}
     {children.length ? <div className="space-y-2">{children.map((child) => <button className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-[11px] hover:bg-accent/40" key={child.name} onClick={() => onSelect({ kind: 'task', name: child.name })} type="button"><span className="font-medium">{child.name}</span><span className="capitalize text-muted-foreground">{child.state.replaceAll('_', ' ')}</span></button>)}</div> : <p className="text-[11px] text-muted-foreground">Waiting for the dataset to expand into task executions.</p>}
     {task.summary && <details className="border-t pt-3 text-[11px]"><summary className="cursor-pointer font-medium">Combined result</summary><MarkdownContent className="mt-2" content={task.summary} /></details>}
@@ -260,17 +269,24 @@ function CommanderState({ snapshot }: { snapshot: CommanderSnapshot }) {
   return <details className="text-[10px] text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">Mission state · {snapshot.ready.length ? `${snapshot.ready.join(', ')} ready` : 'No tasks ready'}</summary><div className="mt-2 space-y-2 pl-3">{Object.keys(snapshot.stateCounts).length > 0 && <p>Task states: {Object.entries(snapshot.stateCounts).map(([state, count]) => `${count} ${state.replaceAll('_', ' ')}`).join(' · ')}</p>}{snapshot.completed.length > 0 && <p>Completed: {snapshot.completed.join(', ')}</p>}{Object.entries(snapshot.results).map(([task, result]) => result.Summary && <div key={task}><p className="font-medium">{task} result</p><MarkdownContent className="mt-1 text-[10px]" content={result.Summary} /></div>)}</div></details>;
 }
 
-type ExecutorInput = { objective: string; inputs: Record<string, unknown> };
+type ExecutorInput = { objective: string; inputs: Record<string, unknown>; iteration?: { parentTask: string; index: number; item: unknown } };
 function executorInput(message: MissionRuntimeMessage): ExecutorInput | null {
   if (message.role !== 'user' || message.parts.length !== 1 || message.parts[0].type !== 'text') return null;
   try {
     const value = objectValue(JSON.parse(message.parts[0].text || ''));
     if (typeof value.task !== 'string' || typeof value.objective !== 'string') return null;
-    return { objective: value.objective, inputs: objectValue(value.inputs) };
+    const iteration = objectValue(value.iteration);
+    return {
+      objective: value.objective,
+      inputs: objectValue(value.inputs),
+      iteration: typeof iteration.parentTask === 'string' && typeof iteration.index === 'number' && 'item' in iteration
+        ? { parentTask: iteration.parentTask, index: iteration.index, item: iteration.item }
+        : undefined,
+    };
   } catch { return null; }
 }
 function ExecutorInput({ input }: { input: ExecutorInput }) {
-  return <section className="border-l-2 border-primary/60 bg-primary/5 px-3 py-2"><p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Task objective</p><MarkdownContent className="mt-1 text-[11px]" content={input.objective} />{Object.keys(input.inputs).length > 0 && <details className="mt-2 text-[10px]"><summary className="cursor-pointer">Task inputs</summary><pre className="mt-2 overflow-auto whitespace-pre-wrap break-words text-[10px]">{JSON.stringify(input.inputs, null, 2)}</pre></details>}</section>;
+  return <section className="border-l-2 border-primary/60 bg-primary/5 px-3 py-2"><p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Task objective</p><MarkdownContent className="mt-1 text-[11px]" content={input.objective} />{input.iteration && <div className="mt-3"><p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Iteration item {input.iteration.index + 1}</p><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-[10px]">{typeof input.iteration.item === 'string' ? input.iteration.item : JSON.stringify(input.iteration.item, null, 2)}</pre></div>}{Object.keys(input.inputs).length > 0 && <details className="mt-2 text-[10px]"><summary className="cursor-pointer">Task inputs</summary><pre className="mt-2 overflow-auto whitespace-pre-wrap break-words text-[10px]">{JSON.stringify(input.inputs, null, 2)}</pre></details>}</section>;
 }
 
 function ContentPart({ media, mode, part, result, skipResult }: { media?: MissionRuntimeContentPart[]; mode: 'commander' | 'executor'; part: MissionRuntimeContentPart; result?: MissionRuntimeContentPart; skipResult: boolean }) {
@@ -300,3 +316,4 @@ function prettyJSON(value: string): string { try { return JSON.stringify(JSON.pa
 function humanizeEvent(value: string): string { return value.replaceAll('.', ' ').replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase()); }
 function formatTime(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(date); }
 function formatDuration(milliseconds: number): string { const seconds = Math.max(0, Math.round(milliseconds / 1000)); return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`; }
+function formatRuntimeCost(value?: number): string { if (value == null || !Number.isFinite(value)) return '—'; if (value === 0) return '$0.00'; return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`; }

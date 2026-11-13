@@ -160,7 +160,8 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, ka *keepalive.KeepAlive, pub
 	// the squadron that owns the records.
 	mux.HandleFunc("GET /api/instances/{id}/human-inputs", requireInstanceWorkspaceRole(h, authorizationStore, "reader", handleListHumanInputs(h)))
 	mux.HandleFunc("GET /api/instances/{id}/human-inputs/stream", requireInstanceWorkspaceRole(h, authorizationStore, "reader", handleStreamHumanInputs(h)))
-	mux.HandleFunc("POST /api/instances/{id}/human-inputs/{callId}/resolve", requireInstanceWorkspaceRole(h, authorizationStore, "reader", handleResolveHumanInput(h)))
+	mux.HandleFunc("GET /api/instances/{id}/human-inputs/{callId}", requireInstanceWorkspaceRole(h, authorizationStore, "reader", handleGetHumanInput(h)))
+	mux.HandleFunc("POST /api/instances/{id}/human-inputs/{callId}/resolve", requireInstanceWorkspaceRole(h, authorizationStore, "reader", handleResolveHumanInput(h, authorizationStore)))
 
 	// Mission-lifecycle notifications (in-memory; dismiss is session-scoped)
 	mux.HandleFunc("GET /api/instances/{id}/notifications", requireInstanceWorkspaceRole(h, authorizationStore, "reader", handleListNotifications(h)))
