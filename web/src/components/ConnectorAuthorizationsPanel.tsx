@@ -18,11 +18,11 @@ const methodLabels: Record<MCPConnectionCredential['method'], string> = {
   static_header: 'API key',
 };
 
-export function MCPConnectionsPanel({ principalId }: { principalId?: string }) {
+export function ConnectorAuthorizationsPanel({ principalId }: { principalId?: string }) {
   const queryClient = useQueryClient();
   const [disconnecting, setDisconnecting] = useState<MCPConnectionCredential | null>(null);
-  const queryKey = ['mcp-connections', principalId ?? 'me'];
-  const connections = useQuery({
+  const queryKey = ['connector-authorizations', principalId ?? 'me'];
+  const mcpAuthorizations = useQuery({
     queryKey,
     queryFn: () => principalId ? listPrincipalMCPConnections(principalId) : listMyMCPConnections(),
     refetchInterval: 30_000,
@@ -41,16 +41,16 @@ export function MCPConnectionsPanel({ principalId }: { principalId?: string }) {
 
   return <section className="overflow-hidden rounded-md border bg-card">
     <div className="border-b px-4 py-3">
-      <h2 className="flex items-center gap-2 text-sm font-semibold"><Cable className="size-4" />MCP connections</h2>
-      <p className="mt-1 text-xs text-muted-foreground">Credentials authorized for this identity, scoped to each workspace connection.</p>
+      <h2 className="flex items-center gap-2 text-sm font-semibold"><Cable className="size-4" />Connector authorizations</h2>
+      <p className="mt-1 text-xs text-muted-foreground">Credentials authorized for this identity across workspace connectors.</p>
     </div>
-    {connections.isLoading && <p className="px-4 py-10 text-center text-xs text-muted-foreground">Loading MCP connections…</p>}
-    {connections.isError && <p className="px-4 py-10 text-center text-xs text-destructive">Unable to load MCP connections.</p>}
-    {connections.data?.length === 0 && <p className="px-4 py-10 text-center text-xs text-muted-foreground">No MCP credentials connected.</p>}
-    {connections.data?.map((item) => <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 last:border-b-0" key={item.id}>
+    {mcpAuthorizations.isLoading && <p className="px-4 py-10 text-center text-xs text-muted-foreground">Loading connector authorizations…</p>}
+    {mcpAuthorizations.isError && <p className="px-4 py-10 text-center text-xs text-destructive">Unable to load connector authorizations.</p>}
+    {mcpAuthorizations.data?.length === 0 && <p className="px-4 py-10 text-center text-xs text-muted-foreground">No connector authorizations yet.</p>}
+    {mcpAuthorizations.data?.map((item) => <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 last:border-b-0" key={item.id}>
       <div className="min-w-0">
         <p className="text-xs font-medium">{item.connectionName}</p>
-        <p className="mt-1 text-[11px] text-muted-foreground">{workspaceNames.get(item.workspaceId) ?? item.workspaceId} · {methodLabels[item.method]} · <span className="capitalize">{item.status.replace('_', ' ')}</span></p>
+        <p className="mt-1 text-[11px] text-muted-foreground">{workspaceNames.get(item.workspaceId) ?? item.workspaceId} · MCP · {methodLabels[item.method]} · <span className="capitalize">{item.status.replace('_', ' ')}</span></p>
         {item.lastErrorCode && <p className="mt-1 text-[11px] text-destructive">{item.lastErrorCode}</p>}
       </div>
       <Button onClick={() => setDisconnecting(item)} size="sm" variant="outline"><Unplug />Disconnect</Button>

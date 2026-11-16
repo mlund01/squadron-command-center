@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { listServicePrincipals } from '@/api/client';
-import { MCPConnectionsPanel } from '@/components/MCPConnectionsPanel';
+import { ConnectorAuthorizationsPanel } from '@/components/ConnectorAuthorizationsPanel';
 import { PageHeader } from '@/components/PageHeader';
 
 export function ServicePrincipalDetailPage() {
@@ -17,7 +17,7 @@ export function ServicePrincipalDetailPage() {
     {principal && <>
       <PageHeader eyebrow="Service principal" title={principal.name} description={principal.description || 'Non-human execution identity.'} />
       <section className="rounded-md border bg-card p-4 text-xs"><span className="text-muted-foreground">Status</span><span className="ml-3 font-medium capitalize">{principal.status}</span></section>
-      <MCPConnectionsPanel principalId={principal.id} />
+      <ConnectorAuthorizationsPanel principalId={principal.id} />
     </>}
   </div>;
 }
