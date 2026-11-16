@@ -14,6 +14,7 @@ import (
 
 var ErrMCPCredentialNotFound = errors.New("MCP credential not found")
 var ErrMCPConnectionChanged = errors.New("MCP connection URL changed; reconnect this identity")
+var ErrMCPCredentialNeedsAction = errors.New("MCP credential needs reauthorization")
 
 var mcpConnectionNamePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
@@ -232,6 +233,9 @@ func (s *Store) LoadActiveMCPConnectionCredential(ctx context.Context, workspace
 	}
 	if item.ResourceURI != resourceURI {
 		return MCPConnectionCredential{}, MCPSecretMaterial{}, ErrMCPConnectionChanged
+	}
+	if item.Status == "needs_action" {
+		return MCPConnectionCredential{}, MCPSecretMaterial{}, ErrMCPCredentialNeedsAction
 	}
 	plaintext, err := s.mcpCipher.Decrypt(workspaceID, connectionName, identity.Kind, identity.ID, item.ResourceURI, item.Version, ciphertext)
 	if err != nil {

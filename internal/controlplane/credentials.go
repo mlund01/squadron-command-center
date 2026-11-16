@@ -27,6 +27,10 @@ type mcpConnectionCipher struct {
 	aead cipher.AEAD
 }
 
+type mcpOAuthAttemptCipher struct {
+	aead cipher.AEAD
+}
+
 func newCredentialCipher(masterKey []byte) (*credentialCipher, error) {
 	if len(masterKey) < 32 {
 		return nil, fmt.Errorf("credential encryption key must be at least 32 bytes")
@@ -89,6 +93,42 @@ func newMCPConnectionCipher(masterKey []byte) (*mcpConnectionCipher, error) {
 		return nil, fmt.Errorf("create MCP connection cipher mode: %w", err)
 	}
 	return &mcpConnectionCipher{aead: aead}, nil
+}
+
+func newMCPOAuthAttemptCipher(masterKey []byte) (*mcpOAuthAttemptCipher, error) {
+	if len(masterKey) < 32 {
+		return nil, fmt.Errorf("MCP OAuth attempt encryption key must be at least 32 bytes")
+	}
+	derived := sha256.Sum256(append([]byte("command-center/mcp-oauth-attempt/v1:"), masterKey...))
+	block, err := aes.NewCipher(derived[:])
+	if err != nil {
+		return nil, fmt.Errorf("create MCP OAuth attempt cipher: %w", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("create MCP OAuth attempt cipher mode: %w", err)
+	}
+	return &mcpOAuthAttemptCipher{aead: aead}, nil
+}
+
+func (c *mcpOAuthAttemptCipher) Encrypt(attemptID string, plaintext []byte) ([]byte, error) {
+	nonce := make([]byte, c.aead.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("generate MCP OAuth attempt nonce: %w", err)
+	}
+	return c.aead.Seal(nonce, nonce, plaintext, []byte(attemptID)), nil
+}
+
+func (c *mcpOAuthAttemptCipher) Decrypt(attemptID string, ciphertext []byte) ([]byte, error) {
+	if len(ciphertext) < c.aead.NonceSize() {
+		return nil, fmt.Errorf("invalid encrypted MCP OAuth attempt")
+	}
+	nonce := ciphertext[:c.aead.NonceSize()]
+	value, err := c.aead.Open(nil, nonce, ciphertext[c.aead.NonceSize():], []byte(attemptID))
+	if err != nil {
+		return nil, fmt.Errorf("decrypt MCP OAuth attempt: %w", err)
+	}
+	return value, nil
 }
 
 func (c *mcpConnectionCipher) Encrypt(workspaceID, connectionName, identityKind, identityID, resourceURI string, version int, plaintext []byte) ([]byte, error) {
