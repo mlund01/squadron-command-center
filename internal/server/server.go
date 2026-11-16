@@ -133,6 +133,7 @@ var spaRoutePrefixes = []string{
 	"/invite",
 	"/workspaces",
 	"/users",
+	"/profile",
 	"/service-principals",
 	"/access",
 	"/audit",

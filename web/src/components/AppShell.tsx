@@ -237,6 +237,7 @@ function AccountMenu({ collapsed, user }: { collapsed: boolean; user: Awaited<Re
     <DropdownMenuContent align="start" className="w-60" side="top" sideOffset={6}>
       <DropdownMenuLabel className="min-w-0"><span className="block truncate text-xs font-medium">{displayName}</span>{user?.name && <span className="mt-0.5 block truncate text-[10px] font-normal text-muted-foreground">{user.email}</span>}</DropdownMenuLabel>
       <DropdownMenuSeparator />
+      <DropdownMenuItem asChild><Link to="/profile"><CircleUserRound />Profile</Link></DropdownMenuItem>
       <DropdownMenuItem asChild><a href="/auth/logout"><LogOut />Log out</a></DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>;

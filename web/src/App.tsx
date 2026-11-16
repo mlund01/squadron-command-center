@@ -17,6 +17,8 @@ import { UsersPage } from '@/pages/UsersPage';
 import { AccessPage } from '@/pages/AccessPage';
 import { AuditPage } from '@/pages/AuditPage';
 import { ServicePrincipalsPage } from '@/pages/ServicePrincipalsPage';
+import { ServicePrincipalDetailPage } from '@/pages/ServicePrincipalDetailPage';
+import { ProfilePage } from '@/pages/ProfilePage';
 import { WorkspaceHomePage } from '@/pages/WorkspaceHomePage';
 import { WorkspacePage } from '@/pages/WorkspacePage';
 import { WorkspaceConfigPage } from '@/pages/WorkspaceConfigPage';
@@ -41,6 +43,8 @@ export default function App() {
           <Route path="/workspaces" element={<WorkspacesPage />} />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/service-principals" element={<ServicePrincipalsPage />} />
+          <Route path="/service-principals/:principalId" element={<ServicePrincipalDetailPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
           <Route path="/access" element={<AccessPage />} />
           <Route path="/audit" element={<AuditPage />} />
           <Route path="/settings" element={<GlobalSettingsPage />} />

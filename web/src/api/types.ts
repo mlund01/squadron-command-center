@@ -22,6 +22,24 @@ export type UserStatus = 'invited' | 'active' | 'suspended' | 'deactivated';
 export type WorkspaceRole = 'reader' | 'developer' | 'manager' | 'admin';
 export interface AdminUser { id: string; email: string; name: string; role: CommandCenterRole; status: UserStatus; createdAt: string; updatedAt: string }
 export interface ServicePrincipal { id: string; name: string; description: string; status: 'active' | 'disabled'; createdBy: string; createdAt: string; updatedAt: string; lastUsedAt?: string }
+export interface MCPConnectionCredential {
+  id: string;
+  workspaceId: string;
+  connectionName: string;
+  identity: { kind: 'user' | 'service_principal'; id: string };
+  method: 'authorization_code' | 'client_credentials' | 'static_header';
+  resourceUri: string;
+  issuer?: string;
+  scopes: string[];
+  accessExpiresAt?: string;
+  version: number;
+  status: 'active' | 'needs_action' | 'transient_error';
+  lastSuccessfulRefreshAt?: string;
+  lastErrorCode?: string;
+  lastErrorAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 export interface AuditEvent { id: string; actorId?: string; actorEmail?: string; eventType: string; data: Record<string, unknown>; createdAt: string }
 export interface WorkspaceUserGrant { workspaceId: string; userId: string; role: WorkspaceRole; missions: string[] }
 export interface WorkspaceServicePrincipalGrant { workspaceId: string; servicePrincipalId: string; missions: string[]; userIds: string[] }
