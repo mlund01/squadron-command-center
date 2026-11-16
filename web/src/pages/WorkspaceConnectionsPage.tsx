@@ -33,7 +33,7 @@ export function WorkspaceConnectionsPage() {
     <PageHeader
       eyebrow={workspace?.name ?? 'Workspace'}
       title="Connections"
-      description="Manage the plugins and MCP servers that extend this workspace."
+      description="Inspect the plugins and MCP servers configured for this workspace."
     />
     <div className="space-y-8">
     {snapshot.isLoading ? <ConnectionsState text="Loading workspace extensions…" />
@@ -67,10 +67,9 @@ function ConnectionCard({ connection, onSelect }: { connection: PluginInfo; onSe
 }
 
 function ConnectionDialog({ connection, onOpenChange, workspaceId }: { connection: PluginInfo | null; onOpenChange: (open: boolean) => void; workspaceId: string }) {
-  const authentication = connection ? connectionAuthentication(connection) : null;
   return <Dialog open={Boolean(connection)} onOpenChange={onOpenChange}>
     <DialogContent className="max-h-[85svh] overflow-y-auto sm:max-w-2xl">
-      {connection && authentication && <><DialogHeader><DialogTitle className="flex items-center gap-2"><Cable className="size-4 text-muted-foreground" />{connection.name}</DialogTitle><DialogDescription>{connection.kind === 'mcp' ? 'MCP server connection' : 'Squadron plugin connection'}</DialogDescription></DialogHeader>
+      {connection && <><DialogHeader><DialogTitle className="flex items-center gap-2"><Cable className="size-4 text-muted-foreground" />{connection.name}</DialogTitle><DialogDescription>{connection.kind === 'mcp' ? 'MCP server connection' : 'Squadron plugin connection'}</DialogDescription></DialogHeader>
         <div className="space-y-5">
           <dl className="divide-y rounded-md border">
             <DetailRow label="Status"><ConnectionStatus connection={connection} /></DetailRow>
@@ -78,7 +77,6 @@ function ConnectionDialog({ connection, onOpenChange, workspaceId }: { connectio
             <DetailRow label="Version">{connection.version || 'Not specified'}</DetailRow>
             <DetailRow label="Tools">{connection.tools?.length ?? 0}</DetailRow>
           </dl>
-          <section><p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Authentication</p><div className="rounded-md border bg-muted/30 p-4"><div className="flex items-center gap-2 text-xs font-medium"><authentication.icon className="size-3.5" />{authentication.label}</div><p className="mt-2 text-[11px] leading-5 text-muted-foreground">{authentication.description}</p></div></section>
           {connection.tools?.length ? <section><p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Available tools</p><div className="divide-y rounded-md border">{connection.tools.map((tool) => <div className="p-3" key={tool.name}><p className="flex items-center gap-2 text-xs font-medium"><Wrench className="size-3 text-muted-foreground" />{tool.name}</p>{tool.description && <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">{tool.description}</p>}</div>)}</div></section> : null}
           {connection.kind === 'plugin' && connection.version === 'local' && <Button asChild className="w-full" variant="outline"><Link to={`/w/${workspaceId}/plugins`}><ArrowUpRight />View local source</Link></Button>}
         </div></>}
@@ -92,16 +90,8 @@ function ConnectionStatus({ connection, compact = false }: { connection: PluginI
 }
 
 function connectionHealth(connection: PluginInfo) {
-  if ((connection.tools?.length ?? 0) > 0) return { label: 'Available', icon: CircleCheck };
-  return { label: 'Needs attention', icon: CircleDashed };
-}
-
-function connectionAuthentication(connection: PluginInfo) {
-  if (connection.kind === 'plugin') return { label: 'Plugin-managed', description: 'Credentials for this plugin are supplied through its settings and protected workspace variables.', icon: Plug };
-  const remote = /^https?:\/\//i.test(connection.path);
-  if (!remote) return { label: 'Process-managed', description: 'This local MCP process receives any required credentials through its configured environment.', icon: Server };
-  if ((connection.tools?.length ?? 0) > 0) return { label: 'Connection available', description: 'The remote MCP is responding. It may be anonymous, use configured headers, or already have an authorization token on the runner.', icon: CircleCheck };
-  return { label: 'Setup may be required', description: 'This remote MCP has not reported tools. Authentication or connectivity may need attention; Command Center credential controls will live here.', icon: CircleDashed };
+  if ((connection.tools?.length ?? 0) > 0) return { label: 'Tools reported', icon: CircleCheck };
+  return { label: 'No tools reported', icon: CircleDashed };
 }
 
 function DetailRow({ children, label }: { children: React.ReactNode; label: string }) { return <div className="grid gap-1 px-3 py-2.5 sm:grid-cols-[8rem_1fr]"><dt className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</dt><dd className="text-xs">{children}</dd></div>; }

@@ -23,6 +23,10 @@ type modelConnectionCipher struct {
 	aead cipher.AEAD
 }
 
+type mcpConnectionCipher struct {
+	aead cipher.AEAD
+}
+
 func newCredentialCipher(masterKey []byte) (*credentialCipher, error) {
 	if len(masterKey) < 32 {
 		return nil, fmt.Errorf("credential encryption key must be at least 32 bytes")
@@ -69,6 +73,46 @@ func newModelConnectionCipher(masterKey []byte) (*modelConnectionCipher, error) 
 		return nil, fmt.Errorf("create model connection cipher mode: %w", err)
 	}
 	return &modelConnectionCipher{aead: aead}, nil
+}
+
+func newMCPConnectionCipher(masterKey []byte) (*mcpConnectionCipher, error) {
+	if len(masterKey) < 32 {
+		return nil, fmt.Errorf("MCP connection encryption key must be at least 32 bytes")
+	}
+	derived := sha256.Sum256(append([]byte("command-center/mcp-connection/v1:"), masterKey...))
+	block, err := aes.NewCipher(derived[:])
+	if err != nil {
+		return nil, fmt.Errorf("create MCP connection cipher: %w", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("create MCP connection cipher mode: %w", err)
+	}
+	return &mcpConnectionCipher{aead: aead}, nil
+}
+
+func (c *mcpConnectionCipher) Encrypt(workspaceID, connectionName, identityKind, identityID, resourceURI string, version int, plaintext []byte) ([]byte, error) {
+	nonce := make([]byte, c.aead.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("generate MCP connection nonce: %w", err)
+	}
+	return c.aead.Seal(nonce, nonce, plaintext, mcpCredentialAAD(workspaceID, connectionName, identityKind, identityID, resourceURI, version)), nil
+}
+
+func (c *mcpConnectionCipher) Decrypt(workspaceID, connectionName, identityKind, identityID, resourceURI string, version int, ciphertext []byte) ([]byte, error) {
+	if len(ciphertext) < c.aead.NonceSize() {
+		return nil, fmt.Errorf("invalid encrypted MCP connection credential")
+	}
+	nonce := ciphertext[:c.aead.NonceSize()]
+	plaintext, err := c.aead.Open(nil, nonce, ciphertext[c.aead.NonceSize():], mcpCredentialAAD(workspaceID, connectionName, identityKind, identityID, resourceURI, version))
+	if err != nil {
+		return nil, fmt.Errorf("decrypt MCP connection credential: %w", err)
+	}
+	return plaintext, nil
+}
+
+func mcpCredentialAAD(workspaceID, connectionName, identityKind, identityID, resourceURI string, version int) []byte {
+	return []byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%d", workspaceID, connectionName, identityKind, identityID, resourceURI, version))
 }
 
 func (c *credentialCipher) Encrypt(credential string) ([]byte, error) {
