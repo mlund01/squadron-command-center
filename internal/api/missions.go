@@ -88,9 +88,16 @@ func handleRunMission(h missionRunProxy, stores ...AuthorizationStore) http.Hand
 			}
 		}
 
+		runAs := ""
+		if actorServicePrincipal != "" {
+			runAs = "service_principal:" + actorServicePrincipal
+		} else if actor.ID != "" {
+			runAs = "user:" + actor.ID
+		}
 		req, err := protocol.NewRequest(protocol.TypeRunMission, &protocol.RunMissionPayload{
 			MissionName: missionName,
 			Inputs:      body.Inputs,
+			RunAs:       runAs,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

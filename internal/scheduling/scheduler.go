@@ -142,7 +142,11 @@ func (s *Scheduler) dispatch(schedule controlplane.MissionSchedule) (string, str
 		return "failed", "schedule has no run identity"
 	}
 
-	req, err := protocol.NewRequest(protocol.TypeRunMission, &protocol.RunMissionPayload{MissionName: schedule.MissionName, Inputs: schedule.Inputs})
+	runAs := "user:" + user.ID
+	if schedule.RunAsServicePrincipalID != nil {
+		runAs = "service_principal:" + *schedule.RunAsServicePrincipalID
+	}
+	req, err := protocol.NewRequest(protocol.TypeRunMission, &protocol.RunMissionPayload{MissionName: schedule.MissionName, Inputs: schedule.Inputs, RunAs: runAs})
 	if err != nil {
 		return "failed", err.Error()
 	}

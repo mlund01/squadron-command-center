@@ -240,6 +240,7 @@ func TestRunMissionRecordsEffectiveActorAfterAcceptedDispatch(t *testing.T) {
 		body    string
 		session *auth.Session
 		store   authorizationTestStore
+		runAs   string
 		verify  func(*testing.T, authorizationTestStore)
 	}{
 		{
@@ -247,6 +248,7 @@ func TestRunMissionRecordsEffectiveActorAfterAcceptedDispatch(t *testing.T) {
 			body:    `{"inputs":{"topic":"security"}}`,
 			session: &auth.Session{Sub: "user-1", Expires: time.Now().Add(time.Hour).Unix()},
 			store:   authorizationTestStore{canRun: true, recordedUserRun: &recordedMissionRun{}},
+			runAs:   "user:user-1",
 			verify: func(t *testing.T, store authorizationTestStore) {
 				want := recordedMissionRun{userID: "user-1", workspaceID: "workspace-1", missionID: "run-1", missionName: "demo"}
 				if *store.recordedUserRun != want {
@@ -259,6 +261,7 @@ func TestRunMissionRecordsEffectiveActorAfterAcceptedDispatch(t *testing.T) {
 			body:    `{"servicePrincipalId":"sp-1","inputs":{}}`,
 			session: &auth.Session{Sub: "user-1", Expires: time.Now().Add(time.Hour).Unix()},
 			store:   authorizationTestStore{canRunAs: true, recordedRunAs: &recordedMissionRunAs{}},
+			runAs:   "service_principal:sp-1",
 			verify: func(t *testing.T, store authorizationTestStore) {
 				want := recordedMissionRunAs{userID: "user-1", principalID: "sp-1", workspaceID: "workspace-1", missionID: "run-1", missionName: "demo"}
 				if *store.recordedRunAs != want {
@@ -271,6 +274,7 @@ func TestRunMissionRecordsEffectiveActorAfterAcceptedDispatch(t *testing.T) {
 			body:    `{"inputs":{}}`,
 			session: &auth.Session{Kind: "service_principal", Sub: "sp-1", Expires: time.Now().Add(time.Hour).Unix()},
 			store:   authorizationTestStore{canRunSP: true, recordedPrincipalRun: &recordedPrincipalMissionRun{}},
+			runAs:   "service_principal:sp-1",
 			verify: func(t *testing.T, store authorizationTestStore) {
 				want := recordedPrincipalMissionRun{principalID: "sp-1", workspaceID: "workspace-1", missionID: "run-1", missionName: "demo"}
 				if *store.recordedPrincipalRun != want {
@@ -290,6 +294,13 @@ func TestRunMissionRecordsEffectiveActorAfterAcceptedDispatch(t *testing.T) {
 			}
 			if proxy.request == nil || proxy.request.Type != protocol.TypeRunMission {
 				t.Fatalf("dispatched request = %#v", proxy.request)
+			}
+			var dispatched protocol.RunMissionPayload
+			if err := protocol.DecodePayload(proxy.request, &dispatched); err != nil {
+				t.Fatalf("decode dispatched request: %v", err)
+			}
+			if dispatched.RunAs != test.runAs {
+				t.Fatalf("dispatched run identity = %q, want %q", dispatched.RunAs, test.runAs)
 			}
 			test.verify(t, test.store)
 		})

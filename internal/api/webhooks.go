@@ -81,6 +81,7 @@ func handleWebhook(h *hub.Hub) http.HandlerFunc {
 		req, err := protocol.NewRequest(protocol.TypeRunMission, &protocol.RunMissionPayload{
 			MissionName: missionName,
 			Inputs:      inputs,
+			RunAs:       "webhook:" + instance.ID,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
