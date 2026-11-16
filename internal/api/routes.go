@@ -52,6 +52,12 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, ka *keepalive.KeepAlive, pub
 	// Server info
 	mux.HandleFunc("GET /api/info", handleInfo(publicURL))
 	if workspaceStore != nil {
+		if credentialStore, ok := workspaceStore.(MCPConnectionCredentialStore); ok {
+			mux.HandleFunc("GET /api/me/mcp-connections", handleMyMCPConnections(workspaceStore, credentialStore))
+			mux.HandleFunc("DELETE /api/me/mcp-connections/{workspaceId}/{connectionName}", handleMyMCPConnection(workspaceStore, credentialStore))
+			mux.HandleFunc("GET /api/admin/service-principals/{id}/mcp-connections", handlePrincipalMCPConnections(workspaceStore, credentialStore))
+			mux.HandleFunc("DELETE /api/admin/service-principals/{id}/mcp-connections/{workspaceId}/{connectionName}", handlePrincipalMCPConnection(workspaceStore, credentialStore))
+		}
 		mux.HandleFunc("GET /api/workspaces", handleListWorkspaces(workspaceStore))
 		mux.HandleFunc("POST /api/workspaces", handleCreateWorkspace(workspaceStore))
 		authorizationStore, _ := workspaceStore.(AuthorizationStore)

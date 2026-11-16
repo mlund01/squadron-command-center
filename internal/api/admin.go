@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"commander/internal/auth"
 	"commander/internal/controlplane"
 )
 
@@ -275,6 +276,10 @@ func handleAdminWorkspaceServicePrincipalAccess(store AdminStore) http.HandlerFu
 func currentAdmin(w http.ResponseWriter, r *http.Request, store interface {
 	UserForSubject(context.Context, string) (controlplane.User, error)
 }) (controlplane.User, bool) {
+	if session := auth.SessionFromContext(r.Context()); session != nil && session.Kind == "service_principal" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "Command Center administrator access is required"})
+		return controlplane.User{}, false
+	}
 	user, ok := currentControlPlaneUser(w, r, store)
 	if !ok {
 		return controlplane.User{}, false
