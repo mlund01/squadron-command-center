@@ -161,6 +161,44 @@ func TestMCPOAuthStartRegistersClientAutomatically(t *testing.T) {
 	}
 }
 
+func TestMCPOAuthReadinessReportsRegistrationPath(t *testing.T) {
+	registrationEndpoint := "https://auth.example/register"
+	client := &http.Client{Transport: oauthTestTransport(func(request *http.Request) (*http.Response, error) {
+		body := ""
+		switch request.URL.String() {
+		case "https://mcp.example/.well-known/oauth-protected-resource/mcp":
+			body = `{"resource":"https://mcp.example/mcp","authorization_servers":["https://auth.example"]}`
+		case "https://auth.example/.well-known/oauth-authorization-server":
+			body = `{"issuer":"https://auth.example","authorization_endpoint":"https://login.auth.example/authorize","token_endpoint":"https://auth.example/token","registration_endpoint":"` + registrationEndpoint + `"}`
+		default:
+			t.Fatalf("unexpected discovery request %s", request.URL)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+	})}
+	store := &oauthTestStore{actor: controlplane.User{ID: mcpTestUserID}, role: "reader"}
+	check := func(want string) {
+		t.Helper()
+		request := oauthTestRequest(http.MethodGet, "/", "")
+		request.SetPathValue("workspaceId", mcpTestWorkspaceID)
+		request.SetPathValue("connectionName", "linear")
+		response := httptest.NewRecorder()
+		handleMCPOAuthReadiness(testMCPRegistry(), store, "http://localhost:8081", client, false)(response, request)
+		var result struct{ Method, ProviderHost, CallbackURL string }
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK || result.Method != want || result.ProviderHost != "login.auth.example" || result.CallbackURL != "http://localhost:8081/api/mcp/oauth/callback" {
+			t.Fatalf("readiness status=%d result=%#v", response.Code, result)
+		}
+	}
+	check("dynamic")
+	store.existingClientID = "existing-client"
+	check("existing")
+	store.existingClientID = ""
+	registrationEndpoint = ""
+	check("manual")
+}
+
 func TestMCPOAuthStartRejectsUntrustedOriginAndUndeclaredResource(t *testing.T) {
 	store := &oauthTestStore{actor: controlplane.User{ID: mcpTestUserID}, role: "reader"}
 	request := oauthTestRequest(http.MethodPost, "/", `{"clientId":"registered-client"}`)

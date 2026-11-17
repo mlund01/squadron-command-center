@@ -61,6 +61,8 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, ka *keepalive.KeepAlive, pub
 		}
 		if oauthStore, ok := workspaceStore.(mcpOAuthStore); ok {
 			oauthClient := mcpauth.PublicHTTPClient()
+			mux.HandleFunc("GET /api/me/mcp-connections/{workspaceId}/{connectionName}/readiness", handleMCPOAuthReadiness(h, oauthStore, publicURL, oauthClient, false))
+			mux.HandleFunc("GET /api/admin/service-principals/{id}/mcp-connections/{workspaceId}/{connectionName}/readiness", handleMCPOAuthReadiness(h, oauthStore, publicURL, oauthClient, true))
 			mux.HandleFunc("POST /api/me/mcp-connections/{workspaceId}/{connectionName}/authorize", handleMCPOAuthStart(h, oauthStore, publicURL, oauthClient, false))
 			mux.HandleFunc("POST /api/admin/service-principals/{id}/mcp-connections/{workspaceId}/{connectionName}/authorize", handleMCPOAuthStart(h, oauthStore, publicURL, oauthClient, true))
 			mux.HandleFunc("GET /api/mcp/oauth/callback", handleMCPOAuthCallback(oauthStore, oauthClient))

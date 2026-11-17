@@ -40,6 +40,13 @@ export interface MCPConnectionCredential {
   createdAt: string;
   updatedAt: string;
 }
+export interface MCPAuthorizationReadiness {
+  method: 'existing' | 'dynamic' | 'manual';
+  providerHost: string;
+  resourceUri: string;
+  callbackUrl: string;
+  scopes: string[];
+}
 export interface AuditEvent { id: string; actorId?: string; actorEmail?: string; eventType: string; data: Record<string, unknown>; createdAt: string }
 export interface WorkspaceUserGrant { workspaceId: string; userId: string; role: WorkspaceRole; missions: string[] }
 export interface WorkspaceServicePrincipalGrant { workspaceId: string; servicePrincipalId: string; missions: string[]; userIds: string[] }

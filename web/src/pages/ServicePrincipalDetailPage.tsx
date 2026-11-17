@@ -17,7 +17,7 @@ export function ServicePrincipalDetailPage() {
     {principal && <>
       <PageHeader eyebrow="Service principal" title={principal.name} description={principal.description || 'Non-human execution identity.'} />
       <section className="rounded-md border bg-card p-4 text-xs"><span className="text-muted-foreground">Status</span><span className="ml-3 font-medium capitalize">{principal.status}</span></section>
-      <ConnectorAuthorizationsPanel principalId={principal.id} />
+      <ConnectorAuthorizationsPanel identityName={principal.name} principalId={principal.id} />
     </>}
   </div>;
 }

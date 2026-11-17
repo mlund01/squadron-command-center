@@ -38,6 +38,145 @@ type mcpOAuthStartInput struct {
 	ClientSecret string `json:"clientSecret"`
 }
 
+func authorizedMCPIdentity(w http.ResponseWriter, r *http.Request, store mcpOAuthStore, actor controlplane.User, principal bool) (controlplane.MCPIdentity, bool) {
+	workspaceID, connectionName := r.PathValue("workspaceId"), r.PathValue("connectionName")
+	if _, err := uuid.Parse(workspaceID); err != nil || !mcpOAuthConnectionNamePattern.MatchString(connectionName) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid connector"})
+		return controlplane.MCPIdentity{}, false
+	}
+	identity := controlplane.MCPIdentity{Kind: "user", ID: actor.ID}
+	if !principal {
+		role, err := store.WorkspaceRoleForUser(r.Context(), actor, workspaceID)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "workspace access unavailable"})
+			return controlplane.MCPIdentity{}, false
+		}
+		if workspaceRoleRank[role] == 0 {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "workspace access is required"})
+			return controlplane.MCPIdentity{}, false
+		}
+		return identity, true
+	}
+	if actor.Role != controlplane.RoleAdmin {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "administrator access is required"})
+		return controlplane.MCPIdentity{}, false
+	}
+	if _, err := uuid.Parse(r.PathValue("id")); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid service principal ID"})
+		return controlplane.MCPIdentity{}, false
+	}
+	identity = controlplane.MCPIdentity{Kind: "service_principal", ID: r.PathValue("id")}
+	grants, err := store.ListWorkspaceServicePrincipalGrants(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "principal access unavailable"})
+		return controlplane.MCPIdentity{}, false
+	}
+	assigned := false
+	for _, grant := range grants {
+		if grant.WorkspaceID == workspaceID && grant.ServicePrincipalID == identity.ID {
+			assigned = true
+			break
+		}
+	}
+	if !assigned {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "service principal has no workspace access"})
+		return controlplane.MCPIdentity{}, false
+	}
+	principals, err := store.ListServicePrincipals(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "service principal unavailable"})
+		return controlplane.MCPIdentity{}, false
+	}
+	for _, candidate := range principals {
+		if candidate.ID == identity.ID && candidate.Status == "active" {
+			return identity, true
+		}
+	}
+	writeJSON(w, http.StatusForbidden, map[string]string{"error": "service principal is not active"})
+	return controlplane.MCPIdentity{}, false
+}
+
+func discoverMCPAuthorization(w http.ResponseWriter, r *http.Request, h mcpOAuthRegistry, client *http.Client) (mcpauth.Discovery, bool) {
+	instance := h.GetRegistry().GetInstanceByWorkspaceID(r.PathValue("workspaceId"))
+	if instance == nil || !instance.ConfigReady {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "workspace connector configuration is unavailable"})
+		return mcpauth.Discovery{}, false
+	}
+	resourceURI := ""
+	for _, connector := range instance.Config.Plugins {
+		if connector.Kind == "mcp" && connector.Name == r.PathValue("connectionName") {
+			resourceURI = connector.Path
+			break
+		}
+	}
+	if !mcpauth.PublicHTTPS(resourceURI) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "this connector does not support public HTTPS OAuth discovery"})
+		return mcpauth.Discovery{}, false
+	}
+	discovery, err := mcpauth.Discover(r.Context(), client, resourceURI)
+	if err != nil || !mcpauth.PublicHTTPS(discovery.Server.Issuer) || !mcpauth.PublicHTTPS(discovery.Server.AuthorizationEndpoint) || !mcpauth.PublicHTTPS(discovery.Server.TokenEndpoint) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "MCP OAuth metadata is unavailable or invalid"})
+		return mcpauth.Discovery{}, false
+	}
+	return discovery, true
+}
+
+func mcpOAuthRedirectURI(publicURL string) (string, bool) {
+	baseURL, err := url.Parse(publicURL)
+	if err != nil || baseURL.Host == "" || (baseURL.Path != "" && baseURL.Path != "/") || baseURL.RawQuery != "" || baseURL.Fragment != "" || (baseURL.Scheme != "https" && !(baseURL.Scheme == "http" && (baseURL.Hostname() == "localhost" || baseURL.Hostname() == "127.0.0.1"))) {
+		return "", false
+	}
+	return strings.TrimRight(publicURL, "/") + "/api/mcp/oauth/callback", true
+}
+
+func handleMCPOAuthReadiness(h mcpOAuthRegistry, store mcpOAuthStore, publicURL string, client *http.Client, principal bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if session := auth.SessionFromContext(r.Context()); session == nil || session.Kind == "service_principal" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "a user session is required"})
+			return
+		}
+		actor, ok := currentControlPlaneUser(w, r, store)
+		if !ok {
+			return
+		}
+		identity, ok := authorizedMCPIdentity(w, r, store, actor, principal)
+		if !ok {
+			return
+		}
+		discovery, ok := discoverMCPAuthorization(w, r, h, client)
+		if !ok {
+			return
+		}
+		redirectURI, ok := mcpOAuthRedirectURI(publicURL)
+		if !ok {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Command Center public URL is not configured for OAuth"})
+			return
+		}
+		method := "manual"
+		clientID, _, err := store.LoadMCPClientRegistration(r.Context(), r.PathValue("workspaceId"), r.PathValue("connectionName"), identity, discovery.ResourceURI, discovery.Server.Issuer)
+		switch {
+		case err == nil && clientID != "":
+			method = "existing"
+		case err == nil:
+			// A credential with no client registration cannot be reused.
+		case errors.Is(err, controlplane.ErrMCPCredentialNotFound), errors.Is(err, controlplane.ErrMCPConnectionChanged), errors.Is(err, controlplane.ErrMCPAuthorizationServerChanged):
+			// A first connection or changed server needs a new registration.
+		default:
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "existing client registration is unavailable"})
+			return
+		}
+		if method == "manual" && discovery.Server.RegistrationEndpoint != "" {
+			method = "dynamic"
+		}
+		authorizationURL, _ := url.Parse(discovery.Server.AuthorizationEndpoint)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"method": method, "providerHost": authorizationURL.Hostname(), "resourceUri": discovery.ResourceURI,
+			"callbackUrl": redirectURI, "scopes": discovery.Resource.ScopesSupported,
+		})
+	}
+}
+
 func handleMCPOAuthStart(h mcpOAuthRegistry, store mcpOAuthStore, publicURL string, client *http.Client, principal bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !sameOrigin(r.Header.Get("Origin"), publicURL) {
@@ -53,63 +192,9 @@ func handleMCPOAuthStart(h mcpOAuthRegistry, store mcpOAuthStore, publicURL stri
 			return
 		}
 		workspaceID, connectionName := r.PathValue("workspaceId"), r.PathValue("connectionName")
-		if _, err := uuid.Parse(workspaceID); err != nil || !mcpOAuthConnectionNamePattern.MatchString(connectionName) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid connector"})
+		identity, ok := authorizedMCPIdentity(w, r, store, actor, principal)
+		if !ok {
 			return
-		}
-		identity := controlplane.MCPIdentity{Kind: "user", ID: actor.ID}
-		if principal {
-			if actor.Role != controlplane.RoleAdmin {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "administrator access is required"})
-				return
-			}
-			if _, err := uuid.Parse(r.PathValue("id")); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid service principal ID"})
-				return
-			}
-			identity = controlplane.MCPIdentity{Kind: "service_principal", ID: r.PathValue("id")}
-			grants, err := store.ListWorkspaceServicePrincipalGrants(r.Context())
-			if err != nil {
-				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "principal access unavailable"})
-				return
-			}
-			assigned := false
-			for _, grant := range grants {
-				if grant.WorkspaceID == workspaceID && grant.ServicePrincipalID == identity.ID {
-					assigned = true
-					break
-				}
-			}
-			if !assigned {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "service principal has no workspace access"})
-				return
-			}
-			principals, err := store.ListServicePrincipals(r.Context())
-			if err != nil {
-				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "service principal unavailable"})
-				return
-			}
-			active := false
-			for _, candidate := range principals {
-				if candidate.ID == identity.ID && candidate.Status == "active" {
-					active = true
-					break
-				}
-			}
-			if !active {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "service principal is not active"})
-				return
-			}
-		} else {
-			role, err := store.WorkspaceRoleForUser(r.Context(), actor, workspaceID)
-			if err != nil {
-				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "workspace access unavailable"})
-				return
-			}
-			if workspaceRoleRank[role] == 0 {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "workspace access is required"})
-				return
-			}
 		}
 		var input mcpOAuthStartInput
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&input); err != nil {
@@ -121,33 +206,15 @@ func handleMCPOAuthStart(h mcpOAuthRegistry, store mcpOAuthStore, publicURL stri
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid OAuth client details"})
 			return
 		}
-		instance := h.GetRegistry().GetInstanceByWorkspaceID(workspaceID)
-		if instance == nil || !instance.ConfigReady {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "workspace connector configuration is unavailable"})
+		discovery, ok := discoverMCPAuthorization(w, r, h, client)
+		if !ok {
 			return
 		}
-		resourceURI := ""
-		for _, connector := range instance.Config.Plugins {
-			if connector.Kind == "mcp" && connector.Name == connectionName {
-				resourceURI = connector.Path
-				break
-			}
-		}
-		if !mcpauth.PublicHTTPS(resourceURI) {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "this connector does not support public HTTPS OAuth discovery"})
-			return
-		}
-		discovery, err := mcpauth.Discover(r.Context(), client, resourceURI)
-		if err != nil || !mcpauth.PublicHTTPS(discovery.Server.Issuer) || !mcpauth.PublicHTTPS(discovery.Server.AuthorizationEndpoint) || !mcpauth.PublicHTTPS(discovery.Server.TokenEndpoint) {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "MCP OAuth metadata is unavailable or invalid"})
-			return
-		}
-		baseURL, err := url.Parse(publicURL)
-		if err != nil || baseURL.Host == "" || (baseURL.Path != "" && baseURL.Path != "/") || baseURL.RawQuery != "" || baseURL.Fragment != "" || (baseURL.Scheme != "https" && !(baseURL.Scheme == "http" && (baseURL.Hostname() == "localhost" || baseURL.Hostname() == "127.0.0.1"))) {
+		redirectURI, ok := mcpOAuthRedirectURI(publicURL)
+		if !ok {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Command Center public URL is not configured for OAuth"})
 			return
 		}
-		redirectURI := strings.TrimRight(publicURL, "/") + "/api/mcp/oauth/callback"
 		if input.ClientID == "" {
 			clientID, clientSecret, err := store.LoadMCPClientRegistration(r.Context(), workspaceID, connectionName, identity, discovery.ResourceURI, discovery.Server.Issuer)
 			switch {

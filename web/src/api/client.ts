@@ -1,4 +1,4 @@
-import type { AdminAccess, AdminUser, AgentInfo, AgentConversationContext, AgentConversationState, AgentConversationSummary, AuditEvent, CommandCenterRole, ConfigSource, CostSummaryResponse, HumanInputDetailResponse, HumanInputsResponse, LocalPluginFile, LocalPluginFileContent, MCPConnectionCredential, MissionEventsResponse, MissionHistoryResponse, MissionRunDetail, MissionRunIdentity, MissionSchedule, MissionTaskDetail, ModelProviderKind, ResolveHumanInputResponse, RunMissionResponse, ServicePrincipal, UserStatus, Workspace, WorkspaceConfigSnapshot, WorkspaceModelConnection, WorkspaceRole, WorkspaceVariable, WorkspaceWorker } from './types';
+import type { AdminAccess, AdminUser, AgentInfo, AgentConversationContext, AgentConversationState, AgentConversationSummary, AuditEvent, CommandCenterRole, ConfigSource, CostSummaryResponse, HumanInputDetailResponse, HumanInputsResponse, LocalPluginFile, LocalPluginFileContent, MCPAuthorizationReadiness, MCPConnectionCredential, MissionEventsResponse, MissionHistoryResponse, MissionRunDetail, MissionRunIdentity, MissionSchedule, MissionTaskDetail, ModelProviderKind, ResolveHumanInputResponse, RunMissionResponse, ServicePrincipal, UserStatus, Workspace, WorkspaceConfigSnapshot, WorkspaceModelConnection, WorkspaceRole, WorkspaceVariable, WorkspaceWorker } from './types';
 import { normalizeMissionHistory } from '@/lib/mission-history';
 
 const BASE_URL = '/api';
@@ -63,6 +63,10 @@ export function startMCPAuthorization(workspaceId: string, connectionName: strin
   return fetchJSON(`${prefix}/mcp-connections/${encodeURIComponent(workspaceId)}/${encodeURIComponent(connectionName)}/authorize`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
   });
+}
+export function getMCPAuthorizationReadiness(workspaceId: string, connectionName: string, principalId?: string): Promise<MCPAuthorizationReadiness> {
+  const prefix = principalId ? `/admin/service-principals/${encodeURIComponent(principalId)}` : '/me';
+  return fetchJSON(`${prefix}/mcp-connections/${encodeURIComponent(workspaceId)}/${encodeURIComponent(connectionName)}/readiness`);
 }
 export function listAuditEvents(): Promise<AuditEvent[]> { return fetchJSON<{ events: AuditEvent[] }>('/admin/audit').then((value) => value.events); }
 export function getAdminAccess(): Promise<AdminAccess> { return fetchJSON('/admin/access'); }

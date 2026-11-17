@@ -19,7 +19,7 @@ const methodLabels: Record<MCPConnectionCredential['method'], string> = {
   static_header: 'API key',
 };
 
-export function ConnectorAuthorizationsPanel({ principalId }: { principalId?: string }) {
+export function ConnectorAuthorizationsPanel({ principalId, identityName = 'Your account' }: { principalId?: string; identityName?: string }) {
   const queryClient = useQueryClient();
   const [disconnecting, setDisconnecting] = useState<MCPConnectionCredential | null>(null);
   const [connecting, setConnecting] = useState<{ workspaceId: string; connectionName: string } | null>(null);
@@ -46,7 +46,7 @@ export function ConnectorAuthorizationsPanel({ principalId }: { principalId?: st
     <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
       <div><h2 className="flex items-center gap-2 text-sm font-semibold"><Cable className="size-4" />Connector authorizations</h2>
         <p className="mt-1 text-xs text-muted-foreground">Credentials authorized for this identity across workspace connectors.</p></div>
-      <Button onClick={() => setConnecting({ workspaceId: '', connectionName: '' })} size="sm">Connect MCP server</Button>
+      <Button onClick={() => setConnecting({ workspaceId: '', connectionName: '' })} size="sm">Add authorization</Button>
     </div>
     {authorizationResult === 'connected' && <p className="border-b px-4 py-3 text-xs text-emerald-700" role="status">MCP server connected.</p>}
     {authorizationResult === 'failed' && <p className="border-b px-4 py-3 text-xs text-destructive" role="alert">MCP authorization failed. Try connecting again.</p>}
@@ -71,6 +71,6 @@ export function ConnectorAuthorizationsPanel({ principalId }: { principalId?: st
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    {connecting && <ConnectMCPAuthorizationDialog initialConnectionName={connecting.connectionName} initialWorkspaceId={connecting.workspaceId} key={`${connecting.workspaceId}:${connecting.connectionName}`} onOpenChange={(open) => { if (!open) setConnecting(null); }} open principalId={principalId} />}
+    {connecting && <ConnectMCPAuthorizationDialog identityName={identityName} initialConnectionName={connecting.connectionName} initialWorkspaceId={connecting.workspaceId} key={`${connecting.workspaceId}:${connecting.connectionName}`} onOpenChange={(open) => { if (!open) setConnecting(null); }} open principalId={principalId} />}
   </section>;
 }

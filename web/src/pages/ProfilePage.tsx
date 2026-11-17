@@ -14,6 +14,6 @@ export function ProfilePage() {
         <div><dt className="text-muted-foreground">Email</dt><dd className="mt-1 font-medium">{user.data?.email ?? '—'}</dd></div>
       </dl>
     </section>
-    <ConnectorAuthorizationsPanel />
+    <ConnectorAuthorizationsPanel identityName={user.data?.name ?? 'Your account'} />
   </div>;
 }
