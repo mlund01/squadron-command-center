@@ -48,6 +48,12 @@ func Discover(ctx context.Context, client *http.Client, resourceURI string) (Dis
 			continue
 		}
 		resource, err = DecodeProtectedResourceMetadata(body, candidate.ResourceIdentifier)
+		if err != nil && candidate.URL != candidates[0].URL {
+			// Some MCP servers publish endpoint-specific metadata at the root
+			// well-known URL. Accept it only when it names the configured
+			// endpoint exactly; never trust metadata for another resource.
+			resource, err = DecodeProtectedResourceMetadata(body, resourceURI)
+		}
 		if err != nil {
 			return Discovery{}, err
 		}
@@ -75,7 +81,7 @@ func Discover(ctx context.Context, client *http.Client, resourceURI string) (Dis
 		if err != nil {
 			return Discovery{}, err
 		}
-		return Discovery{ResourceURI: selected.ResourceIdentifier, Resource: resource, Server: server}, nil
+		return Discovery{ResourceURI: resource.Resource, Resource: resource, Server: server}, nil
 	}
 	return Discovery{}, fmt.Errorf("MCP authorization server metadata unavailable")
 }

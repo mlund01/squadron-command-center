@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
-import { ChevronDown, ExternalLink, Loader2, ShieldCheck } from 'lucide-react';
+import { ExternalLink, Loader2, ShieldCheck } from 'lucide-react';
 import { getAdminAccess, getMCPAuthorizationReadiness, getWorkspaceConfig, listWorkspaces, startMCPAuthorization } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -100,16 +100,23 @@ export function ConnectMCPAuthorizationDialog({ open, onOpenChange, principalId,
               : readiness.data && <div className="flex items-start gap-2.5">
                 <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" />
                 <div className="min-w-0 space-y-1">
-                  <p className="font-medium">{readiness.data.method === 'existing' ? 'Existing client registration' : needsManualClient ? 'Registered client ID needed' : 'Automatic client registration'}</p>
-                  <p className="text-muted-foreground">{needsManualClient ? 'Enter a client ID registered with this provider.' : readiness.data.method === 'existing' ? 'The saved client registration for this identity will be used.' : 'This provider advertises dynamic registration.'}</p>
+                  <p className="font-medium">{readiness.data.method === 'existing' ? 'Saved client available' : needsManualClient ? 'Registered client needed' : 'Automatic registration available'}</p>
+                  <p className="text-muted-foreground">{needsManualClient ? 'This provider requires a registered client ID.' : readiness.data.method === 'existing' ? 'You can reuse the saved client or provide another registered client.' : 'This provider supports automatic registration. You can also use a registered client.'}</p>
                   <p className="flex items-center gap-1 break-all pt-1 text-muted-foreground"><ExternalLink className="size-3 shrink-0" />Authorization provider: <span className="font-medium text-foreground">{readiness.data.providerHost}</span></p>
                 </div>
               </div>}
         </div>}
 
-        {readiness.data && !needsManualClient && <Button className="h-auto px-0 text-xs" onClick={() => { setManualChoice((current) => !current); start.reset(); }} size="sm" type="button" variant="link">
-          {manualChoice ? (readiness.data.method === 'existing' ? 'Use saved client' : 'Use automatic registration') : 'Use a registered client'} <ChevronDown className={`ml-1 size-3 transition-transform ${manualChoice ? 'rotate-180' : ''}`} />
-        </Button>}
+        {readiness.data && !needsManualClient && <div className="space-y-1.5">
+          <label className="text-xs font-medium" htmlFor="mcp-authorization-method">Authorization method</label>
+          <Select onValueChange={(value) => { setManualChoice(value === 'registered'); start.reset(); }} value={manualChoice ? 'registered' : 'default'}>
+            <SelectTrigger className="w-full" id="mcp-authorization-method"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">{readiness.data.method === 'existing' ? 'Reuse saved client' : 'Automatic client registration'}</SelectItem>
+              <SelectItem value="registered">Use a registered client</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>}
         {readiness.data && showManualClient && <div className="space-y-3 rounded-md border p-3">
           <div className="space-y-1.5"><label className="text-xs font-medium" htmlFor="mcp-client-id">Client ID</label><Input autoComplete="off" id="mcp-client-id" onChange={(event) => setClientId(event.target.value)} value={clientId} /></div>
           <div className="space-y-1.5"><label className="text-xs font-medium" htmlFor="mcp-client-secret">Client secret <span className="font-normal text-muted-foreground">(if required)</span></label><Input autoComplete="off" id="mcp-client-secret" onChange={(event) => setClientSecret(event.target.value)} type="password" value={clientSecret} /></div>

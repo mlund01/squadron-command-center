@@ -35,6 +35,47 @@ func TestDiscoverValidatesResourceAndIssuer(t *testing.T) {
 	}
 }
 
+func TestDiscoverRootMetadataForExactMCPEndpoint(t *testing.T) {
+	resourceURI := "https://fellow.app/mcp"
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var status int = http.StatusOK
+		var body string
+		switch request.URL.String() {
+		case "https://fellow.app/.well-known/oauth-protected-resource/mcp":
+			status = http.StatusNotFound
+		case "https://fellow.app/.well-known/oauth-protected-resource":
+			body = `{"resource":"https://fellow.app/mcp","authorization_servers":["https://fellow.app"]}`
+		case "https://fellow.app/.well-known/oauth-authorization-server":
+			body = `{"issuer":"https://fellow.app","authorization_endpoint":"https://fellow.app/mcp/authorize","token_endpoint":"https://fellow.app/mcp/token","registration_endpoint":"https://fellow.app/mcp/register"}`
+		default:
+			t.Fatalf("unexpected metadata request: %s", request.URL)
+		}
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+	})}
+	got, err := Discover(context.Background(), client, resourceURI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ResourceURI != resourceURI || got.Server.RegistrationEndpoint != "https://fellow.app/mcp/register" {
+		t.Fatalf("discovery = %#v", got)
+	}
+}
+
+func TestDiscoverRootMetadataRejectsOtherEndpoint(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		status := http.StatusNotFound
+		body := ""
+		if request.URL.String() == "https://fellow.app/.well-known/oauth-protected-resource" {
+			status = http.StatusOK
+			body = `{"resource":"https://fellow.app/other","authorization_servers":["https://fellow.app"]}`
+		}
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+	})}
+	if _, err := Discover(context.Background(), client, "https://fellow.app/mcp"); err == nil {
+		t.Fatal("accepted root metadata for another endpoint")
+	}
+}
+
 func TestDiscoverRejectsWrongIssuer(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		body := `{"resource":"https://mcp.example/mcp","authorization_servers":["https://auth.example"]}`
