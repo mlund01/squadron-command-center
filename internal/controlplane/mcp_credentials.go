@@ -14,6 +14,7 @@ import (
 
 var ErrMCPCredentialNotFound = errors.New("MCP credential not found")
 var ErrMCPConnectionChanged = errors.New("MCP connection URL changed; reconnect this identity")
+var ErrMCPAuthorizationServerChanged = errors.New("MCP authorization server changed; register a new client")
 var ErrMCPCredentialNeedsAction = errors.New("MCP credential needs reauthorization")
 
 var mcpConnectionNamePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
@@ -249,6 +250,45 @@ func (s *Store) LoadActiveMCPConnectionCredential(ctx context.Context, workspace
 		return MCPConnectionCredential{}, MCPSecretMaterial{}, err
 	}
 	return item, material, nil
+}
+
+// LoadMCPClientRegistration reuses a registered client only for the same
+// identity, resource, and authorization-server issuer. It never returns a token.
+func (s *Store) LoadMCPClientRegistration(ctx context.Context, workspaceID, connectionName string, identity MCPIdentity, resourceURI, issuer string) (string, string, error) {
+	column, err := identity.column()
+	if err != nil {
+		return "", "", err
+	}
+	var storedResource, storedIssuer string
+	var ciphertext []byte
+	var version int
+	err = s.pool.QueryRow(ctx, `SELECT resource_uri,issuer,credential_ciphertext,version FROM mcp_connection_credentials
+		WHERE workspace_id=$1 AND connection_name=$2 AND `+column+`=$3 AND revoked_at IS NULL`, workspaceID, connectionName, identity.ID).
+		Scan(&storedResource, &storedIssuer, &ciphertext, &version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", ErrMCPCredentialNotFound
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("load MCP client registration: %w", err)
+	}
+	if storedResource != resourceURI {
+		return "", "", ErrMCPConnectionChanged
+	}
+	if storedIssuer != issuer {
+		return "", "", ErrMCPAuthorizationServerChanged
+	}
+	plaintext, err := s.mcpCipher.Decrypt(workspaceID, connectionName, identity.Kind, identity.ID, storedResource, version, ciphertext)
+	if err != nil {
+		return "", "", err
+	}
+	material, err := decodeMCPSecretMaterial(plaintext)
+	if err != nil {
+		return "", "", err
+	}
+	if material.ClientID == "" {
+		return "", "", ErrMCPCredentialNotFound
+	}
+	return material.ClientID, material.ClientSecret, nil
 }
 
 // ListMCPConnectionCredentials returns only metadata for an identity's active

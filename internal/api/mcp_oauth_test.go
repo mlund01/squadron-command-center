@@ -24,13 +24,14 @@ func (fn oauthTestTransport) RoundTrip(request *http.Request) (*http.Response, e
 }
 
 type oauthTestStore struct {
-	actor      controlplane.User
-	role       string
-	attempt    controlplane.MCPOAuthAttempt
-	consumed   controlplane.ConsumedMCPOAuthAttempt
-	saved      controlplane.NewMCPConnectionCredential
-	grants     []controlplane.WorkspaceServicePrincipalGrant
-	principals []controlplane.ServicePrincipal
+	actor            controlplane.User
+	role             string
+	attempt          controlplane.MCPOAuthAttempt
+	consumed         controlplane.ConsumedMCPOAuthAttempt
+	saved            controlplane.NewMCPConnectionCredential
+	grants           []controlplane.WorkspaceServicePrincipalGrant
+	principals       []controlplane.ServicePrincipal
+	existingClientID string
 }
 
 func (s *oauthTestStore) UserForSubject(context.Context, string) (controlplane.User, error) {
@@ -58,6 +59,12 @@ func (s *oauthTestStore) ConsumeMCPOAuthAttempt(_ context.Context, state, issuer
 func (s *oauthTestStore) ReplaceMCPConnectionCredential(_ context.Context, _, _ string, _ controlplane.MCPIdentity, _ string, value controlplane.NewMCPConnectionCredential) (controlplane.MCPConnectionCredential, error) {
 	s.saved = value
 	return controlplane.MCPConnectionCredential{}, nil
+}
+func (s *oauthTestStore) LoadMCPClientRegistration(context.Context, string, string, controlplane.MCPIdentity, string, string) (string, string, error) {
+	if s.existingClientID == "" {
+		return "", "", controlplane.ErrMCPCredentialNotFound
+	}
+	return s.existingClientID, "", nil
 }
 
 func oauthTestRequest(method, path, body string) *http.Request {
@@ -112,6 +119,45 @@ func TestMCPOAuthStartUsesDeclaredResourceAndPKCE(t *testing.T) {
 	}
 	if query.Get("redirect_uri") != "http://localhost:8081/api/mcp/oauth/callback" {
 		t.Fatalf("redirect URI = %q", query.Get("redirect_uri"))
+	}
+}
+
+func TestMCPOAuthStartRegistersClientAutomatically(t *testing.T) {
+	registrationCalls := 0
+	client := &http.Client{Transport: oauthTestTransport(func(request *http.Request) (*http.Response, error) {
+		body := ""
+		status := http.StatusOK
+		switch request.URL.String() {
+		case "https://mcp.example/.well-known/oauth-protected-resource/mcp":
+			body = `{"resource":"https://mcp.example/mcp","authorization_servers":["https://auth.example"]}`
+		case "https://auth.example/.well-known/oauth-authorization-server":
+			body = `{"issuer":"https://auth.example","authorization_endpoint":"https://auth.example/authorize","token_endpoint":"https://auth.example/token","registration_endpoint":"https://auth.example/register"}`
+		case "https://auth.example/register":
+			registrationCalls++
+			status = http.StatusCreated
+			body = `{"client_id":"generated-client","token_endpoint_auth_method":"none"}`
+		default:
+			t.Fatalf("unexpected OAuth request: %s", request.URL)
+		}
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+	})}
+	store := &oauthTestStore{actor: controlplane.User{ID: mcpTestUserID}, role: "reader"}
+	request := oauthTestRequest(http.MethodPost, "/", `{}`)
+	request.SetPathValue("workspaceId", mcpTestWorkspaceID)
+	request.SetPathValue("connectionName", "linear")
+	response := httptest.NewRecorder()
+	handleMCPOAuthStart(testMCPRegistry(), store, "http://localhost:8081", client, false)(response, request)
+	if response.Code != http.StatusOK || registrationCalls != 1 || store.attempt.ClientID != "generated-client" {
+		t.Fatalf("automatic registration: status=%d calls=%d client=%q body=%s", response.Code, registrationCalls, store.attempt.ClientID, response.Body.String())
+	}
+	store.existingClientID = "existing-client"
+	request = oauthTestRequest(http.MethodPost, "/", `{}`)
+	request.SetPathValue("workspaceId", mcpTestWorkspaceID)
+	request.SetPathValue("connectionName", "linear")
+	response = httptest.NewRecorder()
+	handleMCPOAuthStart(testMCPRegistry(), store, "http://localhost:8081", client, false)(response, request)
+	if response.Code != http.StatusOK || registrationCalls != 1 || store.attempt.ClientID != "existing-client" {
+		t.Fatalf("reuse registration: status=%d calls=%d client=%q body=%s", response.Code, registrationCalls, store.attempt.ClientID, response.Body.String())
 	}
 }
 

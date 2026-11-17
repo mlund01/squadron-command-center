@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -25,6 +26,7 @@ type mcpOAuthStore interface {
 	BeginMCPOAuthAttempt(context.Context, controlplane.User, controlplane.MCPOAuthAttempt) (controlplane.StartedMCPOAuthAttempt, error)
 	ConsumeMCPOAuthAttempt(context.Context, string, string, string) (controlplane.ConsumedMCPOAuthAttempt, error)
 	ReplaceMCPConnectionCredential(context.Context, string, string, controlplane.MCPIdentity, string, controlplane.NewMCPConnectionCredential) (controlplane.MCPConnectionCredential, error)
+	LoadMCPClientRegistration(context.Context, string, string, controlplane.MCPIdentity, string, string) (string, string, error)
 }
 
 type mcpOAuthRegistry interface{ GetRegistry() *hub.Registry }
@@ -115,8 +117,8 @@ func handleMCPOAuthStart(h mcpOAuthRegistry, store mcpOAuthStore, publicURL stri
 			return
 		}
 		input.ClientID = strings.TrimSpace(input.ClientID)
-		if input.ClientID == "" || len(input.ClientID) > 2048 || len(input.ClientSecret) > 4096 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "a registered OAuth client ID is required"})
+		if len(input.ClientID) > 2048 || len(input.ClientSecret) > 4096 || (input.ClientID == "" && input.ClientSecret != "") {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid OAuth client details"})
 			return
 		}
 		instance := h.GetRegistry().GetInstanceByWorkspaceID(workspaceID)
@@ -146,6 +148,30 @@ func handleMCPOAuthStart(h mcpOAuthRegistry, store mcpOAuthStore, publicURL stri
 			return
 		}
 		redirectURI := strings.TrimRight(publicURL, "/") + "/api/mcp/oauth/callback"
+		if input.ClientID == "" {
+			clientID, clientSecret, err := store.LoadMCPClientRegistration(r.Context(), workspaceID, connectionName, identity, discovery.ResourceURI, discovery.Server.Issuer)
+			switch {
+			case err == nil:
+				input.ClientID, input.ClientSecret = clientID, clientSecret
+			case errors.Is(err, controlplane.ErrMCPCredentialNotFound), errors.Is(err, controlplane.ErrMCPConnectionChanged), errors.Is(err, controlplane.ErrMCPAuthorizationServerChanged):
+				// Register below for a first connection or a changed server.
+			default:
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "existing client registration is unavailable"})
+				return
+			}
+		}
+		if input.ClientID == "" {
+			if discovery.Server.RegistrationEndpoint == "" {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "this server does not advertise dynamic client registration; enter a registered client ID"})
+				return
+			}
+			registered, err := mcpauth.RegisterClient(r.Context(), client, discovery.Server.RegistrationEndpoint, redirectURI)
+			if err != nil {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "automatic client registration failed; enter a registered client ID"})
+				return
+			}
+			input.ClientID, input.ClientSecret = registered.ClientID, registered.ClientSecret
+		}
 		scopes := discovery.Resource.ScopesSupported
 		started, err := store.BeginMCPOAuthAttempt(r.Context(), actor, controlplane.MCPOAuthAttempt{
 			WorkspaceID: workspaceID, ConnectionName: connectionName, Identity: identity,
