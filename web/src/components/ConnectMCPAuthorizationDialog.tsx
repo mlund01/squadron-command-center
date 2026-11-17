@@ -69,13 +69,13 @@ export function ConnectMCPAuthorizationDialog({ open, onOpenChange, principalId,
   const ready = Boolean(selected && readiness.data && !readiness.isFetching && (!showManualClient || clientId.trim()));
 
   return <Dialog onOpenChange={onOpenChange} open={open}>
-    <DialogContent className="sm:max-w-xl">
+    <DialogContent className="h-[min(30rem,calc(100dvh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-xl">
       <DialogHeader>
         <DialogTitle>{reconnecting ? `Reconnect ${initialConnectionName}` : 'Authorize a connection'}</DialogTitle>
         <DialogDescription>{reconnecting ? 'Renew this connector authorization.' : 'Choose a workspace connection to authorize.'}</DialogDescription>
       </DialogHeader>
 
-      <div className="space-y-4 py-1">
+      <div className="min-h-0 space-y-4 overflow-y-auto py-1">
         <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2.5 text-xs">
           <span className="text-muted-foreground">Authorizing as</span>
           <span className="truncate font-medium">{identityName} <span className="font-normal text-muted-foreground">· {principalId ? 'Service principal' : 'Personal'}</span></span>
