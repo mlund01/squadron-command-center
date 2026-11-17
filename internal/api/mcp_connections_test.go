@@ -23,6 +23,7 @@ type mcpCredentialTestStore struct {
 	role      string
 	listed    controlplane.MCPIdentity
 	revoked   controlplane.MCPIdentity
+	revokedBy string
 	items     []controlplane.MCPConnectionCredential
 	revokeErr error
 }
@@ -36,8 +37,9 @@ func (s *mcpCredentialTestStore) ListMCPConnectionCredentials(_ context.Context,
 	return s.items, nil
 }
 
-func (s *mcpCredentialTestStore) RevokeMCPConnectionCredential(_ context.Context, _, _ string, identity controlplane.MCPIdentity) error {
+func (s *mcpCredentialTestStore) RevokeMCPConnectionCredential(_ context.Context, _, _ string, identity controlplane.MCPIdentity, actorID string) error {
 	s.revoked = identity
+	s.revokedBy = actorID
 	return s.revokeErr
 }
 
@@ -104,7 +106,7 @@ func TestPersonalMCPRevokeAffectsOnlyCurrentUser(t *testing.T) {
 	request.SetPathValue("connectionName", "linear")
 	response := httptest.NewRecorder()
 	handleMyMCPConnection(store, store)(response, request)
-	if response.Code != http.StatusNoContent || store.revoked != (controlplane.MCPIdentity{Kind: "user", ID: mcpTestUserID}) {
+	if response.Code != http.StatusNoContent || store.revoked != (controlplane.MCPIdentity{Kind: "user", ID: mcpTestUserID}) || store.revokedBy != mcpTestUserID {
 		t.Fatalf("status = %d, revoked = %#v", response.Code, store.revoked)
 	}
 	store.revokeErr = controlplane.ErrMCPCredentialNotFound
@@ -136,7 +138,7 @@ func TestServicePrincipalMCPRevokeRequiresAdmin(t *testing.T) {
 	store.role = controlplane.RoleAdmin
 	response = httptest.NewRecorder()
 	handlePrincipalMCPConnection(store, store)(response, request)
-	if response.Code != http.StatusNoContent || store.revoked != (controlplane.MCPIdentity{Kind: "service_principal", ID: mcpTestPrincipalID}) {
+	if response.Code != http.StatusNoContent || store.revoked != (controlplane.MCPIdentity{Kind: "service_principal", ID: mcpTestPrincipalID}) || store.revokedBy != mcpTestUserID {
 		t.Fatalf("admin status = %d, revoked = %#v", response.Code, store.revoked)
 	}
 }

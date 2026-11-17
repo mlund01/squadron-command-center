@@ -10,6 +10,7 @@ import {
 } from '@/api/client';
 import type { MCPConnectionCredential } from '@/api/types';
 import { Button } from '@/components/ui/button';
+import { ConnectMCPAuthorizationDialog } from '@/components/ConnectMCPAuthorizationDialog';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 const methodLabels: Record<MCPConnectionCredential['method'], string> = {
@@ -21,6 +22,8 @@ const methodLabels: Record<MCPConnectionCredential['method'], string> = {
 export function ConnectorAuthorizationsPanel({ principalId }: { principalId?: string }) {
   const queryClient = useQueryClient();
   const [disconnecting, setDisconnecting] = useState<MCPConnectionCredential | null>(null);
+  const [connecting, setConnecting] = useState<{ workspaceId: string; connectionName: string } | null>(null);
+  const authorizationResult = new URLSearchParams(window.location.search).get('authorization');
   const queryKey = ['connector-authorizations', principalId ?? 'me'];
   const mcpAuthorizations = useQuery({
     queryKey,
@@ -40,10 +43,13 @@ export function ConnectorAuthorizationsPanel({ principalId }: { principalId?: st
   const workspaceNames = new Map(workspaces.data?.map((workspace) => [workspace.id, workspace.name]) ?? []);
 
   return <section className="overflow-hidden rounded-md border bg-card">
-    <div className="border-b px-4 py-3">
-      <h2 className="flex items-center gap-2 text-sm font-semibold"><Cable className="size-4" />Connector authorizations</h2>
-      <p className="mt-1 text-xs text-muted-foreground">Credentials authorized for this identity across workspace connectors.</p>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
+      <div><h2 className="flex items-center gap-2 text-sm font-semibold"><Cable className="size-4" />Connector authorizations</h2>
+        <p className="mt-1 text-xs text-muted-foreground">Credentials authorized for this identity across workspace connectors.</p></div>
+      <Button onClick={() => setConnecting({ workspaceId: '', connectionName: '' })} size="sm">Connect MCP server</Button>
     </div>
+    {authorizationResult === 'connected' && <p className="border-b px-4 py-3 text-xs text-emerald-700" role="status">MCP server connected.</p>}
+    {authorizationResult === 'failed' && <p className="border-b px-4 py-3 text-xs text-destructive" role="alert">MCP authorization failed. Try connecting again.</p>}
     {mcpAuthorizations.isLoading && <p className="px-4 py-10 text-center text-xs text-muted-foreground">Loading connector authorizations…</p>}
     {mcpAuthorizations.isError && <p className="px-4 py-10 text-center text-xs text-destructive">Unable to load connector authorizations.</p>}
     {mcpAuthorizations.data?.length === 0 && <p className="px-4 py-10 text-center text-xs text-muted-foreground">No connector authorizations yet.</p>}
@@ -53,7 +59,7 @@ export function ConnectorAuthorizationsPanel({ principalId }: { principalId?: st
         <p className="mt-1 text-[11px] text-muted-foreground">{workspaceNames.get(item.workspaceId) ?? item.workspaceId} · MCP · {methodLabels[item.method]} · <span className="capitalize">{item.status.replace('_', ' ')}</span></p>
         {item.lastErrorCode && <p className="mt-1 text-[11px] text-destructive">{item.lastErrorCode}</p>}
       </div>
-      <Button onClick={() => setDisconnecting(item)} size="sm" variant="outline"><Unplug />Disconnect</Button>
+      <div className="flex items-center gap-2"><Button onClick={() => setConnecting({ workspaceId: item.workspaceId, connectionName: item.connectionName })} size="sm" variant="outline">Reauthorize</Button><Button onClick={() => setDisconnecting(item)} size="sm" variant="outline"><Unplug />Disconnect</Button></div>
     </div>)}
     <Dialog open={Boolean(disconnecting)} onOpenChange={(open) => { if (!open && !disconnect.isPending) setDisconnecting(null); }}>
       <DialogContent>
@@ -65,5 +71,6 @@ export function ConnectorAuthorizationsPanel({ principalId }: { principalId?: st
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    {connecting && <ConnectMCPAuthorizationDialog initialConnectionName={connecting.connectionName} initialWorkspaceId={connecting.workspaceId} key={`${connecting.workspaceId}:${connecting.connectionName}`} onOpenChange={(open) => { if (!open) setConnecting(null); }} open principalId={principalId} />}
   </section>;
 }

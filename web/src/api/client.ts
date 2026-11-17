@@ -58,6 +58,12 @@ export function listMyMCPConnections(): Promise<MCPConnectionCredential[]> { ret
 export function disconnectMyMCPConnection(workspaceId: string, connectionName: string): Promise<void> { return fetchJSON(`/me/mcp-connections/${encodeURIComponent(workspaceId)}/${encodeURIComponent(connectionName)}`, { method: 'DELETE' }); }
 export function listPrincipalMCPConnections(principalId: string): Promise<MCPConnectionCredential[]> { return fetchJSON<{ connections: MCPConnectionCredential[] }>(`/admin/service-principals/${encodeURIComponent(principalId)}/mcp-connections`).then((value) => value.connections); }
 export function disconnectPrincipalMCPConnection(principalId: string, workspaceId: string, connectionName: string): Promise<void> { return fetchJSON(`/admin/service-principals/${encodeURIComponent(principalId)}/mcp-connections/${encodeURIComponent(workspaceId)}/${encodeURIComponent(connectionName)}`, { method: 'DELETE' }); }
+export function startMCPAuthorization(workspaceId: string, connectionName: string, input: { clientId: string; clientSecret: string }, principalId?: string): Promise<{ authorizationUrl: string }> {
+  const prefix = principalId ? `/admin/service-principals/${encodeURIComponent(principalId)}` : '/me';
+  return fetchJSON(`${prefix}/mcp-connections/${encodeURIComponent(workspaceId)}/${encodeURIComponent(connectionName)}/authorize`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  });
+}
 export function listAuditEvents(): Promise<AuditEvent[]> { return fetchJSON<{ events: AuditEvent[] }>('/admin/audit').then((value) => value.events); }
 export function getAdminAccess(): Promise<AdminAccess> { return fetchJSON('/admin/access'); }
 export function setWorkspaceUserAccess(workspaceId: string, userId: string, input: { role: WorkspaceRole; missions: string[] }): Promise<void> { return fetchJSON(`/admin/workspaces/${encodeURIComponent(workspaceId)}/users/${encodeURIComponent(userId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }); }

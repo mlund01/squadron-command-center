@@ -111,9 +111,12 @@ func randomMCPOAuthSecret() (string, error) {
 
 // ConsumeMCPOAuthAttempt accepts a state only once, including when the
 // callback issuer is wrong. The caller must do this before token exchange.
-func (s *Store) ConsumeMCPOAuthAttempt(ctx context.Context, state, callbackIssuer string) (ConsumedMCPOAuthAttempt, error) {
+func (s *Store) ConsumeMCPOAuthAttempt(ctx context.Context, state, callbackIssuer, actorID string) (ConsumedMCPOAuthAttempt, error) {
 	decoded, err := base64.RawURLEncoding.DecodeString(state)
 	if err != nil || len(decoded) != 32 {
+		return ConsumedMCPOAuthAttempt{}, ErrMCPOAuthAttemptUnavailable
+	}
+	if _, err := uuid.Parse(actorID); err != nil {
 		return ConsumedMCPOAuthAttempt{}, ErrMCPOAuthAttemptUnavailable
 	}
 	stateHash := sha256.Sum256([]byte(state))
@@ -128,7 +131,7 @@ func (s *Store) ConsumeMCPOAuthAttempt(ctx context.Context, state, callbackIssue
 	var ciphertext []byte
 	var expiresAt time.Time
 	err = tx.QueryRow(ctx, `SELECT id,workspace_id,connection_name,user_id,service_principal_id,resource_uri,expected_issuer,issuer_parameter_required,authorization_endpoint,token_endpoint,redirect_uri,requested_scopes,encrypted_client_state,expires_at
-		FROM mcp_oauth_attempts WHERE state_hash=$1 AND consumed_at IS NULL FOR UPDATE`, stateHash[:]).
+		FROM mcp_oauth_attempts WHERE state_hash=$1 AND created_by=$2 AND consumed_at IS NULL FOR UPDATE`, stateHash[:], actorID).
 		Scan(&attemptID, &item.WorkspaceID, &item.ConnectionName, &userID, &principalID, &item.ResourceURI, &item.ExpectedIssuer, &item.IssuerParameterRequired, &item.AuthorizationEndpoint, &item.TokenEndpoint, &item.RedirectURI, &item.RequestedScopes, &ciphertext, &expiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ConsumedMCPOAuthAttempt{}, ErrMCPOAuthAttemptUnavailable

@@ -192,6 +192,9 @@ func (s *Store) ReplaceMCPConnectionCredential(ctx context.Context, workspaceID,
 	).Scan(&item.CreatedAt, &item.UpdatedAt); err != nil {
 		return MCPConnectionCredential{}, fmt.Errorf("store MCP credential: %w", err)
 	}
+	if err := auditMCPCredentialChange(ctx, tx, actor, "connector_authorization_connected", workspaceID, connectionName, identity, item.Version); err != nil {
+		return MCPConnectionCredential{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MCPConnectionCredential{}, fmt.Errorf("commit MCP credential replacement: %w", err)
 	}
@@ -301,17 +304,40 @@ func (s *Store) ListMCPConnectionCredentialHistory(ctx context.Context, workspac
 
 // RevokeMCPConnectionCredential retains non-secret history and destroys the
 // encrypted material. A subsequent connection gets a new version.
-func (s *Store) RevokeMCPConnectionCredential(ctx context.Context, workspaceID, connectionName string, identity MCPIdentity) error {
+func (s *Store) RevokeMCPConnectionCredential(ctx context.Context, workspaceID, connectionName string, identity MCPIdentity, actorID string) error {
 	column, err := identity.column()
 	if err != nil {
 		return err
 	}
-	command, err := s.pool.Exec(ctx, `UPDATE mcp_connection_credentials SET status='revoked',revoked_at=NOW(),credential_ciphertext=NULL,refresh_lease_owner=NULL,refresh_lease_until=NULL,updated_at=NOW() WHERE workspace_id=$1 AND connection_name=$2 AND `+column+`=$3 AND revoked_at IS NULL`, workspaceID, connectionName, identity.ID)
+	if _, err := uuid.Parse(actorID); err != nil {
+		return fmt.Errorf("invalid credential revocation actor")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin MCP credential revocation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	var version int
+	err = tx.QueryRow(ctx, `UPDATE mcp_connection_credentials SET status='revoked',revoked_at=NOW(),credential_ciphertext=NULL,refresh_lease_owner=NULL,refresh_lease_until=NULL,updated_at=NOW() WHERE workspace_id=$1 AND connection_name=$2 AND `+column+`=$3 AND revoked_at IS NULL RETURNING version`, workspaceID, connectionName, identity.ID).Scan(&version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrMCPCredentialNotFound
+	}
 	if err != nil {
 		return fmt.Errorf("revoke MCP credential: %w", err)
 	}
-	if command.RowsAffected() == 0 {
-		return ErrMCPCredentialNotFound
+	if err := auditMCPCredentialChange(ctx, tx, actorID, "connector_authorization_disconnected", workspaceID, connectionName, identity, version); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func auditMCPCredentialChange(ctx context.Context, tx pgx.Tx, actor any, eventType, workspaceID, connectionName string, identity MCPIdentity, version int) error {
+	data, err := json.Marshal(map[string]any{"workspaceId": workspaceID, "connectionName": connectionName, "identityKind": identity.Kind, "identityId": identity.ID, "version": version})
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(id,actor_id,event_type,data) VALUES($1,$2,$3,$4)`, uuid.NewString(), actor, eventType, data); err != nil {
+		return fmt.Errorf("audit connector authorization change: %w", err)
 	}
 	return nil
 }

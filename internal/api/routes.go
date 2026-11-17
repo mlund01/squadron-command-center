@@ -11,6 +11,7 @@ import (
 	"commander/internal/controlplane"
 	"commander/internal/hub"
 	"commander/internal/keepalive"
+	"commander/internal/mcpauth"
 )
 
 // Version is overridable at build time via -ldflags "-X commander/internal/api.Version=vX.Y.Z".
@@ -57,6 +58,12 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, ka *keepalive.KeepAlive, pub
 			mux.HandleFunc("DELETE /api/me/mcp-connections/{workspaceId}/{connectionName}", handleMyMCPConnection(workspaceStore, credentialStore))
 			mux.HandleFunc("GET /api/admin/service-principals/{id}/mcp-connections", handlePrincipalMCPConnections(workspaceStore, credentialStore))
 			mux.HandleFunc("DELETE /api/admin/service-principals/{id}/mcp-connections/{workspaceId}/{connectionName}", handlePrincipalMCPConnection(workspaceStore, credentialStore))
+		}
+		if oauthStore, ok := workspaceStore.(mcpOAuthStore); ok {
+			oauthClient := mcpauth.PublicHTTPClient()
+			mux.HandleFunc("POST /api/me/mcp-connections/{workspaceId}/{connectionName}/authorize", handleMCPOAuthStart(h, oauthStore, publicURL, oauthClient, false))
+			mux.HandleFunc("POST /api/admin/service-principals/{id}/mcp-connections/{workspaceId}/{connectionName}/authorize", handleMCPOAuthStart(h, oauthStore, publicURL, oauthClient, true))
+			mux.HandleFunc("GET /api/mcp/oauth/callback", handleMCPOAuthCallback(oauthStore, oauthClient))
 		}
 		mux.HandleFunc("GET /api/workspaces", handleListWorkspaces(workspaceStore))
 		mux.HandleFunc("POST /api/workspaces", handleCreateWorkspace(workspaceStore))
