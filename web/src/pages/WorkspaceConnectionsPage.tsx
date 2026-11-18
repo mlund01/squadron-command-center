@@ -67,16 +67,15 @@ export function WorkspaceConnectionsPage() {
       eyebrow={workspace?.name ?? 'Workspace'}
       title="Connections"
       description="Inspect the plugins and MCP servers configured for this workspace."
+      actions={<div className="flex items-center gap-2">
+        <label className="shrink-0 text-xs text-muted-foreground" htmlFor="connection-context">View as</label>
+        <Select disabled={!selectedIdentity} onValueChange={setSelectedIdentityKey} value={selectedIdentity ? `${selectedIdentity.kind}:${selectedIdentity.id}` : ''}>
+          <SelectTrigger className="h-8 w-44 max-w-full text-xs" id="connection-context"><SelectValue placeholder={identities.isError ? 'Unavailable' : 'Loading…'}>{selectedIdentity?.kind === 'user' ? 'You' : selectedIdentity?.name}</SelectValue></SelectTrigger>
+          <SelectContent>{identities.data?.map((identity) => <SelectItem key={`${identity.kind}:${identity.id}`} value={`${identity.kind}:${identity.id}`}>{identity.kind === 'user' ? `You (${identity.name})` : `${identity.name} · Service principal`}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>}
     />
     <div className="space-y-6">
-    <section className="flex flex-wrap items-center gap-4 rounded-md border bg-card px-4 py-3">
-      <div className="min-w-0 flex-1"><label className="text-xs font-semibold" htmlFor="connection-context">Connection context</label>
-        <p className="mt-1 text-[11px] text-muted-foreground">MCP servers may return different tools for each authorized identity.</p></div>
-      <div className="w-56 max-w-full shrink-0"><Select disabled={!selectedIdentity} onValueChange={setSelectedIdentityKey} value={selectedIdentity ? `${selectedIdentity.kind}:${selectedIdentity.id}` : ''}>
-        <SelectTrigger className="w-full text-xs" id="connection-context"><SelectValue placeholder={identities.isError ? 'Contexts unavailable' : 'Loading identities…'} /></SelectTrigger>
-        <SelectContent>{identities.data?.map((identity) => <SelectItem key={`${identity.kind}:${identity.id}`} value={`${identity.kind}:${identity.id}`}>{identity.kind === 'user' ? `Myself — ${identity.name}` : `${identity.name} — Service principal`}</SelectItem>)}</SelectContent>
-      </Select></div>
-    </section>
     {identities.isError && <p className="text-xs text-destructive" role="alert">Unable to load connection contexts.</p>}
     {snapshot.isLoading ? <ConnectionsState text="Loading workspace extensions…" />
       : snapshot.isError ? <ConnectionsState text="Connect the workspace runner to inspect its connections." />
