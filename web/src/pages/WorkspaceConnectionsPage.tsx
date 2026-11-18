@@ -4,7 +4,6 @@ import { ArrowUpRight, Cable, ChevronRight, CircleCheck, CircleDashed, Loader2, 
 import { Link, useParams } from 'react-router-dom';
 import { getWorkspaceConfig, listMCPConnectionTools, listWorkspaceConnectionIdentities, listWorkspaces } from '@/api/client';
 import type { ConnectionIdentity, MCPConnectionTools, PluginInfo, ToolInfo } from '@/api/types';
-import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -63,18 +62,22 @@ export function WorkspaceConnectionsPage() {
   const selected = [...plugins, ...mcps].find((view) => `${view.connection.kind}:${view.connection.name}` === selectedKey) ?? null;
 
   return <div>
-    <PageHeader
-      eyebrow={workspace?.name ?? 'Workspace'}
-      title="Connections"
-      description="Inspect the plugins and MCP servers configured for this workspace."
-      actions={<div className="flex items-center gap-2">
+    <header className="mb-8">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{workspace?.name ?? 'Workspace'}</p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight">Connections</h1>
+        </div>
+        <div className="flex items-center gap-2">
         <label className="shrink-0 text-xs text-muted-foreground" htmlFor="connection-context">View as</label>
         <Select disabled={!selectedIdentity} onValueChange={setSelectedIdentityKey} value={selectedIdentity ? `${selectedIdentity.kind}:${selectedIdentity.id}` : ''}>
           <SelectTrigger className="h-8 w-44 max-w-full text-xs" id="connection-context"><SelectValue placeholder={identities.isError ? 'Unavailable' : 'Loading…'}>{selectedIdentity?.kind === 'user' ? 'You' : selectedIdentity?.name}</SelectValue></SelectTrigger>
           <SelectContent>{identities.data?.map((identity) => <SelectItem key={`${identity.kind}:${identity.id}`} value={`${identity.kind}:${identity.id}`}>{identity.kind === 'user' ? `You (${identity.name})` : `${identity.name} · Service principal`}</SelectItem>)}</SelectContent>
         </Select>
-      </div>}
-    />
+        </div>
+      </div>
+      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Inspect the plugins and MCP servers configured for this workspace.</p>
+    </header>
     <div className="space-y-6">
     {identities.isError && <p className="text-xs text-destructive" role="alert">Unable to load connection contexts.</p>}
     {snapshot.isLoading ? <ConnectionsState text="Loading workspace extensions…" />
