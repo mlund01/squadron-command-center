@@ -1,4 +1,4 @@
-import type { AdminAccess, AdminUser, AgentInfo, AgentConversationContext, AgentConversationState, AgentConversationSummary, AuditEvent, CommandCenterRole, ConfigSource, CostSummaryResponse, HumanInputDetailResponse, HumanInputsResponse, LocalPluginFile, LocalPluginFileContent, MCPAuthorizationReadiness, MCPConnectionCredential, MissionEventsResponse, MissionHistoryResponse, MissionRunDetail, MissionRunIdentity, MissionSchedule, MissionTaskDetail, ModelProviderKind, ResolveHumanInputResponse, RunMissionResponse, ServicePrincipal, UserStatus, Workspace, WorkspaceConfigSnapshot, WorkspaceModelConnection, WorkspaceRole, WorkspaceVariable, WorkspaceWorker } from './types';
+import type { AdminAccess, AdminUser, AgentInfo, AgentConversationContext, AgentConversationState, AgentConversationSummary, AuditEvent, CommandCenterRole, ConfigSource, ConnectionIdentity, CostSummaryResponse, HumanInputDetailResponse, HumanInputsResponse, LocalPluginFile, LocalPluginFileContent, MCPAuthorizationReadiness, MCPConnectionCredential, MCPConnectionTools, MissionEventsResponse, MissionHistoryResponse, MissionRunDetail, MissionRunIdentity, MissionSchedule, MissionTaskDetail, ModelProviderKind, ResolveHumanInputResponse, RunMissionResponse, ServicePrincipal, UserStatus, Workspace, WorkspaceConfigSnapshot, WorkspaceModelConnection, WorkspaceRole, WorkspaceVariable, WorkspaceWorker } from './types';
 import { normalizeMissionHistory } from '@/lib/mission-history';
 
 const BASE_URL = '/api';
@@ -67,6 +67,13 @@ export function startMCPAuthorization(workspaceId: string, connectionName: strin
 export function getMCPAuthorizationReadiness(workspaceId: string, connectionName: string, principalId?: string): Promise<MCPAuthorizationReadiness> {
   const prefix = principalId ? `/admin/service-principals/${encodeURIComponent(principalId)}` : '/me';
   return fetchJSON(`${prefix}/mcp-connections/${encodeURIComponent(workspaceId)}/${encodeURIComponent(connectionName)}/readiness`);
+}
+export function listWorkspaceConnectionIdentities(workspaceId: string): Promise<ConnectionIdentity[]> {
+  return fetchJSON<{ identities: ConnectionIdentity[] }>(`/workspaces/${encodeURIComponent(workspaceId)}/connection-identities`).then((value) => value.identities);
+}
+export function listMCPConnectionTools(workspaceId: string, connectionName: string, identity: ConnectionIdentity): Promise<MCPConnectionTools> {
+  const params = new URLSearchParams({ identityKind: identity.kind, identityId: identity.id });
+  return fetchJSON(`/workspaces/${encodeURIComponent(workspaceId)}/mcp-connections/${encodeURIComponent(connectionName)}/tools?${params}`);
 }
 export function listAuditEvents(): Promise<AuditEvent[]> { return fetchJSON<{ events: AuditEvent[] }>('/admin/audit').then((value) => value.events); }
 export function getAdminAccess(): Promise<AdminAccess> { return fetchJSON('/admin/access'); }

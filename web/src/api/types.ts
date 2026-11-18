@@ -47,6 +47,11 @@ export interface MCPAuthorizationReadiness {
   callbackUrl: string;
   scopes: string[];
 }
+export interface ConnectionIdentity { kind: 'user' | 'service_principal'; id: string; name: string; canManage: boolean }
+export interface MCPConnectionTools {
+  status: 'available' | 'runner_snapshot' | 'authorization_required' | 'needs_action' | 'unavailable';
+  tools: ToolInfo[];
+}
 export interface AuditEvent { id: string; actorId?: string; actorEmail?: string; eventType: string; data: Record<string, unknown>; createdAt: string }
 export interface WorkspaceUserGrant { workspaceId: string; userId: string; role: WorkspaceRole; missions: string[] }
 export interface WorkspaceServicePrincipalGrant { workspaceId: string; servicePrincipalId: string; missions: string[]; userIds: string[] }

@@ -554,6 +554,32 @@ ORDER BY LOWER(sp.name), sp.id`, workspaceID, user.ID, missionName)
 	return identities, rows.Err()
 }
 
+// ListWorkspaceConnectionIdentities returns only identities the user may use
+// in this workspace. Connector details must not reveal another principal's
+// authorization state merely because the user can read workspace config.
+func (s *Store) ListWorkspaceConnectionIdentities(ctx context.Context, user User, workspaceID string) ([]MissionRunIdentity, error) {
+	identities := []MissionRunIdentity{{Kind: "user", ID: user.ID, Name: user.Name}}
+	rows, err := s.pool.Query(ctx, `
+SELECT sp.id, sp.name
+FROM service_principal_user_grants u
+JOIN service_principals sp ON sp.id=u.service_principal_id AND sp.status='active'
+WHERE u.workspace_id=$1 AND u.user_id=$2
+ORDER BY LOWER(sp.name), sp.id`, workspaceID, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var identity MissionRunIdentity
+		identity.Kind = "service_principal"
+		if err := rows.Scan(&identity.ID, &identity.Name); err != nil {
+			return nil, err
+		}
+		identities = append(identities, identity)
+	}
+	return identities, rows.Err()
+}
+
 func (s *Store) CanUserRunAsServicePrincipal(ctx context.Context, user User, principalID, workspaceID, missionName string) (bool, error) {
 	var allowed bool
 	err := s.pool.QueryRow(ctx, `

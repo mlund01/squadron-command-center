@@ -12,6 +12,7 @@ import (
 	"commander/internal/hub"
 	"commander/internal/keepalive"
 	"commander/internal/mcpauth"
+	"commander/internal/mcptools"
 )
 
 // Version is overridable at build time via -ldflags "-X commander/internal/api.Version=vX.Y.Z".
@@ -71,6 +72,10 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, ka *keepalive.KeepAlive, pub
 		mux.HandleFunc("POST /api/workspaces", handleCreateWorkspace(workspaceStore))
 		authorizationStore, _ := workspaceStore.(AuthorizationStore)
 		mux.HandleFunc("GET /api/workspaces/{id}/config", requireWorkspaceRole(authorizationStore, "reader", handleGetWorkspaceConfig(h)))
+		if connectionStore, ok := workspaceStore.(workspaceConnectionStore); ok {
+			mux.HandleFunc("GET /api/workspaces/{id}/connection-identities", requireWorkspaceRole(authorizationStore, "reader", handleWorkspaceConnectionIdentities(connectionStore)))
+			mux.HandleFunc("GET /api/workspaces/{id}/mcp-connections/{name}/tools", requireWorkspaceRole(authorizationStore, "reader", handleWorkspaceMCPTools(h, connectionStore, mcptools.List)))
+		}
 		if variableStore, ok := workspaceStore.(WorkspaceVariableStore); ok {
 			mux.HandleFunc("GET /api/workspaces/{id}/variables", requireWorkspaceRole(authorizationStore, "manager", handleWorkspaceVariables(h, workspaceStore, variableStore)))
 			mux.HandleFunc("POST /api/workspaces/{id}/variables", requireWorkspaceRole(authorizationStore, "manager", handleWorkspaceVariables(h, workspaceStore, variableStore)))
