@@ -2,6 +2,7 @@ package mcptools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 )
 
 const maxResponseBytes = 2 << 20
+
+var ErrEndpointNotFound = errors.New("MCP endpoint not found")
 
 type Tool struct {
 	Name        string `json:"name"`
@@ -89,6 +92,10 @@ func (t *sameOriginTransport) RoundTrip(request *http.Request) (*http.Response, 
 	response, err := t.base.RoundTrip(request)
 	if err != nil {
 		return nil, err
+	}
+	if response.StatusCode == http.StatusNotFound {
+		response.Body.Close()
+		return nil, ErrEndpointNotFound
 	}
 	response.Body = &limitedBody{Reader: io.LimitReader(response.Body, maxResponseBytes+1), Closer: response.Body}
 	return response, nil

@@ -57,3 +57,12 @@ func TestToolTransportRejectsCrossOriginEndpoint(t *testing.T) {
 		t.Fatal("sent selected identity credential to another origin")
 	}
 }
+
+func TestListReportsRetiredEndpoint(t *testing.T) {
+	testServer := httptest.NewServer(http.NotFoundHandler())
+	defer testServer.Close()
+	_, err := listWithClient(context.Background(), testServer.URL+"/sse", nil, testServer.Client())
+	if !errors.Is(err, ErrEndpointNotFound) {
+		t.Fatalf("retired endpoint error = %v, want ErrEndpointNotFound", err)
+	}
+}

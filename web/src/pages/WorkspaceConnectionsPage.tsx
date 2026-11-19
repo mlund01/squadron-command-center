@@ -130,6 +130,7 @@ function ConnectionDialog({ view, onOpenChange, workspaceId, identity }: { view:
               : <p className="mt-2 text-muted-foreground">Ask an administrator to authorize this service principal.</p>}
           </div>}
           {connection.kind === 'mcp' && view.status === 'unavailable' && <p className="text-xs text-muted-foreground">The server's tools could not be inspected right now. Try again later.</p>}
+          {connection.kind === 'mcp' && view.status === 'endpoint_not_found' && <p className="text-xs text-muted-foreground">The configured MCP endpoint returned 404. Check its URL in the workspace configuration.</p>}
           {connection.kind === 'plugin' && connection.version === 'local' && <Button asChild className="w-full" variant="outline"><Link to={`/w/${workspaceId}/plugins`}><ArrowUpRight />View local source</Link></Button>}
         </div></>}
     </DialogContent>
@@ -147,6 +148,7 @@ function cardSummary(view: ConnectionView) {
     case 'authorization_required': return 'Authorize to inspect tools';
     case 'needs_action': return 'Reconnect to inspect tools';
     case 'unavailable': return 'Could not inspect tools';
+    case 'endpoint_not_found': return 'Check the configured URL';
     case 'loading': return 'Checking available tools…';
   }
 }
@@ -157,6 +159,7 @@ function statusLabel(view: ConnectionView) {
     case 'authorization_required': return 'Authorization required';
     case 'needs_action': return 'Reconnect required';
     case 'unavailable': return 'Tools unavailable';
+    case 'endpoint_not_found': return 'Endpoint not found';
     case 'loading': return 'Checking tools…';
   }
 }

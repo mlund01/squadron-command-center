@@ -49,7 +49,7 @@ export interface MCPAuthorizationReadiness {
 }
 export interface ConnectionIdentity { kind: 'user' | 'service_principal'; id: string; name: string; canManage: boolean }
 export interface MCPConnectionTools {
-  status: 'available' | 'runner_snapshot' | 'authorization_required' | 'needs_action' | 'unavailable';
+  status: 'available' | 'runner_snapshot' | 'authorization_required' | 'needs_action' | 'endpoint_not_found' | 'unavailable';
   tools: ToolInfo[];
 }
 export interface AuditEvent { id: string; actorId?: string; actorEmail?: string; eventType: string; data: Record<string, unknown>; createdAt: string }

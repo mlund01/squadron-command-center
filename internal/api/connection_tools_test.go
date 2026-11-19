@@ -58,7 +58,7 @@ func TestConnectionToolsUseSelectedPrincipalCredential(t *testing.T) {
 	store := &connectionToolsTestStore{
 		identities: []controlplane.MissionRunIdentity{{Kind: "user", ID: mcpTestUserID}, {Kind: principal.Kind, ID: principal.ID, Name: "Automation"}},
 		credential: controlplane.MCPConnectionCredential{Method: "authorization_code", Status: "active"},
-		material:   controlplane.MCPSecretMaterial{AccessToken: "principal-token", TokenType: "Bearer"},
+		material:   controlplane.MCPSecretMaterial{AccessToken: "principal-token", TokenType: "bearer"},
 	}
 	handler := handleWorkspaceMCPTools(testMCPRegistry(), store, func(_ context.Context, url string, headers map[string]string) ([]mcptools.Tool, error) {
 		if url != "https://mcp.example/mcp" || headers["Authorization"] != "Bearer principal-token" {
@@ -91,6 +91,25 @@ func TestConnectionToolsReportMissingAuthorization(t *testing.T) {
 		Status string `json:"status"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil || result.Status != "authorization_required" {
+		t.Fatalf("status=%d, result=%#v, err=%v", response.Code, result, err)
+	}
+}
+
+func TestConnectionToolsReportMissingEndpointSeparatelyFromAuthorization(t *testing.T) {
+	store := &connectionToolsTestStore{
+		identities: []controlplane.MissionRunIdentity{{Kind: "user", ID: mcpTestUserID}},
+		credential: controlplane.MCPConnectionCredential{Method: "authorization_code", Status: "active"},
+		material:   controlplane.MCPSecretMaterial{AccessToken: "valid-token", TokenType: "bearer"},
+	}
+	handler := handleWorkspaceMCPTools(testMCPRegistry(), store, func(context.Context, string, map[string]string) ([]mcptools.Tool, error) {
+		return nil, mcptools.ErrEndpointNotFound
+	})
+	response := httptest.NewRecorder()
+	handler(response, connectionToolsRequest(controlplane.MCPIdentity{Kind: "user", ID: mcpTestUserID}))
+	var result struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil || result.Status != "endpoint_not_found" {
 		t.Fatalf("status=%d, result=%#v, err=%v", response.Code, result, err)
 	}
 }

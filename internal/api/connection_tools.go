@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"commander/internal/controlplane"
@@ -108,7 +109,7 @@ func handleWorkspaceMCPTools(h *hub.Hub, store workspaceConnectionStore, listToo
 			case "static_header":
 				headers[material.StaticHeaderName] = material.StaticHeaderValue
 			case "authorization_code", "client_credentials":
-				if material.AccessToken == "" || (material.TokenType != "" && material.TokenType != "Bearer") {
+				if material.AccessToken == "" || (material.TokenType != "" && !strings.EqualFold(material.TokenType, "Bearer")) {
 					writeConnectionTools(w, "needs_action", nil)
 					return
 				}
@@ -120,6 +121,10 @@ func handleWorkspaceMCPTools(h *hub.Hub, store workspaceConnectionStore, listToo
 		}
 		tools, listErr := listTools(r.Context(), connectionURL, headers)
 		if listErr != nil {
+			if errors.Is(listErr, mcptools.ErrEndpointNotFound) {
+				writeConnectionTools(w, "endpoint_not_found", nil)
+				return
+			}
 			if errors.Is(listErr, transport.ErrUnauthorized) {
 				if err == nil {
 					writeConnectionTools(w, "needs_action", nil)
